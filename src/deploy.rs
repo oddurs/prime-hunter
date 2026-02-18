@@ -1,3 +1,26 @@
+//! # Deploy — Remote Worker Deployment Manager
+//!
+//! Manages the lifecycle of worker processes on remote machines via SSH.
+//! The dashboard can deploy, monitor, pause, resume, and stop searches on
+//! any reachable host without manual SSH intervention.
+//!
+//! ## Deployment Lifecycle
+//!
+//! ```text
+//! Deploying → Running → Stopped
+//!                ↓          ↑
+//!             Paused ───────┘
+//!                ↓
+//!             Failed (on error)
+//! ```
+//!
+//! ## How It Works
+//!
+//! Each deployment spawns an SSH subprocess that runs `primehunt` on the
+//! remote host. The `DeploymentManager` tracks active deployments by ID,
+//! polls remote PIDs for liveness, and stores status + errors for the
+//! dashboard to display. Supports custom SSH keys and coordinator URLs.
+
 use chrono::Utc;
 use serde::Serialize;
 use std::collections::HashMap;
@@ -39,6 +62,12 @@ pub struct Deployment {
 pub struct DeploymentManager {
     deployments: HashMap<u64, Deployment>,
     next_id: u64,
+}
+
+impl Default for DeploymentManager {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl DeploymentManager {

@@ -1,0 +1,20 @@
+[project]
+name = "near-repdigit-survey"
+description = "Survey near-repdigit palindromic primes"
+objective = "survey"
+form = "near_repdigit"
+
+[target]
+range_start = 3
+range_end = 1000
+
+[competitive]
+oeis_sequence = "A002385"
+
+[strategy]
+auto_strategy = true
+
+[budget]
+max_cost_usd = 30.0
+cost_alert_threshold_usd = 15.0
+cloud_rate_usd_per_core_hour = 0.04

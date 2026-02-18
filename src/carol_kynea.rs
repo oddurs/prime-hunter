@@ -1,3 +1,40 @@
+//! # Carol & Kynea — (2^n ± 1)² − 2 Prime Search
+//!
+//! Searches for Carol primes ((2^n − 1)² − 2) and Kynea primes ((2^n + 1)² − 2)
+//! simultaneously over a range of n. Both decompose into the k·2^(n+1) − 1 form,
+//! making them amenable to the LLR deterministic test.
+//!
+//! ## Algebraic Decomposition
+//!
+//! - **Carol**: (2^n − 1)² − 2 = 4^n − 2·2^n − 1 = (2^(n−1) − 1)·2^(n+1) − 1
+//!   So k = 2^(n−1) − 1 (odd for n ≥ 2), exp = n+1.
+//!
+//! - **Kynea**: (2^n + 1)² − 2 = 4^n + 2·2^n − 1 = (2^(n−1) + 1)·2^(n+1) − 1
+//!   So k = 2^(n−1) + 1 (odd for n ≥ 2), exp = n+1.
+//!
+//! Both are of the form k·2^exp − 1 with k odd and k < 2^exp (since 2^(n−1) < 2^(n+1)),
+//! so the LLR test applies for a deterministic proof.
+//!
+//! ## Algorithm
+//!
+//! 1. **Incremental modular sieve**: For each sieve prime q > 3, tracks
+//!    g2 = 2^n mod q and g4 = 4^n mod q. Carol is composite when
+//!    g4 ≡ 2·g2 + 1 (mod q); Kynea when g4 + 2·g2 ≡ 1 (mod q).
+//!
+//! 2. **LLR test**: Uses `kbn::llr_test` for n ≤ 64 (k fits in u64) and
+//!    `llr_test_big` with `proof::lucas_v_big` for n > 64 (k exceeds u64).
+//!
+//! ## Complexity
+//!
+//! - Sieve: O(π(L) · (max_n − min_n)) — linear scan per prime.
+//! - LLR test: O((n+1) · M(n)) per survivor (n+1 = number of squarings).
+//!
+//! ## References
+//!
+//! - OEIS: [A091515](https://oeis.org/A091515) — Carol prime indices.
+//! - OEIS: [A091513](https://oeis.org/A091513) — Kynea prime indices.
+//! - Cletus Emmanuel, "Carol and Kynea Numbers", 2000.
+
 use anyhow::Result;
 use rayon::prelude::*;
 use rug::integer::IsPrime;
@@ -12,6 +49,7 @@ use crate::checkpoint::{self, Checkpoint};
 use crate::db::Database;
 use crate::events::{self, EventBus};
 use crate::kbn;
+use crate::pfgw;
 use crate::progress::Progress;
 use crate::proof;
 use crate::CoordinationClient;
@@ -185,17 +223,6 @@ fn test_kynea(candidate: &Integer, n: u64, mr_rounds: u32) -> (IsPrime, &'static
     (r, cert)
 }
 
-/// Adaptive block size for Carol/Kynea search.
-fn block_size_for_n(n: u64) -> u64 {
-    match n {
-        0..=1_000 => 10_000,
-        1_001..=10_000 => 5_000,
-        10_001..=50_000 => 1_000,
-        50_001..=200_000 => 200,
-        _ => 50,
-    }
-}
-
 pub fn search(
     min_n: u64,
     max_n: u64,
@@ -209,6 +236,12 @@ pub fn search(
     worker_client: Option<&dyn CoordinationClient>,
     event_bus: Option<&EventBus>,
 ) -> Result<()> {
+    // Resolve sieve_limit: auto-tune if 0
+    // Carol/Kynea: (2^n ± 1)^2 - 2 has ~2*max_n bits
+    let candidate_bits = 2 * max_n;
+    let n_range = max_n.saturating_sub(min_n) + 1;
+    let sieve_limit = sieve::resolve_sieve_limit(sieve_limit, candidate_bits, n_range);
+
     let sieve_primes = sieve::generate_primes(sieve_limit);
     eprintln!(
         "Sieve initialized with {} primes up to {}",
@@ -264,7 +297,7 @@ pub fn search(
     let mut total_sieved: u64 = 0;
 
     while block_start <= max_n {
-        let bsize = block_size_for_n(block_start);
+        let bsize = crate::block_size_for_n_heavy(block_start);
         let block_end = (block_start + bsize - 1).min(max_n);
         let block_len = block_end - block_start + 1;
 
@@ -289,38 +322,67 @@ pub fn search(
         let found_primes: Vec<_> = survivors
             .into_par_iter()
             .flat_map_iter(|(n, test_carol_flag, test_kynea_flag)| {
-                let two_n = Integer::from(1u32) << n as u32;
-                let mut results = Vec::new();
+                let two_n = Integer::from(1u32) << crate::checked_u32(n);
 
-                if test_carol_flag {
+                let carol_result = if test_carol_flag {
                     let carol = Integer::from(&two_n - 1u32).pow(2) - 2u32;
-                    let (r, cert) = test_carol(&carol, n, mr_rounds);
-                    if r != IsPrime::No {
-                        let digits = exact_digits(&carol);
-                        results.push((
-                            format!("(2^{}-1)^2-2", n),
-                            digits,
-                            cert.to_string(),
-                            "carol",
-                        ));
-                    }
-                }
+                    let expr = format!("(2^{}-1)^2-2", n);
 
-                if test_kynea_flag {
+                    match pfgw::try_test(&expr, &carol, pfgw::PfgwMode::Prp) {
+                        Some(pfgw::PfgwResult::Prime { method, is_deterministic }) => {
+                            let cert = if is_deterministic {
+                                format!("deterministic ({})", method)
+                            } else {
+                                "probabilistic".to_string()
+                            };
+                            let digits = exact_digits(&carol);
+                            Some((expr, digits, cert, "carol"))
+                        }
+                        Some(pfgw::PfgwResult::Composite) => None,
+                        _ => {
+                            let (r, cert) = test_carol(&carol, n, mr_rounds);
+                            if r != IsPrime::No {
+                                let digits = exact_digits(&carol);
+                                Some((expr, digits, cert.to_string(), "carol"))
+                            } else {
+                                None
+                            }
+                        }
+                    }
+                } else {
+                    None
+                };
+
+                let kynea_result = if test_kynea_flag {
                     let kynea = Integer::from(&two_n + 1u32).pow(2) - 2u32;
-                    let (r, cert) = test_kynea(&kynea, n, mr_rounds);
-                    if r != IsPrime::No {
-                        let digits = exact_digits(&kynea);
-                        results.push((
-                            format!("(2^{}+1)^2-2", n),
-                            digits,
-                            cert.to_string(),
-                            "kynea",
-                        ));
-                    }
-                }
+                    let expr = format!("(2^{}+1)^2-2", n);
 
-                results
+                    match pfgw::try_test(&expr, &kynea, pfgw::PfgwMode::Prp) {
+                        Some(pfgw::PfgwResult::Prime { method, is_deterministic }) => {
+                            let cert = if is_deterministic {
+                                format!("deterministic ({})", method)
+                            } else {
+                                "probabilistic".to_string()
+                            };
+                            let digits = exact_digits(&kynea);
+                            Some((expr, digits, cert, "kynea"))
+                        }
+                        Some(pfgw::PfgwResult::Composite) => None,
+                        _ => {
+                            let (r, cert) = test_kynea(&kynea, n, mr_rounds);
+                            if r != IsPrime::No {
+                                let digits = exact_digits(&kynea);
+                                Some((expr, digits, cert.to_string(), "kynea"))
+                            } else {
+                                None
+                            }
+                        }
+                    }
+                } else {
+                    None
+                };
+
+                carol_result.into_iter().chain(kynea_result)
             })
             .collect();
 
@@ -394,12 +456,12 @@ mod tests {
     use crate::sieve;
 
     fn carol(n: u64) -> Integer {
-        let two_n = Integer::from(1u32) << n as u32;
+        let two_n = Integer::from(1u32) << crate::checked_u32(n);
         Integer::from(&two_n - 1u32).pow(2) - 2u32
     }
 
     fn kynea(n: u64) -> Integer {
-        let two_n = Integer::from(1u32) << n as u32;
+        let two_n = Integer::from(1u32) << crate::checked_u32(n);
         Integer::from(&two_n + 1u32).pow(2) - 2u32
     }
 
@@ -536,7 +598,7 @@ mod tests {
         for n in 2..=20u64 {
             let k_carol = (1u64 << (n - 1)) - 1;
             let exp = n + 1;
-            let reconstructed = Integer::from(k_carol) * Integer::from(2u32).pow(exp as u32) - 1u32;
+            let reconstructed = Integer::from(k_carol) * Integer::from(2u32).pow(crate::checked_u32(exp)) - 1u32;
             assert_eq!(
                 reconstructed,
                 carol(n),
@@ -545,7 +607,7 @@ mod tests {
             );
 
             let k_kynea = (1u64 << (n - 1)) + 1;
-            let reconstructed = Integer::from(k_kynea) * Integer::from(2u32).pow(exp as u32) - 1u32;
+            let reconstructed = Integer::from(k_kynea) * Integer::from(2u32).pow(crate::checked_u32(exp)) - 1u32;
             assert_eq!(
                 reconstructed,
                 kynea(n),

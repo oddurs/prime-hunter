@@ -1,0 +1,23 @@
+[project]
+name = "primorial-survey"
+description = "Systematic survey of p# ± 1 primes"
+objective = "survey"
+form = "primorial"
+
+[target]
+range_start = 2
+range_end = 200000
+
+[competitive]
+current_record_expression = "1098133# + 1"
+current_record_digits = 476311
+current_record_holder = "Primegrid"
+oeis_sequence = "A014545"
+
+[strategy]
+auto_strategy = true
+
+[budget]
+max_cost_usd = 50.0
+cost_alert_threshold_usd = 25.0
+cloud_rate_usd_per_core_hour = 0.04

@@ -1,3 +1,51 @@
+//! # Proof — Deterministic Primality Proofs
+//!
+//! Provides deterministic (non-probabilistic) primality proofs for candidates
+//! found by the search modules. These upgrade "probably prime" results from
+//! Miller–Rabin into mathematically rigorous certificates.
+//!
+//! ## Proof Methods
+//!
+//! ### Pocklington N−1 Proof (for n!+1, p#+1)
+//!
+//! When N−1 has fully known factorization (as for factorial and primorial primes),
+//! Pocklington's theorem provides a deterministic proof: for each prime factor q
+//! of N−1, find witness a such that a^(N−1) ≡ 1 (mod N) and gcd(a^((N−1)/q) − 1, N) = 1.
+//!
+//! ### Morrison N+1 Proof (for n!−1, p#−1)
+//!
+//! When N+1 has fully known factorization, Morrison's theorem (a dual of
+//! Pocklington) proves primality using Lucas V-sequences: V_{N+1}(P,1) ≡ 2 (mod N)
+//! and gcd(V_{(N+1)/q}(P,1) − 2, N) = 1 for each prime factor q.
+//!
+//! ### BLS N+1 Proof (for near-repdigit palindromes)
+//!
+//! Brillhart–Lehmer–Selfridge theorem: if ≥ 1/3 of N+1's bits come from known
+//! prime factors, the Morrison conditions prove primality. For near-repdigit
+//! palindromes, N+1 contains a large power of 10 = 2·5, providing factored
+//! bits for free. Trial division of the cofactor adds more when needed.
+//!
+//! ## Lucas V-Sequence
+//!
+//! Both Morrison and BLS proofs use the Lucas V binary chain:
+//! V₀ = 2, V₁ = P, V_n = P·V_{n−1} − V_{n−2}. Computed in O(log k)
+//! multiplications mod N using the doubling formulas:
+//! V(2m) = V(m)² − 2, V(2m+1) = V(m)·V(m+1) − P.
+//!
+//! `lucas_v_big` accepts arbitrary-precision indices (needed for n!/q where
+//! n!/q exceeds u64), while `kbn::lucas_v_k` handles u64 indices.
+//!
+//! ## References
+//!
+//! - H.C. Pocklington, "The Determination of the Prime or Composite Nature
+//!   of Large Numbers by Fermat's Theorem", Proc. Cambridge Phil. Soc., 1914.
+//! - M.A. Morrison, "A Note on Primality Testing Using Lucas Sequences",
+//!   Mathematics of Computation, 29(129), 1975.
+//! - J. Brillhart, D.H. Lehmer, J.L. Selfridge, "New Primality Criteria and
+//!   Factorizations of 2^m ± 1", Mathematics of Computation, 29(130), 1975.
+//! - OEIS: [A002981](https://oeis.org/A002981) — n! + 1 primes.
+//! - OEIS: [A002982](https://oeis.org/A002982) — n! − 1 primes.
+
 use rayon::prelude::*;
 use rug::ops::{Pow, RemRounding};
 use rug::Integer;
@@ -92,7 +140,7 @@ pub fn pocklington_factorial_proof(n: u64, candidate: &Integer, sieve_primes: &[
                 Ok(r) => r,
                 Err(_) => return false,
             };
-            let g = Integer::from(r - 1u32).gcd(candidate);
+            let g = (r - 1u32).gcd(candidate);
             if g == 1u32 {
                 return true; // This factor passes with this witness
             }
@@ -156,7 +204,7 @@ pub fn morrison_factorial_proof(n: u64, candidate: &Integer, sieve_primes: &[u64
             .map(|(i, &q)| {
                 let exp_q = Integer::from(&n_plus_1 / q);
                 let v = lucas_v_big(&exp_q, p_candidate, candidate);
-                let g = Integer::from(v - 2u32).gcd(candidate);
+                let g = (v - 2u32).gcd(candidate);
                 (i, g == 1u32)
             })
             .collect();
@@ -207,15 +255,15 @@ pub fn bls_near_repdigit_proof(
 
     // Compute cofactor: N+1 / 10^(k-m)
     let cofactor = if m == 0 {
-        Integer::from(10u32).pow((k + 1) as u32) - Integer::from(2 * d)
+        Integer::from(10u32).pow(crate::checked_u32(k + 1)) - Integer::from(2 * d)
     } else {
-        Integer::from(10u32).pow((k + m + 1) as u32)
-            - Integer::from(d) * (Integer::from(10u32).pow((2 * m) as u32) + 1u32)
+        Integer::from(10u32).pow(crate::checked_u32(k + m + 1))
+            - Integer::from(d) * (Integer::from(10u32).pow(crate::checked_u32(2 * m)) + 1u32)
     };
 
     // Verify factorization: 10^(k-m) * cofactor == N+1
     debug_assert_eq!(
-        Integer::from(10u32).pow(power_of_10_exp as u32) * &cofactor,
+        Integer::from(10u32).pow(crate::checked_u32(power_of_10_exp)) * &cofactor,
         n_plus_1,
         "BLS factorization check failed"
     );
@@ -295,7 +343,7 @@ pub fn bls_near_repdigit_proof(
             }
             let exp_q = Integer::from(&n_plus_1 / q);
             let v = lucas_v_big(&exp_q, p_candidate, candidate);
-            let g = Integer::from(v - 2u32).gcd(candidate);
+            let g = (v - 2u32).gcd(candidate);
             if g == 1u32 {
                 factor_satisfied[i] = true;
             }

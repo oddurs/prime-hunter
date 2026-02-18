@@ -1,5 +1,20 @@
 "use client";
 
+/**
+ * @module page (Dashboard)
+ *
+ * Main dashboard page — the landing view after login. Displays:
+ *
+ * - **Stat cards**: total primes, largest prime, per-form counts
+ * - **Recent primes table**: latest discoveries with form/digits/proof
+ * - **Discovery timeline**: stacked area chart of primes over time
+ * - **Digit distribution**: bar chart of primes by digit count
+ * - **Throughput gauge**: real-time candidates/sec sparkline
+ * - **Fleet summary**: active workers, total cores, search status
+ *
+ * Data sources: Supabase (stats, primes, charts) + WebSocket (fleet).
+ */
+
 import { useState, useEffect, useCallback } from "react";
 import { useWs } from "@/contexts/websocket-context";
 import { useStats } from "@/hooks/use-stats";
@@ -10,8 +25,6 @@ import { toast } from "sonner";
 import {
   Card,
   CardContent,
-  CardHeader,
-  CardTitle,
 } from "@/components/ui/card";
 import {
   Table,
@@ -46,14 +59,20 @@ import {
 import Link from "next/link";
 import { DiscoveryTimeline } from "@/components/charts/discovery-timeline";
 import { DigitDistribution } from "@/components/charts/digit-distribution";
-import { ThroughputGauge } from "@/components/charts/throughput-gauge";
 import { NewSearchDialog } from "@/components/new-search-dialog";
+import { InsightCards } from "@/components/insight-cards";
+import { FormLeaderboard } from "@/components/form-leaderboard";
+import { ActivityFeed } from "@/components/activity-feed";
+import { useFormLeaderboard } from "@/hooks/use-form-leaderboard";
 import { AddServerDialog } from "@/components/add-server-dialog";
 import { HostNodeCard, type HostNode } from "@/components/host-node-card";
+import { ServiceStatusCard } from "@/components/service-status-card";
+import { AgentControllerCard } from "@/components/agent-controller-card";
 import { API_BASE, numberWithCommas, formToSlug, formatUptime } from "@/lib/format";
 import type { WorkerStatus, ManagedSearch, Deployment, HardwareMetrics } from "@/hooks/use-websocket";
 import { MetricsBar } from "@/components/metrics-bar";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { ViewHeader } from "@/components/view-header";
 
 type SortColumn = "expression" | "form" | "digits" | "found_at" | undefined;
 type SortDir = "asc" | "desc" | undefined;
@@ -143,6 +162,10 @@ export default function Dashboard() {
     coordinator,
     searches,
     deployments,
+    agentTasks,
+    agentBudgets,
+    runningAgents,
+    connected,
   } = useWs();
 
   // Prime data from Supabase
@@ -150,6 +173,7 @@ export default function Dashboard() {
   const { primes, selectedPrime, fetchPrimes, fetchPrimeDetail, clearSelectedPrime } = usePrimes();
   const { timeline } = useTimeline();
   const { distribution } = useDistribution();
+  const { entries: leaderboardEntries } = useFormLeaderboard();
 
   const [newSearchOpen, setNewSearchOpen] = useState(false);
   const [addServerOpen, setAddServerOpen] = useState(false);
@@ -282,45 +306,46 @@ export default function Dashboard() {
 
   return (
     <>
-      <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between mb-4 pb-4 border-b">
-        <div>
-          <h1 className="text-2xl font-semibold text-foreground">Dashboard</h1>
-          <p className="text-sm text-muted-foreground mt-1">
-            Real-time prime search monitoring, fleet health, and discovery history
-          </p>
-          <div className="flex flex-wrap gap-1.5 mt-3">
-            <Badge variant="outline">
-              {status?.active ? "Active search" : "Idle"}
-            </Badge>
-            <Badge variant="outline">
-              {serverCount} server{serverCount !== 1 ? "s" : ""} &middot; {dashboardRunningCount} running &middot; {totalCores} cores
-            </Badge>
-          </div>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <Button variant="outline" size="sm" asChild>
-            <Link href="/browse">Browse</Link>
-          </Button>
-          <Button variant="outline" size="sm" asChild>
-            <Link href="/searches">All Searches</Link>
-          </Button>
-          <Button size="sm" onClick={() => setNewSearchOpen(true)}>
-            New Search
-          </Button>
-        </div>
-      </div>
-
       <Tabs
         defaultValue="status-section"
         onValueChange={(v) => scrollToSection(v)}
-        className="mb-6"
       >
-        <TabsList variant="line">
-          <TabsTrigger value="status-section">Status</TabsTrigger>
-          <TabsTrigger value="infra-section">Infrastructure</TabsTrigger>
-          <TabsTrigger value="insights-section">Insights</TabsTrigger>
-          <TabsTrigger value="primes-section">Prime Archive</TabsTrigger>
-        </TabsList>
+        <ViewHeader
+          title="Dashboard"
+          subtitle="Real-time prime search monitoring, fleet health, and discovery history"
+          metadata={
+            <div className="flex flex-wrap gap-1.5">
+              <Badge variant="outline">
+                {status?.active ? "Active search" : "Idle"}
+              </Badge>
+              <Badge variant="outline">
+                {serverCount} server{serverCount !== 1 ? "s" : ""} &middot; {dashboardRunningCount} running &middot; {totalCores} cores
+              </Badge>
+            </div>
+          }
+          actions={
+            <>
+              <Button variant="outline" size="sm" asChild>
+                <Link href="/browse">Browse</Link>
+              </Button>
+              <Button variant="outline" size="sm" asChild>
+                <Link href="/searches">All Searches</Link>
+              </Button>
+              <Button size="sm" onClick={() => setNewSearchOpen(true)}>
+                New Search
+              </Button>
+            </>
+          }
+          tabs={
+            <TabsList variant="line">
+              <TabsTrigger value="status-section">Status</TabsTrigger>
+              <TabsTrigger value="infra-section">Infrastructure</TabsTrigger>
+              <TabsTrigger value="insights-section">Insights</TabsTrigger>
+              <TabsTrigger value="primes-section">Prime Archive</TabsTrigger>
+            </TabsList>
+          }
+          className="mb-6"
+        />
       </Tabs>
 
       {/* Status bar with progress */}
@@ -406,16 +431,9 @@ export default function Dashboard() {
       {/* Infrastructure section */}
       <section id="infra-section" className="mb-6 scroll-mt-6">
         <div className="flex items-baseline justify-between mb-3 border-b pb-2">
-          <div className="flex items-baseline gap-3">
-            <h2 className="text-base font-semibold text-foreground">
-              Infrastructure
-            </h2>
-            <span className="text-sm text-muted-foreground">
-              {serverCount} server{serverCount !== 1 ? "s" : ""} &middot;{" "}
-              {dashboardRunningCount} searches running &middot;{" "}
-              {totalCores} cores
-            </span>
-          </div>
+          <h2 className="text-base font-semibold text-foreground">
+            Infrastructure
+          </h2>
           <div className="flex items-center gap-2">
             <Button variant="outline" size="sm" onClick={() => setAddServerOpen(true)}>
               Add Server
@@ -426,26 +444,91 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {hostNodes.length === 0 ? (
-          <Card className="py-8">
-            <CardContent className="p-0 px-4 text-center text-muted-foreground text-sm">
-              No servers connected. Click &ldquo;Add Server&rdquo; to deploy a worker via SSH.
-            </CardContent>
-          </Card>
-        ) : (
-          <div className="space-y-3">
-            {hostNodes.map((node) => (
-              <HostNodeCard
-                key={node.hostname}
-                node={node}
-                onInspectWorker={(w) => {
-                  setSelectedWorker(w);
-                  setWorkerDetailOpen(true);
-                }}
-              />
-            ))}
-          </div>
-        )}
+        {/* Services row */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mb-4">
+          <ServiceStatusCard
+            name="Coordinator"
+            status={connected ? "online" : "offline"}
+          >
+            {coordinator && (
+              <div className="space-y-1.5">
+                <MetricsBar label="CPU" percent={coordinator.cpu_usage_percent} />
+                <MetricsBar
+                  label="Mem"
+                  percent={coordinator.memory_usage_percent}
+                  detail={`${coordinator.memory_used_gb} / ${coordinator.memory_total_gb} GB`}
+                />
+              </div>
+            )}
+            <div className="text-xs text-muted-foreground">
+              {dashboardRunningCount} search{dashboardRunningCount !== 1 ? "es" : ""} running
+            </div>
+          </ServiceStatusCard>
+
+          <AgentControllerCard
+            runningAgents={runningAgents}
+            agentTasks={agentTasks}
+            agentBudgets={agentBudgets}
+          />
+
+          <ServiceStatusCard
+            name="Database"
+            status={stats ? "online" : "offline"}
+          >
+            <div className="text-xs text-muted-foreground">
+              {stats ? `${numberWithCommas(stats.total)} primes stored` : "Connecting..."}
+            </div>
+            {stats?.by_form && stats.by_form.length > 0 && (
+              <div className="text-xs text-muted-foreground">
+                {stats.by_form.length} form{stats.by_form.length !== 1 ? "s" : ""} indexed
+              </div>
+            )}
+          </ServiceStatusCard>
+        </div>
+
+        {/* Fleet aggregate stats strip */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
+          {[
+            { value: serverCount, label: "Servers" },
+            { value: totalCores, label: "Cores" },
+            { value: dashboardRunningCount, label: "Active Searches" },
+            { value: fleet?.total_tested ?? 0, label: "Candidates Tested" },
+          ].map(({ value, label }) => (
+            <div key={label} className="text-center py-2 rounded-md bg-muted/50">
+              <div className="text-lg font-semibold tabular-nums text-foreground">
+                {numberWithCommas(value)}
+              </div>
+              <div className="text-[11px] text-muted-foreground">{label}</div>
+            </div>
+          ))}
+        </div>
+
+        {/* Server nodes */}
+        {(() => {
+          const filteredNodes = hostNodes.filter(
+            (n) => n.workers.length > 0 || n.deployments.length > 0 || !n.isCoordinator
+          );
+          return filteredNodes.length === 0 ? (
+            <Card className="py-8">
+              <CardContent className="p-0 px-4 text-center text-muted-foreground text-sm">
+                No servers connected. Click &ldquo;Add Server&rdquo; to deploy a worker via SSH.
+              </CardContent>
+            </Card>
+          ) : (
+            <div className="space-y-3">
+              {filteredNodes.map((node) => (
+                <HostNodeCard
+                  key={node.hostname}
+                  node={node}
+                  onInspectWorker={(w) => {
+                    setSelectedWorker(w);
+                    setWorkerDetailOpen(true);
+                  }}
+                />
+              ))}
+            </div>
+          );
+        })()}
       </section>
 
       <AddServerDialog
@@ -469,88 +552,30 @@ export default function Dashboard() {
           <div>
             <h2 className="text-base font-semibold text-foreground">Insights</h2>
             <p className="text-sm text-muted-foreground mt-1">
-              Discovery totals, trend analysis, and throughput overview
+              Computed metrics, form analytics, and recent activity
             </p>
           </div>
         </div>
-      {/* Stats cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-xs font-medium text-muted-foreground">
-              Total primes found
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-semibold tabular-nums text-foreground">
-              {stats ? numberWithCommas(stats.total) : "-"}
-            </div>
-          </CardContent>
-        </Card>
 
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-xs font-medium text-muted-foreground">
-              Largest prime
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-semibold tabular-nums text-foreground">
-              {stats?.largest_expression
-                ? `${numberWithCommas(stats.largest_digits)} digits`
-                : "-"}
-            </div>
-            {stats?.largest_expression && (
-              <div className="text-sm text-muted-foreground mt-1 break-all">
-                {stats.largest_expression}
-              </div>
-            )}
-          </CardContent>
-        </Card>
+        {/* Insight cards row */}
+        <InsightCards
+          timeline={timeline}
+          stats={stats}
+          fleet={fleet}
+          latestPrime={primes.primes[0] ?? null}
+        />
 
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-xs font-medium text-muted-foreground">
-              By form
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="flex flex-wrap gap-2">
-              {stats?.by_form.length ? (
-                stats.by_form.map((f) => (
-                  <Link
-                    key={f.form}
-                    href={`/docs?doc=${formToSlug(f.form)}`}
-                  >
-                    <Badge
-                      variant="secondary"
-                      className="cursor-pointer hover:bg-secondary/80"
-                    >
-                      {f.form}{" "}
-                      <span className="text-primary font-semibold ml-1">
-                        {f.count}
-                      </span>
-                    </Badge>
-                  </Link>
-                ))
-              ) : (
-                <span className="text-muted-foreground">-</span>
-              )}
-            </div>
-          </CardContent>
-        </Card>
-      </div>
+        {/* Form leaderboard */}
+        <FormLeaderboard entries={leaderboardEntries} />
 
-      {/* Charts */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
-        <DiscoveryTimeline data={timeline} />
-        <DigitDistribution data={distribution} />
-      </div>
-      {fleet && fleet.total_workers > 0 && (
-        <div className="mb-6">
-          <ThroughputGauge fleet={fleet} />
+        {/* Activity feed + Discovery timeline side by side */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
+          <ActivityFeed primes={primes.primes} />
+          <DiscoveryTimeline data={timeline} />
         </div>
-      )}
+
+        {/* Digit distribution full width */}
+        <DigitDistribution data={distribution} />
       </section>
 
       <Card id="primes-section" className="mb-4 scroll-mt-6 border">

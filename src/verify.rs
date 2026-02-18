@@ -1,9 +1,35 @@
+//! # Verify — Independent Prime Re-Verification
+//!
+//! Reconstructs candidate integers from their stored form and expression,
+//! then re-tests primality using an independent method. This provides a
+//! second layer of confidence beyond the original search-time proof.
+//!
+//! ## Verification Tiers
+//!
+//! | Tier | Method | Confidence |
+//! |------|--------|------------|
+//! | 1 | Deterministic proof (Proth, LLR, Pocklington, Morrison, BLS) | Proven |
+//! | 2 | GMP `is_probably_prime(25)` (Miller-Rabin + BPSW) | ~1 in 4^25 error |
+//! | 3 | PFGW subprocess verification | Independent PRP |
+//!
+//! ## Expression Parsing
+//!
+//! Each prime form has a dedicated parser that reconstructs the `rug::Integer`
+//! from the human-readable expression string (e.g., `"73! + 1"`, `"3*2^50000+1"`,
+//! `"R(317)"` for repunits). Parsers handle all 12 supported forms.
+//!
+//! ## Usage
+//!
+//! Called by the `primehunt verify` subcommand and the dashboard's
+//! `/api/verify` endpoint to audit primes already in the database.
+
 use anyhow::{anyhow, Result};
 use rug::integer::IsPrime;
 use rug::ops::Pow;
 use rug::Integer;
 
 use crate::db::PrimeDetail;
+use crate::pfgw;
 use crate::{has_small_factor, kbn, proof, sieve};
 
 /// Result of a verification attempt.
@@ -415,7 +441,7 @@ fn verify_tier1_kbn(expression: &str, candidate: &Integer) -> VerifyResult {
     };
 
     let is_plus = sign == '+';
-    let (result, method) = kbn::test_prime(candidate, k, base, n as u64, is_plus, 15);
+    let (result, method) = kbn::test_prime(candidate, k, base, n, is_plus, 15);
     match result {
         IsPrime::Yes if method == "deterministic" => VerifyResult::Verified {
             method: "tier1-kbn-deterministic".into(),
@@ -470,16 +496,14 @@ fn verify_tier1_factorial(expression: &str, candidate: &Integer) -> VerifyResult
                 reason: "Pocklington proof failed".into(),
             }
         }
+    } else if proof::morrison_factorial_proof(n, candidate, &sieve_primes) {
+        VerifyResult::Verified {
+            method: "tier1-morrison".into(),
+            tier: 1,
+        }
     } else {
-        if proof::morrison_factorial_proof(n, candidate, &sieve_primes) {
-            VerifyResult::Verified {
-                method: "tier1-morrison".into(),
-                tier: 1,
-            }
-        } else {
-            VerifyResult::Failed {
-                reason: "Morrison proof failed".into(),
-            }
+        VerifyResult::Failed {
+            reason: "Morrison proof failed".into(),
         }
     }
 }
@@ -521,16 +545,14 @@ fn verify_tier1_primorial(expression: &str, candidate: &Integer) -> VerifyResult
                 reason: "Pocklington proof failed for primorial".into(),
             }
         }
+    } else if proof::morrison_factorial_proof(p, candidate, &sieve_primes) {
+        VerifyResult::Verified {
+            method: "tier1-morrison".into(),
+            tier: 1,
+        }
     } else {
-        if proof::morrison_factorial_proof(p, candidate, &sieve_primes) {
-            VerifyResult::Verified {
-                method: "tier1-morrison".into(),
-                tier: 1,
-            }
-        } else {
-            VerifyResult::Failed {
-                reason: "Morrison proof failed for primorial".into(),
-            }
+        VerifyResult::Failed {
+            reason: "Morrison proof failed for primorial".into(),
         }
     }
 }
@@ -579,6 +601,70 @@ pub fn verify_tier2(candidate: &Integer) -> VerifyResult {
     }
 }
 
+/// Convert repunit notation `R(base, n)` to PFGW algebraic format `(base^n-1)/(base-1)`.
+fn convert_repunit_to_pfgw(expression: &str) -> String {
+    let expr = expression.replace(" ", "");
+    // Parse R(base,n) format
+    if let Some(inner) = expr.strip_prefix("R(").and_then(|s| s.strip_suffix(')')) {
+        if let Some((base_str, n_str)) = inner.split_once(',') {
+            return format!("({}^{}-1)/({})", base_str.trim(), n_str.trim(), base_str.trim().parse::<u64>().unwrap_or(10) - 1);
+        }
+    }
+    // Fallback: return as-is
+    expression.to_string()
+}
+
+/// Cross-verify using PFGW subprocess (independent tool verification).
+///
+/// This provides verification via a completely independent code path (PFGW uses GWNUM
+/// internally, while our primary tests use GMP). Returns Skipped if PFGW is not available.
+pub fn verify_pfgw(form: &str, expression: &str, candidate: &Integer) -> VerifyResult {
+    let pfgw_expr = match form {
+        "factorial" => expression.replace(" ", ""),
+        "primorial" => expression.replace(" ", ""),
+        "wagstaff" => expression.replace(" ", ""),
+        "palindromic" => candidate.to_string_radix(10),
+        "near_repdigit" => expression.replace(" ", ""),
+        "repunit" => {
+            // Convert R(b,n) to PFGW format: (b^n-1)/(b-1)
+            convert_repunit_to_pfgw(expression)
+        }
+        _ => expression.to_string(),
+    };
+
+    let mode = match form {
+        "factorial" if expression.contains('+') => pfgw::PfgwMode::NMinus1Proof,
+        "factorial" => pfgw::PfgwMode::NPlus1Proof,
+        "primorial" if expression.contains('+') => pfgw::PfgwMode::NMinus1Proof,
+        "primorial" => pfgw::PfgwMode::NPlus1Proof,
+        _ => pfgw::PfgwMode::Prp,
+    };
+
+    match pfgw::try_test(&pfgw_expr, candidate, mode) {
+        Some(pfgw::PfgwResult::Prime {
+            method,
+            is_deterministic,
+        }) => {
+            let tier_name = if is_deterministic {
+                format!("pfgw-proof ({})", method)
+            } else {
+                format!("pfgw-prp ({})", method)
+            };
+            VerifyResult::Verified {
+                method: tier_name,
+                tier: 3,
+            }
+        }
+        Some(pfgw::PfgwResult::Composite) => VerifyResult::Failed {
+            reason: "PFGW says composite".into(),
+        },
+        Some(pfgw::PfgwResult::Unavailable { reason }) => VerifyResult::Skipped { reason },
+        None => VerifyResult::Skipped {
+            reason: "PFGW not initialized".into(),
+        },
+    }
+}
+
 /// Main entry point: verify a single prime from the database.
 pub fn verify_prime(detail: &PrimeDetail) -> VerifyResult {
     // Step 1: Reconstruct candidate
@@ -616,7 +702,26 @@ pub fn verify_prime(detail: &PrimeDetail) -> VerifyResult {
     }
 
     // Step 4: Tier 2 for probabilistic/skipped primes
-    verify_tier2(&candidate)
+    let t2 = verify_tier2(&candidate);
+    match &t2 {
+        VerifyResult::Failed { .. } => return t2,
+        VerifyResult::Skipped { .. } => return t2,
+        VerifyResult::Verified { .. } => {}
+    }
+
+    // Step 5: For primes >= 1000 digits, attempt tier 3 (PFGW cross-verification)
+    // using a completely independent code path for maximum confidence.
+    if actual_digits >= 1000 {
+        let t3 = verify_pfgw(&detail.form, &detail.expression, &candidate);
+        match &t3 {
+            VerifyResult::Verified { .. } => return t3, // stronger: independent tool
+            VerifyResult::Failed { .. } => return t3,   // PFGW disagrees — flag it
+            VerifyResult::Skipped { .. } => {}          // PFGW not available
+        }
+    }
+
+    // Return tier 2 result if tier 3 was skipped or not attempted
+    t2
 }
 
 #[cfg(test)]
@@ -852,6 +957,30 @@ mod tests {
         }
     }
 
+    // --- PFGW cross-verification tests ---
+
+    #[test]
+    fn verify_pfgw_returns_skipped_when_not_initialized() {
+        // PFGW is not initialized in test context, so verify_pfgw should return Skipped
+        let c = Integer::from(Integer::factorial(11)) + 1u32;
+        match verify_pfgw("factorial", "11!+1", &c) {
+            VerifyResult::Skipped { .. } => {}
+            other => panic!("Expected Skipped (PFGW not initialized), got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn verify_pfgw_mode_selection() {
+        // Verify that factorial+1 uses NMinus1Proof and factorial-1 uses NPlus1Proof
+        // We can't test the actual PFGW execution, but we can verify the function doesn't panic
+        let c_plus = Integer::from(Integer::factorial(11)) + 1u32;
+        let c_minus = Integer::from(Integer::factorial(4)) - 1u32;
+        let _ = verify_pfgw("factorial", "11! + 1", &c_plus);
+        let _ = verify_pfgw("factorial", "4! - 1", &c_minus);
+        let _ = verify_pfgw("wagstaff", "(2^11+1)/3", &Integer::from(683u32));
+        let _ = verify_pfgw("palindromic", "10301", &Integer::from(10301u32));
+    }
+
     #[test]
     fn verify_prime_digit_mismatch() {
         let detail = PrimeDetail {
@@ -866,6 +995,38 @@ mod tests {
         match verify_prime(&detail) {
             VerifyResult::Failed { reason } => assert!(reason.contains("Digit count mismatch")),
             other => panic!("Expected Failed, got {:?}", other),
+        }
+    }
+
+    // --- convert_repunit_to_pfgw tests ---
+
+    #[test]
+    fn repunit_pfgw_format_base10() {
+        let result = convert_repunit_to_pfgw("R(10, 7)");
+        assert_eq!(result, "(10^7-1)/(9)");
+    }
+
+    #[test]
+    fn repunit_pfgw_format_base2() {
+        let result = convert_repunit_to_pfgw("R(2, 31)");
+        assert_eq!(result, "(2^31-1)/(1)");
+    }
+
+    #[test]
+    fn repunit_pfgw_format_fallback() {
+        // Non-R() expression passes through unchanged
+        let result = convert_repunit_to_pfgw("(10^7-1)/9");
+        assert_eq!(result, "(10^7-1)/9");
+    }
+
+    #[test]
+    fn verify_pfgw_repunit_doesnt_crash() {
+        // Ensure verify_pfgw with a repunit expression doesn't panic, regardless of PFGW availability
+        let candidate = (Integer::from(10u32).pow(7) - 1u32) / 9u32;
+        let result = verify_pfgw("repunit", "R(10, 7)", &candidate);
+        // Should return Skipped (PFGW not initialized in tests) or a valid result
+        match result {
+            VerifyResult::Verified { .. } | VerifyResult::Failed { .. } | VerifyResult::Skipped { .. } => {}
         }
     }
 }

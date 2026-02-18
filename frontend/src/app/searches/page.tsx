@@ -1,5 +1,14 @@
 "use client";
 
+/**
+ * @module searches/page
+ *
+ * Search management page. Lists all active, queued, and completed
+ * search jobs with their progress. Provides controls to start new
+ * searches (via `NewSearchDialog`), stop running searches, and view
+ * search job blocks and work distribution across the fleet.
+ */
+
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useWs } from "@/contexts/websocket-context";
 import { toast } from "sonner";
@@ -13,6 +22,7 @@ import type { ManagedSearch } from "@/hooks/use-websocket";
 import Link from "next/link";
 import { API_BASE, numberWithCommas } from "@/lib/format";
 import { Activity, CheckCircle2, Hash, Server, XCircle } from "lucide-react";
+import { ViewHeader } from "@/components/view-header";
 
 function sortSearches(searches: ManagedSearch[]): ManagedSearch[] {
   return [...searches].sort((a, b) => {
@@ -217,78 +227,77 @@ export default function SearchesPage() {
 
   return (
     <>
-      <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between mb-4 pb-4 border-b">
-        <div>
-          <h1 className="text-2xl font-semibold text-foreground">Searches</h1>
-          <p className="text-sm text-muted-foreground mt-1">
-            {runningCount} running &middot; {totalCount} total
-          </p>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <Button variant="outline" size="sm" asChild>
-            <Link href="/fleet">Fleet</Link>
-          </Button>
-          <Button size="sm" onClick={() => setNewSearchOpen(true)}>New Search</Button>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-2 lg:grid-cols-5 gap-3 mb-4">
-        <Card className="py-3">
-          <CardContent className="px-4 p-0 flex items-center justify-between">
-            <div>
-              <div className="text-xs font-medium text-muted-foreground">Running</div>
-              <div className="text-xl font-semibold tabular-nums">{runningCount}</div>
-            </div>
-            <Activity className="size-4 text-primary" />
-          </CardContent>
-        </Card>
-        <Card className="py-3">
-          <CardContent className="px-4 p-0 flex items-center justify-between">
-            <div>
-              <div className="text-xs font-medium text-muted-foreground">Completed</div>
-              <div className="text-xl font-semibold tabular-nums">{completedCount}</div>
-            </div>
-            <CheckCircle2 className="size-4 text-green-500" />
-          </CardContent>
-        </Card>
-        <Card className="py-3">
-          <CardContent className="px-4 p-0 flex items-center justify-between">
-            <div>
-              <div className="text-xs font-medium text-muted-foreground">Failed</div>
-              <div className="text-xl font-semibold tabular-nums">{failedCount}</div>
-            </div>
-            <XCircle className="size-4 text-red-500" />
-          </CardContent>
-        </Card>
-        <Card className="py-3">
-          <CardContent className="px-4 p-0 flex items-center justify-between">
-            <div>
-              <div className="text-xs font-medium text-muted-foreground">Primes found</div>
-              <div className="text-xl font-semibold tabular-nums">{numberWithCommas(totalFound)}</div>
-            </div>
-            <Hash className="size-4 text-amber-500" />
-          </CardContent>
-        </Card>
-        <Card className="py-3">
-          <CardContent className="px-4 p-0 flex items-center justify-between">
-            <div>
-              <div className="text-xs font-medium text-muted-foreground">Tested</div>
-              <div className="text-xl font-semibold tabular-nums">{numberWithCommas(totalTested)}</div>
-            </div>
-            <Server className="size-4 text-muted-foreground" />
-          </CardContent>
-        </Card>
-      </div>
-
       <Tabs defaultValue="all">
-        <TabsList variant="line" className="w-full justify-start border-b rounded-none bg-transparent p-0">
-          <TabsTrigger value="all">
-            All{totalCount > 0 ? ` (${totalCount})` : ""}
-          </TabsTrigger>
-          <TabsTrigger value="running">
-            Running{runningCount > 0 ? ` (${runningCount})` : ""}
-          </TabsTrigger>
-        </TabsList>
+        <ViewHeader
+          title="Searches"
+          subtitle={`${runningCount} running \u00b7 ${totalCount} total`}
+          actions={
+            <>
+              <Button variant="outline" size="sm" asChild>
+                <Link href="/fleet">Fleet</Link>
+              </Button>
+              <Button size="sm" onClick={() => setNewSearchOpen(true)}>New Search</Button>
+            </>
+          }
+          tabs={
+            <TabsList variant="line">
+              <TabsTrigger value="all">
+                All{totalCount > 0 ? ` (${totalCount})` : ""}
+              </TabsTrigger>
+              <TabsTrigger value="running">
+                Running{runningCount > 0 ? ` (${runningCount})` : ""}
+              </TabsTrigger>
+            </TabsList>
+          }
+        />
+
+        <div className="grid grid-cols-2 lg:grid-cols-5 gap-3 mb-4">
+          <Card className="py-3">
+            <CardContent className="px-4 p-0 flex items-center justify-between">
+              <div>
+                <div className="text-xs font-medium text-muted-foreground">Running</div>
+                <div className="text-xl font-semibold tabular-nums">{runningCount}</div>
+              </div>
+              <Activity className="size-4 text-primary" />
+            </CardContent>
+          </Card>
+          <Card className="py-3">
+            <CardContent className="px-4 p-0 flex items-center justify-between">
+              <div>
+                <div className="text-xs font-medium text-muted-foreground">Completed</div>
+                <div className="text-xl font-semibold tabular-nums">{completedCount}</div>
+              </div>
+              <CheckCircle2 className="size-4 text-green-500" />
+            </CardContent>
+          </Card>
+          <Card className="py-3">
+            <CardContent className="px-4 p-0 flex items-center justify-between">
+              <div>
+                <div className="text-xs font-medium text-muted-foreground">Failed</div>
+                <div className="text-xl font-semibold tabular-nums">{failedCount}</div>
+              </div>
+              <XCircle className="size-4 text-red-500" />
+            </CardContent>
+          </Card>
+          <Card className="py-3">
+            <CardContent className="px-4 p-0 flex items-center justify-between">
+              <div>
+                <div className="text-xs font-medium text-muted-foreground">Primes found</div>
+                <div className="text-xl font-semibold tabular-nums">{numberWithCommas(totalFound)}</div>
+              </div>
+              <Hash className="size-4 text-amber-500" />
+            </CardContent>
+          </Card>
+          <Card className="py-3">
+            <CardContent className="px-4 p-0 flex items-center justify-between">
+              <div>
+                <div className="text-xs font-medium text-muted-foreground">Tested</div>
+                <div className="text-xl font-semibold tabular-nums">{numberWithCommas(totalTested)}</div>
+              </div>
+              <Server className="size-4 text-muted-foreground" />
+            </CardContent>
+          </Card>
+        </div>
 
         <TabsContent value="running" className="mt-4">
           {sortedRunning.length > 0 && (

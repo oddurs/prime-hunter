@@ -15,6 +15,8 @@ Based on research into GIMPS, PrimeGrid, PFGW, LLR, mtsieve, and the current com
 | **Frontend** | Next.js dashboard, charts, real-time monitoring | [docs/roadmaps/frontend.md](docs/roadmaps/frontend.md) |
 | **Ops** | Deployment, build optimization, Apple Silicon, fleet management | [docs/roadmaps/ops.md](docs/roadmaps/ops.md) |
 | **Research** | Discovery strategy, publication pipeline, competitive analysis | [docs/roadmaps/research.md](docs/roadmaps/research.md) |
+| **Agents** | AI agent execution, orchestration, tools, budgets, automation | [docs/roadmaps/agents.md](docs/roadmaps/agents.md) |
+| **Projects** | Campaign management, orchestration, cost tracking, records | [docs/roadmaps/projects.md](docs/roadmaps/projects.md) |
 
 ---
 

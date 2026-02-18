@@ -1,5 +1,23 @@
 "use client";
 
+/**
+ * @module use-websocket
+ *
+ * WebSocket client hook for real-time coordination data from the Rust
+ * backend (`dashboard.rs`). Connects to `/ws` and receives JSON frames
+ * every 2 seconds containing:
+ *
+ * - **Fleet data**: worker list with heartbeat status, hardware metrics
+ * - **Search data**: active/completed search processes
+ * - **Deployment data**: remote worker deployments via SSH
+ * - **Status data**: coordinator uptime, active search checkpoint
+ *
+ * Handles reconnection with exponential backoff. This is the only
+ * WebSocket in the app — all Supabase data uses REST/Realtime instead.
+ *
+ * @see {@link src/contexts/websocket-context.tsx} — provides this via React context
+ */
+
 import { useEffect, useRef, useState, useCallback } from "react";
 
 export interface Status {
@@ -99,6 +117,54 @@ export interface Notification {
   timestamp_ms: number;
 }
 
+export interface AgentTaskSummary {
+  id: number;
+  title: string;
+  status: string;
+  priority: string;
+  agent_model: string | null;
+  tokens_used: number;
+  cost_usd: number;
+  created_at: string;
+}
+
+export interface AgentBudgetSummary {
+  id: number;
+  period: string;
+  budget_usd: number;
+  spent_usd: number;
+  tokens_used: number;
+}
+
+export interface AgentInfo {
+  task_id: number;
+  title: string;
+  model: string;
+  status: string;
+  started_at: string;
+  pid: number | null;
+}
+
+export interface ProjectSummary {
+  slug: string;
+  name: string;
+  form: string;
+  objective: string;
+  status: string;
+  total_tested: number;
+  total_found: number;
+  best_digits: number;
+  total_cost_usd: number;
+}
+
+export interface RecordSummary {
+  form: string;
+  expression: string;
+  digits: number;
+  holder: string | null;
+  our_best_digits: number;
+}
+
 /** Coordination-only WebSocket data. Prime data comes from Supabase. */
 export interface WsData {
   status: Status | null;
@@ -107,6 +173,11 @@ export interface WsData {
   searches: ManagedSearch[];
   deployments: Deployment[];
   notifications: Notification[];
+  agentTasks: AgentTaskSummary[];
+  agentBudgets: AgentBudgetSummary[];
+  runningAgents: AgentInfo[];
+  projects: ProjectSummary[];
+  records: RecordSummary[];
   connected: boolean;
   sendMessage: (msg: object) => void;
 }
@@ -118,9 +189,15 @@ export function useWebSocket(): WsData {
   const [deployments, setDeployments] = useState<Deployment[]>([]);
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [coordinator, setCoordinator] = useState<HardwareMetrics | null>(null);
+  const [agentTasks, setAgentTasks] = useState<AgentTaskSummary[]>([]);
+  const [agentBudgets, setAgentBudgets] = useState<AgentBudgetSummary[]>([]);
+  const [runningAgents, setRunningAgents] = useState<AgentInfo[]>([]);
+  const [projects, setProjects] = useState<ProjectSummary[]>([]);
+  const [records, setRecords] = useState<RecordSummary[]>([]);
   const [connected, setConnected] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const reconnectDelayRef = useRef(1000);
   const connectRef = useRef<() => void>(() => {});
 
   const connect = useCallback(() => {
@@ -134,14 +211,21 @@ export function useWebSocket(): WsData {
     const ws = new WebSocket(wsUrl);
     wsRef.current = ws;
 
-    ws.onopen = () => setConnected(true);
+    ws.onopen = () => {
+      setConnected(true);
+      reconnectDelayRef.current = 1000; // reset on success
+    };
 
     ws.onclose = () => {
       setConnected(false);
       wsRef.current = null;
+      const delay = reconnectDelayRef.current;
+      // Exponential backoff with jitter: 1s → 2s → 4s → ... → 30s max
+      const jitter = Math.random() * 500;
       reconnectTimerRef.current = setTimeout(() => {
         connectRef.current();
-      }, 3000);
+      }, delay + jitter);
+      reconnectDelayRef.current = Math.min(delay * 2, 30000);
     };
 
     ws.onerror = () => ws.close();
@@ -155,6 +239,11 @@ export function useWebSocket(): WsData {
           if (data.searches) setSearches(data.searches);
           if (data.deployments) setDeployments(data.deployments);
           if (data.notifications) setNotifications(data.notifications);
+          if (data.agent_tasks) setAgentTasks(data.agent_tasks);
+          if (data.agent_budgets) setAgentBudgets(data.agent_budgets);
+          if (data.running_agents) setRunningAgents(data.running_agents);
+          if (data.projects) setProjects(data.projects);
+          if (data.records) setRecords(data.records);
           setCoordinator(data.coordinator ?? null);
         } else if (data.type === "notification") {
           const notif = data.notification as Notification;
@@ -194,6 +283,11 @@ export function useWebSocket(): WsData {
     searches,
     deployments,
     notifications,
+    agentTasks,
+    agentBudgets,
+    runningAgents,
+    projects,
+    records,
     connected,
     sendMessage,
   };

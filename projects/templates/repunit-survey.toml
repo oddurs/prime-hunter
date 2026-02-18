@@ -1,0 +1,24 @@
+[project]
+name = "repunit-survey"
+description = "Survey repunit primes R(b,n) = (b^n-1)/(b-1)"
+objective = "survey"
+form = "repunit"
+
+[target]
+range_start = 2
+range_end = 100000
+
+[competitive]
+current_record_expression = "R(10, 8177207)"
+current_record_digits = 8177207
+current_record_holder = "Harvey Dubner"
+oeis_sequence = "A004023"
+reference_urls = ["https://t5k.org/top20/page.php?id=44"]
+
+[strategy]
+auto_strategy = true
+
+[budget]
+max_cost_usd = 100.0
+cost_alert_threshold_usd = 50.0
+cloud_rate_usd_per_core_hour = 0.04

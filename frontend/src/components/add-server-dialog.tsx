@@ -1,5 +1,13 @@
 "use client";
 
+/**
+ * @module add-server-dialog
+ *
+ * Modal dialog for adding a new remote server to the fleet. Collects
+ * hostname, SSH user, SSH key path, and search parameters, then POSTs
+ * a deployment request to the Rust backend's `/api/deploy` endpoint.
+ */
+
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";

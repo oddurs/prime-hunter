@@ -1,3 +1,25 @@
+//! # Events — Structured Event Bus for Search Activity
+//!
+//! A bounded, thread-safe event log that collects structured events from engine
+//! search modules and transforms them into notifications for the frontend.
+//!
+//! ## Event Types
+//!
+//! | Variant | Emitted When |
+//! |---------|-------------|
+//! | `PrimeFound` | A new prime is discovered and logged to the database |
+//! | `SearchStarted` | A search subprocess begins execution |
+//! | `SearchCompleted` | A search finishes (with summary statistics) |
+//! | `Milestone` | Notable progress (e.g., digit record, sieve phase complete) |
+//! | `Warning` | Non-fatal issues (e.g., heartbeat timeout, checkpoint failure) |
+//! | `Error` | Fatal errors that terminate a search |
+//!
+//! ## Delivery
+//!
+//! Events are stored in a `VecDeque` (bounded to prevent unbounded growth)
+//! and converted to `Notification` structs for WebSocket delivery to the
+//! Next.js frontend. Each notification gets a monotonic `id` for deduplication.
+
 use serde::Serialize;
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -98,6 +120,12 @@ fn now_ms() -> u64 {
 const RECENT_EVENTS_CAP: usize = 200;
 const NOTIFICATIONS_CAP: usize = 50;
 const FLUSH_INTERVAL_SECS: u64 = 10;
+
+impl Default for EventBus {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl EventBus {
     pub fn new() -> Self {

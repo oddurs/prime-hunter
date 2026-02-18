@@ -1,3 +1,41 @@
+//! # Sophie Germain — Sophie Germain Prime Search
+//!
+//! Searches for Sophie Germain primes: primes p such that 2p + 1 (the "safe prime")
+//! is also prime. In the k·b^n form: if p = k·b^n − 1, then 2p + 1 = 2k·b^n − 1.
+//! Both are of the Riesel form and LLR-testable when base = 2.
+//!
+//! ## Algorithm
+//!
+//! 1. **Dual BSGS sieve**: Sieves both p = k·b^n − 1 (using k) and
+//!    2p + 1 = 2k·b^n − 1 (using 2k) via `kbn::bsgs_sieve`. Only n-values
+//!    where both forms survive are tested. The doubling of k requires no
+//!    separate sieve infrastructure — just a different k parameter.
+//!
+//! 2. **Intersected survivors**: Combines the −1 sieve for k with the −1 sieve
+//!    for 2k. An n-value is tested only if both survive. This eliminates >99%
+//!    of candidates.
+//!
+//! 3. **LLR deterministic proofs**: Both p and 2p+1 are k·2^n − 1 forms, so
+//!    LLR provides deterministic certificates for both (when base = 2 and k is odd).
+//!
+//! ## Relationship to Twin Primes
+//!
+//! While twin primes are k·b^n ± 1 (both prime), Sophie Germain primes are
+//! k·b^n − 1 and 2k·b^n − 1 (both prime). The sieve is similar but operates
+//! on the −1 form with two different k values.
+//!
+//! ## Complexity
+//!
+//! - Sieve: Two independent BSGS sieves, each O(π(L) · √p̄).
+//! - Testing: O(n · M(n)) per survivor (two LLR tests).
+//!
+//! ## References
+//!
+//! - OEIS: [A005384](https://oeis.org/A005384) — Sophie Germain primes.
+//! - OEIS: [A005385](https://oeis.org/A005385) — Safe primes (2p + 1).
+//! - Sophie Germain's work on Fermat's Last Theorem, 1823.
+//! - PrimeGrid Sophie Germain Prime Search: <https://www.primegrid.com/>
+
 use anyhow::Result;
 use rayon::prelude::*;
 use rug::integer::IsPrime;
@@ -16,16 +54,6 @@ use crate::progress::Progress;
 use crate::CoordinationClient;
 use crate::{exact_digits, sieve};
 
-/// Adaptive block size (same as kbn/twin).
-fn block_size_for_n(n: u64) -> u64 {
-    match n {
-        0..=1_000 => 10_000,
-        1_001..=10_000 => 10_000,
-        10_001..=50_000 => 2_000,
-        50_001..=200_000 => 500,
-        _ => 100,
-    }
-}
 
 /// Search for Sophie Germain primes: p = k*b^n - 1 where both p and 2p+1 are prime.
 ///
@@ -47,6 +75,12 @@ pub fn search(
     event_bus: Option<&EventBus>,
 ) -> Result<()> {
     let k2 = k.checked_mul(2).expect("2*k overflows u64");
+
+    // Resolve sieve_limit: auto-tune if 0
+    let candidate_bits = (max_n as f64 * (base as f64).log2() + (k as f64).log2().max(0.0)) as u64;
+    let n_range = max_n.saturating_sub(min_n) + 1;
+    let sieve_limit = sieve::resolve_sieve_limit(sieve_limit, candidate_bits, n_range);
+
     let sieve_primes = sieve::generate_primes(sieve_limit);
     eprintln!(
         "Sophie Germain search: p={}*{}^n-1, 2p+1={}*{}^n-1, n=[{}, {}]",
@@ -111,7 +145,7 @@ pub fn search(
     let mut total_sieved: u64 = 0;
 
     while block_start <= max_n {
-        let bsize = block_size_for_n(block_start);
+        let bsize = crate::block_size_for_n(block_start);
         let block_end = (block_start + bsize - 1).min(max_n);
         let block_len = block_end - block_start + 1;
 
@@ -128,7 +162,7 @@ pub fn search(
 
         total_sieved += block_len - survivors.len() as u64;
 
-        let base_pow_start = Integer::from(base).pow(block_start as u32);
+        let base_pow_start = Integer::from(base).pow(crate::checked_u32(block_start));
         let k_int = Integer::from(k);
         let k2_int = Integer::from(k2);
 
@@ -139,7 +173,7 @@ pub fn search(
                 let base_pow = if offset == 0 {
                     base_pow_start.clone()
                 } else {
-                    Integer::from(&base_pow_start * Integer::from(base).pow(offset as u32))
+                    &base_pow_start * Integer::from(base).pow(crate::checked_u32(offset))
                 };
 
                 // Test p = k*b^n - 1
@@ -253,7 +287,7 @@ mod tests {
     use super::*;
 
     fn kb_minus(k: u64, base: u32, n: u64) -> Integer {
-        Integer::from(k) * Integer::from(base).pow(n as u32) - 1u32
+        Integer::from(k) * Integer::from(base).pow(crate::checked_u32(n)) - 1u32
     }
 
     #[test]

@@ -1,3 +1,44 @@
+//! # Palindromic — Palindromic Prime Search in Arbitrary Bases
+//!
+//! Searches for primes whose digit representation in a given base reads the
+//! same forwards and backwards. Uses a half-digit enumeration strategy with
+//! modular pre-filtering to avoid constructing most candidates as big integers.
+//!
+//! ## Algorithm
+//!
+//! 1. **Half-digit generation**: A d-digit palindrome is fully determined by its
+//!    first ⌈d/2⌉ digits (the "half"). The search iterates over half-values
+//!    and mirrors them to produce full palindromes.
+//!
+//! 2. **Even-digit skip**: Even-length palindromes in base b are always divisible
+//!    by b+1 (e.g., all 4-digit base-10 palindromes are divisible by 11). The
+//!    only possible even-length palindromic prime is b+1 itself (= "11" in base b).
+//!
+//! 3. **Leading digit filter**: The first digit of a palindrome equals its last
+//!    digit. A prime > b must have its last digit coprime to b (e.g., in base 10,
+//!    valid leading digits are {1, 3, 7, 9}). This eliminates (b − φ(b))/b of
+//!    the search space.
+//!
+//! 4. **Modular digit filter** (`is_filter_composite`): Evaluates the palindrome
+//!    mod each sieve prime using Horner's method on the digit array (all u64
+//!    arithmetic — no big integer allocation). Eliminates ~85–95% of candidates.
+//!
+//! 5. **Batch parallel testing**: Survivors are collected into batches and tested
+//!    in parallel via `rayon::par_iter`.
+//!
+//! ## Complexity
+//!
+//! - Enumeration: O(b^(d/2)) candidates per d-digit length.
+//! - Filter per candidate: O(π(L) · d) where L is sieve limit.
+//! - Primality test: O(d · M(d)) per survivor.
+//!
+//! ## References
+//!
+//! - OEIS: [A002385](https://oeis.org/A002385) — Palindromic primes in base 10.
+//! - Harvey Dubner, "Palindromic Primes", Journal of Recreational Mathematics, 1989.
+//! - Divisibility rule: A 2k-digit base-b palindrome has (b+1) as a factor because
+//!   the alternating digit sum is always zero.
+
 use anyhow::Result;
 use rayon::prelude::*;
 use rug::integer::IsPrime;
@@ -11,6 +52,7 @@ use std::time::Instant;
 use crate::checkpoint::{self, Checkpoint};
 use crate::db::Database;
 use crate::events::{self, EventBus};
+use crate::pfgw;
 use crate::progress::Progress;
 use crate::CoordinationClient;
 use crate::{mr_screened_test, sieve};
@@ -30,10 +72,7 @@ fn integer_to_digits(val: &Integer, len: usize, base: u32) -> Vec<u32> {
             }
         })
         .collect();
-    let mut digits = Vec::with_capacity(len);
-    for _ in 0..len.saturating_sub(parsed.len()) {
-        digits.push(0u32);
-    }
+    let mut digits = vec![0u32; len.saturating_sub(parsed.len())];
     digits.extend_from_slice(&parsed);
     digits
 }
@@ -127,7 +166,7 @@ pub fn search(
         }) if digit_count >= min_digits && digit_count <= max_digits => {
             let half: Integer = half_value
                 .parse()
-                .unwrap_or_else(|_| Integer::from(base).pow(((digit_count + 1) / 2 - 1) as u32));
+                .unwrap_or_else(|_| Integer::from(base).pow((digit_count.div_ceil(2) - 1) as u32));
             eprintln!(
                 "Resuming palindromic search from {} digits, half={}",
                 digit_count, half_value
@@ -150,6 +189,11 @@ pub fn search(
         base,
         valid_digits
     );
+
+    // Resolve sieve_limit: auto-tune if 0
+    let candidate_bits = (max_digits as f64 * (base as f64).log2()) as u64;
+    let n_range = max_digits.saturating_sub(min_digits) + 1;
+    let sieve_limit = sieve::resolve_sieve_limit(sieve_limit, candidate_bits, n_range);
 
     let sieve_primes = sieve::generate_primes(sieve_limit);
     let filter_primes: Vec<u64> = sieve_primes.iter().copied().filter(|&p| p >= 3).collect();
@@ -175,8 +219,8 @@ pub fn search(
                         IsPrime::Yes => "deterministic",
                         _ => "probabilistic",
                     };
-                    let digits = candidate.to_string_radix(10).len() as u64;
-                    let expr = format!("{}", candidate);
+                    let expr = candidate.to_string_radix(10);
+                    let digits = expr.len() as u64;
                     progress.found.fetch_add(1, Ordering::Relaxed);
                     if let Some(eb) = event_bus {
                         eb.emit(events::Event::PrimeFound {
@@ -201,7 +245,7 @@ pub fn search(
             continue;
         }
 
-        let half_len = ((digit_count + 1) / 2) as usize;
+        let half_len = digit_count.div_ceil(2) as usize;
         let is_odd = digit_count % 2 == 1;
         let base_pow_half = Integer::from(base).pow((half_len - 1) as u32);
 
@@ -276,20 +320,41 @@ pub fn search(
                     digit_count, base, lead_digit
                 );
 
-                // Only candidates surviving the digit filter need primality testing
+                // Only candidates surviving the digit filter need primality testing.
+                // Try PFGW first for large candidates (50-100x faster), fall back to GMP MR.
                 let found_primes: Vec<_> = batch
                     .into_par_iter()
                     .filter_map(|num| {
+                        // Try PFGW acceleration (palindromic: PRP via decimal string).
+                        // pfgw::is_available() is a cheap check; only compute the
+                        // expensive to_string_radix(10) when PFGW will actually run.
+                        if pfgw::is_available(digit_count) {
+                            let decimal = num.to_string_radix(10);
+                            match pfgw::try_test(&decimal, &num, pfgw::PfgwMode::Prp) {
+                                Some(pfgw::PfgwResult::Prime {
+                                    is_deterministic, ..
+                                }) => {
+                                    let cert = if is_deterministic {
+                                        "deterministic"
+                                    } else {
+                                        "probabilistic"
+                                    };
+                                    return Some((decimal, digit_count, cert.to_string()));
+                                }
+                                Some(pfgw::PfgwResult::Composite) => return None,
+                                _ => {} // Unavailable or not configured — fall through to GMP
+                            }
+                        }
+
+                        // GMP Miller-Rabin fallback — defer to_string_radix until prime is found
                         let r = mr_screened_test(&num, mr_rounds);
                         if r != IsPrime::No {
                             let cert = match r {
                                 IsPrime::Yes => "deterministic",
                                 _ => "probabilistic",
                             };
-                            // String conversion only for actual primes (very rare)
-                            let expr = num.to_string_radix(10);
-                            let digits = expr.len() as u64;
-                            Some((expr, digits, cert.to_string()))
+                            let decimal = num.to_string_radix(10);
+                            Some((decimal, digit_count, cert.to_string()))
                         } else {
                             None
                         }

@@ -1,3 +1,30 @@
+//! # Worker Client — HTTP Coordination Client
+//!
+//! The worker side of fleet coordination: registers with the coordinator,
+//! sends heartbeats every 10 seconds, and reports discovered primes. Uses
+//! `ureq` (blocking HTTP) on a background thread, with atomic counters
+//! shared with the engine search thread.
+//!
+//! ## Data Flow
+//!
+//! ```text
+//! Engine thread → writes tested/found/current atomics
+//! Background thread → reads atomics → POST /api/heartbeat (10s)
+//! Engine thread → calls report_prime() → POST /api/prime
+//! ```
+//!
+//! ## Stop Signal
+//!
+//! The coordinator can request a stop via the heartbeat response. The
+//! `stop_requested` atomic flag is checked by the engine search loop
+//! to trigger a graceful shutdown with checkpoint save.
+//!
+//! ## Implements `CoordinationClient`
+//!
+//! This trait allows engine search functions to check for stop signals
+//! and report primes without knowing whether coordination is HTTP-based
+//! or PostgreSQL-based.
+
 use serde::Serialize;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};

@@ -1,5 +1,15 @@
 "use client";
 
+/**
+ * @module use-distribution
+ *
+ * React hook that fetches digit-count distribution data from the
+ * `get_digit_distribution` Supabase RPC. Returns bucketed counts
+ * grouped by prime form, used by the DigitDistribution bar chart.
+ *
+ * @see {@link src/components/charts/digit-distribution.tsx}
+ */
+
 import { useEffect, useState, useCallback } from "react";
 import { supabase } from "@/lib/supabase";
 

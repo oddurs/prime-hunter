@@ -1,5 +1,13 @@
 "use client";
 
+/**
+ * @module use-theme
+ *
+ * Dark/light theme toggle hook. Persists the user's preference to
+ * `localStorage` and applies it by toggling the `dark` class on the
+ * document root element (Tailwind's dark mode strategy).
+ */
+
 import { useEffect, useState, useCallback } from "react";
 
 type Theme = "light" | "dark";

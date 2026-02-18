@@ -1,5 +1,16 @@
 "use client";
 
+/**
+ * @module digit-distribution
+ *
+ * Stacked bar chart showing the distribution of discovered primes by
+ * digit count, grouped by form. Digit ranges are bucketed (e.g., 0–10,
+ * 10–20, ...) by the `get_digit_distribution` Supabase RPC.
+ *
+ * Uses Recharts `BarChart` with stacked bars — each form gets a distinct
+ * color matching the discovery timeline palette for visual consistency.
+ */
+
 import { useMemo } from "react";
 import {
   BarChart,

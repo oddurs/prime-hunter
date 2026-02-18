@@ -1,0 +1,20 @@
+[project]
+name = "palindromic-survey"
+description = "Survey palindromic primes by digit count"
+objective = "survey"
+form = "palindromic"
+
+[target]
+range_start = 1
+range_end = 15
+
+[competitive]
+oeis_sequence = "A002385"
+
+[strategy]
+auto_strategy = true
+
+[budget]
+max_cost_usd = 30.0
+cost_alert_threshold_usd = 15.0
+cloud_rate_usd_per_core_hour = 0.04

@@ -1,5 +1,13 @@
 "use client";
 
+/**
+ * @module login/page
+ *
+ * Email/password login page using Supabase Auth. Displayed when the
+ * user is not authenticated (gated by `AuthGuard` in the root layout).
+ * On successful sign-in, redirects to the main dashboard.
+ */
+
 import { useState, type FormEvent } from "react";
 import { useAuth } from "@/contexts/auth-context";
 import { Button } from "@/components/ui/button";

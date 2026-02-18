@@ -1,0 +1,27 @@
+[project]
+name = "kbn-record-2026"
+description = "Search for large k*b^n ± 1 primes"
+objective = "record"
+form = "kbn"
+
+[target]
+target_digits = 1000000
+
+[competitive]
+current_record_expression = "10223*2^31172165 + 1"
+current_record_digits = 9383761
+current_record_holder = "SoB / PrimeGrid"
+
+[strategy]
+auto_strategy = true
+
+[infrastructure]
+min_ram_gb = 16
+min_cores = 8
+recommended_cores = 64
+required_tools = ["gwnum"]
+
+[budget]
+max_cost_usd = 1000.0
+cost_alert_threshold_usd = 200.0
+cloud_rate_usd_per_core_hour = 0.04

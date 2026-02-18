@@ -1,3 +1,43 @@
+//! # Primorial — p# ± 1 Prime Search
+//!
+//! Searches for primes of the form p# + 1 and p# − 1, where p# (p primorial)
+//! is the product of all primes up to p. Structurally identical to factorial
+//! primes but with sparser candidates (only prime indices) and faster growth.
+//!
+//! ## Algorithm
+//!
+//! 1. **Incremental primorial**: Maintains a running product p# = p · q# where
+//!    q is the previous prime. FLINT's `fmpz_primorial` is used for the initial
+//!    computation when available.
+//!
+//! 2. **Modular sieve** (`PrimorialSieve`): Identical structure to `FactorialSieve`
+//!    in `factorial.rs`. For each sieve prime q > current p, maintains p# mod q
+//!    incrementally. Eliminates candidates where q | p#±1.
+//!
+//! 3. **Deterministic proofs**: p# has the same distinct prime factors as p!
+//!    (all primes ≤ p), so the Pocklington N−1 and Morrison N+1 proof functions
+//!    from `proof.rs` work directly for primorial primes.
+//!
+//! ## Growth Rate
+//!
+//! By the prime number theorem (Chebyshev's theorem): log₂(p#) ≈ p.
+//! So p# ≈ 2^p, growing exponentially in p. This makes primorial primes
+//! very sparse — only ~20 are known for each sign.
+//!
+//! ## Complexity
+//!
+//! - Primorial computation: O(p · M(p#)) for incremental multiplication.
+//! - Sieve per step: O(π(L)) residue updates.
+//! - Primality test: O(p# · log(p#)) via GMP.
+//!
+//! ## References
+//!
+//! - OEIS: [A014545](https://oeis.org/A014545) — Primorial primes p# + 1.
+//! - OEIS: [A057704](https://oeis.org/A057704) — Primorial primes p# − 1.
+//! - Caldwell & Gallot, "On the Primality of n! ± 1 and 2·3·5···p ± 1",
+//!   Mathematics of Computation, 71(237), 2002.
+//! - Chebyshev's theorem: θ(x) = Σ_{p≤x} ln(p) ~ x.
+
 use anyhow::Result;
 use rayon::prelude::*;
 use rug::integer::IsPrime;
@@ -10,6 +50,7 @@ use std::time::Instant;
 use crate::checkpoint::{self, Checkpoint};
 use crate::db::Database;
 use crate::events::{self, EventBus};
+use crate::pfgw;
 use crate::progress::Progress;
 use crate::proof;
 use crate::CoordinationClient;
@@ -41,8 +82,8 @@ impl PrimorialSieve {
             .filter(|&&q| q > max_included)
             .map(|&q| {
                 let mut pm = 1u64;
-                for i in 0..resume_idx {
-                    pm = pm * (all_primes[i] % q) % q;
+                for &p in &all_primes[..resume_idx] {
+                    pm = pm * (p % q) % q;
                 }
                 (q, pm)
             })
@@ -108,6 +149,12 @@ pub fn search(
         return Ok(());
     }
 
+    // Resolve sieve_limit: auto-tune if 0
+    // By prime number theorem, log2(p#) ≈ p (Chebyshev)
+    let candidate_bits = end;
+    let n_range = search_count as u64;
+    let sieve_limit = sieve::resolve_sieve_limit(sieve_limit, candidate_bits, n_range);
+
     let sieve_primes = sieve::generate_primes(sieve_limit);
     eprintln!(
         "Sieve initialized with {} primes up to {}",
@@ -140,10 +187,17 @@ pub fn search(
         0
     };
 
-    // Precompute primorial up to the prime before resume point using GMP's optimized algorithm
+    // Precompute primorial up to the prime before resume point.
+    // Use FLINT when available (3-10x faster via SIMD NTTs), otherwise GMP.
     let mut primorial = if resume_idx > 0 {
         let prev_prime = all_primes[resume_idx - 1];
         eprintln!("Precomputing {}#...", prev_prime);
+        #[cfg(feature = "flint")]
+        let p = {
+            eprintln!("  (using FLINT fmpz_primorial)");
+            crate::flint::primorial(prev_prime)
+        };
+        #[cfg(not(feature = "flint"))]
         let p = Integer::from(Integer::primorial(prev_prime as u32));
         eprintln!("Precomputation complete.");
         p
@@ -204,54 +258,111 @@ pub fn search(
             continue;
         }
 
-        // Only construct the huge p#±1 Integers for candidates that survived the sieve
+        // Only construct the huge p#±1 Integers for candidates that survived the sieve.
+        // Try PFGW first for large candidates (50-100x faster), fall back to GMP MR.
         let (r_plus, r_minus) = rayon::join(
             || {
-                if test_plus {
-                    let plus = Integer::from(&primorial + 1u32);
-                    mr_screened_test(&plus, mr_rounds)
-                } else {
-                    IsPrime::No
+                if !test_plus {
+                    return (IsPrime::No, None);
                 }
+                let plus = Integer::from(&primorial + 1u32);
+                // P-1 pre-filter: eliminates ~1-5% of sieve survivors for large primorials
+                if plus.significant_bits() > 50_000
+                    && crate::p1::is_p1_composite(&plus, 1_000_000)
+                {
+                    return (IsPrime::No, None);
+                }
+                if let Some(pfgw_result) =
+                    pfgw::try_test(&format!("{}#+1", p), &plus, pfgw::PfgwMode::NMinus1Proof)
+                {
+                    match pfgw_result {
+                        pfgw::PfgwResult::Prime {
+                            method,
+                            is_deterministic,
+                        } => {
+                            let cert = if is_deterministic {
+                                format!("deterministic ({})", method)
+                            } else {
+                                "probabilistic".to_string()
+                            };
+                            return (IsPrime::Probably, Some(cert));
+                        }
+                        pfgw::PfgwResult::Composite => return (IsPrime::No, None),
+                        pfgw::PfgwResult::Unavailable { .. } => {}
+                    }
+                }
+                (mr_screened_test(&plus, mr_rounds), None)
             },
             || {
-                if test_minus {
-                    let minus = Integer::from(&primorial - 1u32);
-                    mr_screened_test(&minus, mr_rounds)
-                } else {
-                    IsPrime::No
+                if !test_minus {
+                    return (IsPrime::No, None);
                 }
+                let minus = Integer::from(&primorial - 1u32);
+                // P-1 pre-filter: eliminates ~1-5% of sieve survivors for large primorials
+                if minus.significant_bits() > 50_000
+                    && crate::p1::is_p1_composite(&minus, 1_000_000)
+                {
+                    return (IsPrime::No, None);
+                }
+                if let Some(pfgw_result) =
+                    pfgw::try_test(&format!("{}#-1", p), &minus, pfgw::PfgwMode::NPlus1Proof)
+                {
+                    match pfgw_result {
+                        pfgw::PfgwResult::Prime {
+                            method,
+                            is_deterministic,
+                        } => {
+                            let cert = if is_deterministic {
+                                format!("deterministic ({})", method)
+                            } else {
+                                "probabilistic".to_string()
+                            };
+                            return (IsPrime::Probably, Some(cert));
+                        }
+                        pfgw::PfgwResult::Composite => return (IsPrime::No, None),
+                        pfgw::PfgwResult::Unavailable { .. } => {}
+                    }
+                }
+                (mr_screened_test(&minus, mr_rounds), None)
             },
         );
 
-        for (result, sign) in [(r_plus, "+"), (r_minus, "-")] {
+        for ((result, pfgw_cert), sign) in [(r_plus, "+"), (r_minus, "-")] {
             if result != IsPrime::No {
                 let digit_count = exact_digits(&primorial);
-                let mut certainty = match result {
-                    IsPrime::Yes => "deterministic",
-                    IsPrime::Probably => "probabilistic",
-                    IsPrime::No => unreachable!(),
-                };
 
-                // Attempt deterministic proof for probable primes.
-                // p# has the same distinct prime factors as p! (all primes ≤ p),
-                // so we can reuse the factorial proof functions.
-                if result == IsPrime::Probably {
-                    let proven = if sign == "+" {
-                        let candidate = Integer::from(&primorial + 1u32);
-                        proof::pocklington_factorial_proof(p, &candidate, &sieve_primes)
-                    } else {
-                        let candidate = Integer::from(&primorial - 1u32);
-                        proof::morrison_factorial_proof(p, &candidate, &sieve_primes)
+                let certainty_owned: String;
+                let certainty: &str = if let Some(ref cert) = pfgw_cert {
+                    cert.as_str()
+                } else {
+                    let mut cert = match result {
+                        IsPrime::Yes => "deterministic",
+                        IsPrime::Probably => "probabilistic",
+                        IsPrime::No => unreachable!(),
                     };
-                    if proven {
-                        certainty = if sign == "+" {
-                            "deterministic (Pocklington N-1)"
+
+                    // Attempt deterministic proof for probable primes.
+                    // p# has the same distinct prime factors as p! (all primes ≤ p),
+                    // so we can reuse the factorial proof functions.
+                    if result == IsPrime::Probably {
+                        let proven = if sign == "+" {
+                            let candidate = Integer::from(&primorial + 1u32);
+                            proof::pocklington_factorial_proof(p, &candidate, &sieve_primes)
                         } else {
-                            "deterministic (Morrison N+1)"
+                            let candidate = Integer::from(&primorial - 1u32);
+                            proof::morrison_factorial_proof(p, &candidate, &sieve_primes)
                         };
+                        if proven {
+                            cert = if sign == "+" {
+                                "deterministic (Pocklington N-1)"
+                            } else {
+                                "deterministic (Morrison N+1)"
+                            };
+                        }
                     }
-                }
+                    certainty_owned = cert.to_string();
+                    &certainty_owned
+                };
 
                 let expr = format!("{}# {} 1", p, sign);
                 progress.found.fetch_add(1, Ordering::Relaxed);

@@ -1,0 +1,20 @@
+[project]
+name = "cullen-woodall-survey"
+description = "Survey Cullen (n*2^n+1) and Woodall (n*2^n-1) primes"
+objective = "survey"
+form = "cullen_woodall"
+
+[target]
+range_start = 1
+range_end = 1000000
+
+[competitive]
+oeis_sequence = "A005849"
+
+[strategy]
+auto_strategy = true
+
+[budget]
+max_cost_usd = 50.0
+cost_alert_threshold_usd = 25.0
+cloud_rate_usd_per_core_hour = 0.04

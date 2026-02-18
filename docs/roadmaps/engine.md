@@ -169,55 +169,28 @@ If all primes verified: N is PROVEN prime
 
 ## GWNUM/FLINT Integration (very high impact, high effort)
 
-> **CRITICAL PATH ITEM.** GWNUM integration is the single most impactful work item in the entire project. At large number sizes it provides 50-100x speedup over GMP — equivalent to $10,000+/month in hardware. All hardware scaling in the [deployment plan](ops.md#phased-deployment-plan) is gated on this milestone. Sierpinski/Riesel at small n works fine with GMP, but Wagstaff (1.5M digits), palindromic records (3M digits), and factorial frontier (3.4M digits) are infeasible without it.
+> **CRITICAL PATH ITEM.** See [`gwnum-flint.md`](gwnum-flint.md) for the full integration guide, architecture decisions, API references, and deployment checklist.
 
-### GWNUM integration via FFI
+**Status:**
+- **Phase 0 (PFGW subprocess):** Complete — `src/pfgw.rs` provides 50-100x acceleration for all 10 forms via PFGW subprocess. CLI flags: `--pfgw-min-digits`, `--pfgw-path`. Atomic temp file counter prevents rayon thread collisions.
+- **Phase 1 (FLINT):** Complete — `src/flint.rs` with `--features flint` for 3-10x faster factorial/primorial computation via SIMD NTTs. Works on Apple Silicon (NEON).
+- **Phase 2 (Extended PRST):** Complete — `src/prst.rs` routes k*b^n±1 forms through PRST subprocess. Gerbicz error checking integrated.
+- **Phase 3 (GWNUM FFI):** Complete — `gwnum-sys/` workspace crate + `src/gwnum.rs` safe wrapper. Vrba-Reix test for Wagstaff, accelerated Proth/LLR with Gerbicz checking. x86-64 only.
+- **Phase 4 (Hardening):** Complete — 3-tier cross-verification pipeline (tier 1: deterministic proof, tier 2: BPSW+MR10, tier 3: PFGW independent tool). PFGW acceleration added to cullen_woodall, carol_kynea, gen_fermat, repunit forms.
 
-**Current:** All arithmetic via GMP (`rug` crate).
-
-**Target:** Create Rust FFI bindings to George Woltman's gwnum library for k*b^n+c modular arithmetic. Use gwnum for primality tests on candidates above ~3,000 digits.
-
-**Why gwnum is faster:**
-- **IBDWT (Irrational Base Discrete Weighted Transform):** Modular reduction happens inside the FFT convolution for free, halving the required FFT size vs GMP's approach of separate multiply-then-reduce.
-- **Hand-tuned x86 assembly:** Separate code paths for SSE2, AVX, FMA3, AVX-512, each optimized for specific cache hierarchies.
-- **Two-pass cache-aware FFT:** Butterfly operations structured to maximize L2/L3 cache utilization.
-
-**Performance gap vs GMP:**
-| Number size | GWNUM advantage |
-|-------------|-----------------|
-| ~3,000 digits | ~2x |
-| ~30,000 digits | ~5-10x |
-| ~300,000 digits | ~50-100x |
-| ~3,000,000 digits | ~100x+ |
-
-**API surface needed:**
-```c
-gwsetup(gwdata, k, b, n, c);    // Initialize for k*b^n+c
-gwstartnextfft(gwdata, ...);    // Start squaring sequence
-gwsquare2(gwdata, x, y);       // y = x^2 mod N
-gwmul3(gwdata, x, y, z);       // z = x*y mod N
-gwfree(gwdata);                 // Cleanup
-```
-
-**Alternative: PRST/PFGW as subprocess.** For large candidates, shell out to PRST (successor to LLR2, uses GWNum 31.03, v13.3 Jan 2025) or PFGW (general) which use gwnum internally. Less integration work, same performance for the primality test step. Note: LLR2 is deprecated; PRST is the current standard for Proth/Riesel testing.
-
-**Licensing note:** GWNUM is distributed as part of Prime95 source. Check license terms for use in derivative works.
-
-### FLINT integration for general arithmetic
-
-**Current:** GMP via `rug`.
-
-**Target:** FFI bindings to FLINT 3's small-prime FFT for 3-10x faster general multiplication.
-
-**Current status:** FLINT 3.4.0 (Nov 2025). Key additions since 3.3:
-- New `mpn_mod` module (modular arithmetic at the mpn level)
-- `nfloat` type for numerical floating-point
-- `fft_small` requires AVX2 (x86) or NEON (ARM) — Apple Silicon supported
-- Rust bindings: `flint3-sys` 3.3.1 exists on crates.io (not yet updated to 3.4.0)
-
-**Rationale:** FLINT's `fft_small` module uses SIMD-vectorized NTTs with word-size primes and CRT reconstruction. On 8-core AMD Ryzen: 7-10x faster than GMP for numbers above ~10,000 digits. Unlike gwnum, FLINT supports multithreaded FFT and is BSD-licensed.
-
-**When to use:** For forms where gwnum's IBDWT doesn't apply (e.g., general palindromic primes that aren't near-repdigit). Also useful for factorial computation itself (the multiply step, not the primality test).
+**Tool selection by form:**
+| Form | Primary tool | Fallback |
+|------|-------------|----------|
+| kbn k*b^n±1 | GWNUM direct / PRST | GMP Proth/LLR |
+| Factorial n!±1 | PFGW -tp/-tm | GMP MR + Pocklington/Morrison |
+| Primorial p#±1 | PFGW -tp/-tm | GMP MR + Pocklington/Morrison |
+| Wagstaff (2^p+1)/3 | GWNUM Vrba-Reix / PFGW | GMP MR |
+| Palindromic | PFGW | GMP MR |
+| Near-repdigit | PFGW PRP | GMP MR + BLS proof |
+| Cullen/Woodall n·2^n±1 | PFGW PRP | GMP Proth/LLR |
+| Carol/Kynea (2^n±1)²−2 | PFGW PRP | GMP LLR |
+| Gen Fermat b^(2^n)+1 | PFGW PRP | GMP Pépin/Proth |
+| Repunit (b^n−1)/(b−1) | PFGW PRP | GMP MR |
 
 ---
 

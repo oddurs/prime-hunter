@@ -1,8 +1,22 @@
+/**
+ * @module supabase
+ *
+ * Singleton Supabase client for the frontend. All hooks and contexts
+ * import `supabase` from here rather than creating their own clients.
+ *
+ * Uses `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY`
+ * environment variables, with hardcoded fallbacks for the production
+ * Supabase project. The anon key is safe to expose — Row Level Security
+ * (RLS) policies on the `primes` table enforce read-only public access.
+ */
+
 import { createClient } from "@supabase/supabase-js";
 
 const supabaseUrl =
-  process.env.NEXT_PUBLIC_SUPABASE_URL || "http://localhost:54321";
+  process.env.NEXT_PUBLIC_SUPABASE_URL ||
+  "https://nljvgyorzoxajodkkqdu.supabase.co";
 const supabaseAnonKey =
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "placeholder";
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
+  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5sanZneW9yem94YWpvZGtrcWR1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzE0MTEwOTksImV4cCI6MjA4Njk4NzA5OX0.RnHwtsQjRS89_lthZ5PBXM-sL4aTkwQau0fq1xCFM3s";
 
 export const supabase = createClient(supabaseUrl, supabaseAnonKey);

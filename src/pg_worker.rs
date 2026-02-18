@@ -1,3 +1,29 @@
+//! # PgWorkerClient — PostgreSQL-Based Coordination
+//!
+//! Drop-in alternative to [`WorkerClient`](crate::worker_client::WorkerClient)
+//! that heartbeats directly to the `workers` PostgreSQL table instead of going
+//! through an HTTP coordinator. This eliminates a network hop and lets workers
+//! run independently as long as they have database connectivity.
+//!
+//! ## Data Flow
+//!
+//! ```text
+//! Engine thread  → writes tested/found/current atomics
+//! Background thread → reads atomics → SQL INSERT/UPDATE workers (10s)
+//! Engine thread  → calls report_prime() → SQL INSERT primes
+//! ```
+//!
+//! ## Shared State Pattern
+//!
+//! Identical to `WorkerClient`: `Arc<AtomicU64>` for counters, `Arc<Mutex<String>>`
+//! for current candidate. The search thread writes, the heartbeat thread reads.
+//! Stop signal comes from the `pending_command` column (set by the dashboard).
+//!
+//! ## Auto-Selection
+//!
+//! `main.rs` chooses `PgWorkerClient` when no `--coordinator` URL is given,
+//! falling back to `WorkerClient` when an HTTP coordinator is specified.
+
 use sqlx::PgPool;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};

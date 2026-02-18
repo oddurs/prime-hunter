@@ -1,3 +1,24 @@
+//! # Fleet — In-Memory Worker Registry
+//!
+//! Tracks connected workers in the distributed search fleet. Workers register
+//! via HTTP and send heartbeats every 10 seconds. Workers missing 6 consecutive
+//! heartbeats (60s) are pruned as stale.
+//!
+//! ## Data Flow
+//!
+//! ```text
+//! Worker → POST /api/register → Fleet::register()
+//! Worker → POST /api/heartbeat (10s) → Fleet::heartbeat()
+//! Dashboard → Fleet::get_workers() → WebSocket push to browser
+//! Background → Fleet::prune_stale(60s) → remove unresponsive workers
+//! ```
+//!
+//! ## Pending Commands
+//!
+//! The coordinator can queue commands (e.g., "stop") for workers, delivered
+//! in the next heartbeat response. This enables graceful shutdown without
+//! requiring workers to poll a separate endpoint.
+
 use serde::Serialize;
 use std::collections::HashMap;
 use std::time::Instant;
@@ -22,6 +43,7 @@ pub struct WorkerState {
     pub registered_at: Instant,
 }
 
+#[derive(Default)]
 pub struct Fleet {
     workers: HashMap<String, WorkerState>,
     pending_commands: HashMap<String, String>,

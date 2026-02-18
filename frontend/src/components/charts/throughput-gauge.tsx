@@ -1,5 +1,16 @@
 "use client";
 
+/**
+ * @module throughput-gauge
+ *
+ * Real-time throughput sparkline chart. Displays candidates tested per
+ * second across the fleet as a rolling line chart (last 60 data points).
+ * Data comes from the WebSocket fleet heartbeat, not Supabase.
+ *
+ * Uses Recharts `LineChart` in a compact card layout with no axes —
+ * just the sparkline and current rate displayed as a large number.
+ */
+
 import { useEffect, useRef, useState } from "react";
 import {
   LineChart,

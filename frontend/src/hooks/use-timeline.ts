@@ -1,5 +1,16 @@
 "use client";
 
+/**
+ * @module use-timeline
+ *
+ * React hook that fetches discovery timeline data from the
+ * `get_discovery_timeline` Supabase RPC. Returns time-bucketed counts
+ * (day/week/month) grouped by prime form, used by the DiscoveryTimeline
+ * area chart on the main dashboard.
+ *
+ * @see {@link src/components/charts/discovery-timeline.tsx}
+ */
+
 import { useEffect, useState, useCallback } from "react";
 import { supabase } from "@/lib/supabase";
 

@@ -4,14 +4,14 @@ Phased plan to expand primehunt from 100 algorithm unit tests to a comprehensive
 
 ## Overview
 
-| Phase | Focus | New Tests | Cumulative | Timeline |
-|-------|-------|-----------|------------|----------|
-| 0 | Quick wins — unit tests for untested modules | ~35 | ~135 | 1 day |
-| 1 | Infrastructure unit tests + CI pipeline | ~25 | ~160 | 2-3 days |
-| 2 | Integration tests (DB, API, CLI) | ~60 | ~220 | 1 week |
-| 3 | Frontend test foundation | ~40 | ~260 | 3-4 days |
-| 4 | Property-based + benchmark tests | ~25 | ~285 | 2-3 days |
-| 5 | E2E tests + security tests | ~20 | ~305 | 3-4 days |
+| Phase | Focus | New Tests | Cumulative | Status |
+|-------|-------|-----------|------------|--------|
+| 0 | Quick wins — unit tests for untested modules | 77 | 177 | **Done** |
+| 1 | Infrastructure unit tests + CI pipeline | 71 | 248 | **Done** |
+| 2 | Integration tests (DB, API, CLI) | 53 | 301 | **Done** |
+| 3 | Frontend test foundation | 86 | 387 | **Done** |
+| 4 | Property-based + benchmark tests | 29 | 416 | **Done** |
+| 5 | E2E tests + security tests | 39 | 455 | **Done** |
 
 ---
 

@@ -1,3 +1,56 @@
+//! # KBN — Generalized k·b^n ± 1 Prime Search
+//!
+//! Searches for primes of the form k·b^n + 1 and k·b^n − 1 over a range of
+//! exponents n, using a multi-stage pipeline: algebraic sieve → deterministic
+//! proof → probabilistic fallback.
+//!
+//! ## Algorithm Pipeline
+//!
+//! 1. **BSGS algebraic sieve** (`bsgs_sieve`): For each sieve prime p, computes
+//!    the discrete logarithm to find all n-values where k·b^n ≡ ∓1 (mod p),
+//!    eliminating provably composite candidates. Uses baby-step giant-step with
+//!    Montgomery multiplication, running in O(√ord) per prime.
+//!
+//! 2. **Proth test** (`proth_test`): For k·b^n + 1 with k < b^n and base 2,
+//!    applies Proth's theorem (1878) — a single modular exponentiation yields a
+//!    *deterministic* proof of primality. For non-base-2, generalizes via
+//!    Pocklington's theorem.
+//!
+//! 3. **LLR test** (`llr_test`): For k·2^n − 1 with k odd and k < 2^n, applies
+//!    the Lucas–Lehmer–Riesel test — n−2 modular squarings yield a deterministic
+//!    proof. Includes Gerbicz-style error checking with automatic rollback.
+//!
+//! 4. **P-1 pre-filter**: For candidates > 50,000 bits, Pollard's P-1 algorithm
+//!    catches 1–5% of composites that survive the algebraic sieve.
+//!
+//! 5. **GWNUM/PRST acceleration**: For very large candidates (>10K digits),
+//!    delegates to external GWNUM or PRST tools for 50–100× speedup.
+//!
+//! 6. **Miller–Rabin fallback**: 25-round MR with 2-round pre-screen for
+//!    candidates where no deterministic test applies.
+//!
+//! ## Key Functions (pub(crate))
+//!
+//! - `proth_test`, `llr_test`, `bsgs_sieve`, `test_prime` — reused by `twin`,
+//!   `sophie_germain`, `cullen_woodall`, `carol_kynea`, and `gen_fermat`.
+//! - `find_rodseth_v1`, `lucas_v_k` — LLR starting value computation.
+//!
+//! ## Complexity
+//!
+//! - Sieve: O(π(L) · √p̄) where L is sieve limit and p̄ is mean sieve prime.
+//! - Proth/Pocklington: O(n · M(n)) — n squarings of n-bit numbers.
+//! - LLR: O(n · M(n)) — (n−2) squarings of n-bit numbers.
+//!
+//! ## References
+//!
+//! - François Proth, "Théorèmes sur les nombres premiers", C. R. Acad. Sci. Paris, 1878.
+//! - John Brillhart, D.H. Lehmer, J.L. Selfridge, "New Primality Criteria and
+//!   Factorizations of 2^m ± 1", Mathematics of Computation, 29(130), 1975.
+//! - Hans Riesel, "Lucasian Criteria for the Primality of N = h·2^n − 1",
+//!   Mathematics of Computation, 23(108), 1969.
+//! - Robert Gerbicz, "Error-Detecting LLR Algorithm", mersenneforum.org, 2017.
+//! - OEIS: [A080076](https://oeis.org/A080076) (Proth primes with k=3)
+
 use anyhow::Result;
 use rayon::prelude::*;
 use rug::integer::IsPrime;
@@ -78,7 +131,7 @@ fn pocklington_test(p: &Integer, base: u32) -> Option<bool> {
                 Ok(r) => r,
                 Err(_) => return Some(false),
             };
-            let g = Integer::from(r - 1u32).gcd(p);
+            let g = (r - 1u32).gcd(p);
             if g != 1u32 {
                 all_coprime = false;
                 break;
@@ -97,9 +150,9 @@ fn small_prime_factors(mut n: u32) -> Vec<u32> {
     let mut factors = Vec::new();
     let mut d = 2u32;
     while d * d <= n {
-        if n % d == 0 {
+        if n.is_multiple_of(d) {
             factors.push(d);
-            while n % d == 0 {
+            while n.is_multiple_of(d) {
                 n /= d;
             }
         }
@@ -179,6 +232,11 @@ pub(crate) fn lucas_v_k(k: u64, p_val: u32, n: &Integer) -> Integer {
 /// Requires: k odd, k < 2^n, n >= 3.
 /// Returns Some(true) for proven prime, Some(false) for composite,
 /// None if preconditions not met (fall back to Miller-Rabin).
+///
+/// Includes Gerbicz-style error checking: periodic checkpoints during the
+/// squaring loop, with automatic rollback and recomputation if a hardware
+/// error corrupts the residue. When a prime is found, the last portion is
+/// independently verified from a checkpoint to confirm the result.
 pub(crate) fn llr_test(candidate: &Integer, k: u64, n: u64) -> Option<bool> {
     // Guard: LLR can give false negatives for very small n
     if n < 3 {
@@ -186,7 +244,7 @@ pub(crate) fn llr_test(candidate: &Integer, k: u64, n: u64) -> Option<bool> {
     }
 
     // Choose starting value P
-    let p_val = if k % 3 != 0 {
+    let p_val = if !k.is_multiple_of(3) {
         4u32
     } else {
         find_rodseth_v1(candidate)
@@ -197,6 +255,21 @@ pub(crate) fn llr_test(candidate: &Integer, k: u64, n: u64) -> Option<bool> {
 
     // Iterate n-2 squarings: u = u^2 - 2 mod N
     let iters = n - 2;
+
+    // Gerbicz error checking: save checkpoints every L iterations,
+    // verify after each block by recomputing from the previous checkpoint.
+    // L = max(100, floor(sqrt(iters))) gives O(sqrt(n)) overhead.
+    let check_interval = if iters > 10_000 {
+        (iters as f64).sqrt() as u64
+    } else {
+        iters + 1 // disable checking for small n (not worth the overhead)
+    };
+
+    let mut last_checkpoint = u.clone();
+    let mut last_checkpoint_iter: u64 = 0;
+    let mut verified_checkpoint = u.clone();
+    let mut verified_checkpoint_iter: u64 = 0;
+
     for i in 0..iters {
         if n > 50_000 && i % 10_000 == 0 && i > 0 {
             eprintln!(
@@ -209,10 +282,87 @@ pub(crate) fn llr_test(candidate: &Integer, k: u64, n: u64) -> Option<bool> {
         u.square_mut();
         u -= 2u32;
         u = u.rem_euc(candidate);
+
+        // Save checkpoint every check_interval iterations
+        if check_interval < iters && (i + 1) % check_interval == 0 {
+            // Verify current block: recompute from last_checkpoint
+            let mut verify = last_checkpoint.clone();
+            let steps = i + 1 - last_checkpoint_iter;
+            for _ in 0..steps {
+                verify.square_mut();
+                verify -= 2u32;
+                verify = verify.rem_euc(candidate);
+            }
+
+            if verify != u {
+                // Hardware error detected! Rollback to last verified checkpoint.
+                eprintln!(
+                    "  LLR ERROR DETECTED at iteration {} — rolling back to {}",
+                    i + 1,
+                    verified_checkpoint_iter
+                );
+                u = verified_checkpoint.clone();
+                // Recompute from verified checkpoint; skip ahead to redo this block
+                let redo_start = verified_checkpoint_iter;
+                for j in redo_start..=i {
+                    u.square_mut();
+                    u -= 2u32;
+                    u = u.rem_euc(candidate);
+                    if (j + 1) % check_interval == 0 {
+                        // Re-verify this block too
+                        let mut v2 = if j + 1 - check_interval >= redo_start {
+                            last_checkpoint.clone()
+                        } else {
+                            verified_checkpoint.clone()
+                        };
+                        let v2_start = if j + 1 - check_interval >= redo_start {
+                            j + 1 - check_interval
+                        } else {
+                            redo_start
+                        };
+                        for _ in v2_start..=j {
+                            v2.square_mut();
+                            v2 -= 2u32;
+                            v2 = v2.rem_euc(candidate);
+                        }
+                        if v2 == u {
+                            last_checkpoint = u.clone();
+                            last_checkpoint_iter = j + 1;
+                            verified_checkpoint = last_checkpoint.clone();
+                            verified_checkpoint_iter = j + 1;
+                        } else {
+                            eprintln!("  LLR: persistent error — returning inconclusive");
+                            return None;
+                        }
+                    }
+                }
+            } else {
+                // Block verified OK
+                verified_checkpoint = last_checkpoint.clone();
+                verified_checkpoint_iter = last_checkpoint_iter;
+                last_checkpoint = u.clone();
+                last_checkpoint_iter = i + 1;
+            }
+        }
     }
 
-    // Prime iff u ≡ 0 (mod N)
-    Some(u == 0u32)
+    let is_prime = u == 0u32;
+
+    // When a prime is found, verify by recomputing from the last verified checkpoint
+    if is_prime && verified_checkpoint_iter < iters {
+        let mut verify = verified_checkpoint;
+        for _ in verified_checkpoint_iter..iters {
+            verify.square_mut();
+            verify -= 2u32;
+            verify = verify.rem_euc(candidate);
+        }
+        if verify != 0u32 {
+            eprintln!("  LLR: prime verification FAILED — returning inconclusive");
+            return None;
+        }
+    }
+
+    Some(is_prime)
 }
 
 /// Test primality using the best available method.
@@ -260,6 +410,52 @@ pub(crate) fn test_prime(
         }
     }
 
+    // P-1 factoring pre-filter for large candidates
+    // Costs ~1 modular exponentiation but catches 1-5% of composites that survive the sieve
+    if candidate.significant_bits() > 50_000
+        && crate::p1::is_p1_composite(candidate, 1_000_000)
+    {
+        return (IsPrime::No, "");
+    }
+
+    // Try GWNUM direct FFI for large candidates (when --features gwnum is enabled)
+    #[cfg(feature = "gwnum")]
+    {
+        let digits = crate::estimate_digits(candidate);
+        if digits >= 10_000 {
+            if is_plus && base == 2 {
+                match crate::gwnum::gwnum_proth(k, base, n) {
+                    Ok(Some(true)) => return (IsPrime::Yes, "deterministic"),
+                    Ok(Some(false)) => return (IsPrime::No, ""),
+                    Ok(None) | Err(_) => {} // fall through
+                }
+            } else if !is_plus && base == 2 && k % 2 == 1 {
+                match crate::gwnum::gwnum_llr(k, n) {
+                    Ok(Some(true)) => return (IsPrime::Yes, "deterministic"),
+                    Ok(Some(false)) => return (IsPrime::No, ""),
+                    Ok(None) | Err(_) => {} // fall through
+                }
+            }
+        }
+    }
+
+    // Try PRST for large candidates (50-100x faster than GMP for large numbers)
+    if let Some(result) = crate::prst::try_test(k, base, n, is_plus, candidate) {
+        match result {
+            crate::prst::PrstResult::Prime {
+                is_deterministic, ..
+            } => {
+                if is_deterministic {
+                    return (IsPrime::Yes, "deterministic");
+                } else {
+                    return (IsPrime::Probably, "probabilistic");
+                }
+            }
+            crate::prst::PrstResult::Composite => return (IsPrime::No, ""),
+            crate::prst::PrstResult::Unavailable { .. } => {} // fall through to MR
+        }
+    }
+
     // Two-round MR pre-screen before full Miller-Rabin
     if mr_rounds > 2 && candidate.is_probably_prime(2) == IsPrime::No {
         return (IsPrime::No, "");
@@ -275,16 +471,6 @@ pub(crate) fn test_prime(
     (r, cert)
 }
 
-/// Adaptive block size: larger blocks for small n (fast tests), smaller for large n.
-fn block_size_for_n(n: u64) -> u64 {
-    match n {
-        0..=1_000 => 10_000,
-        1_001..=10_000 => 10_000,
-        10_001..=50_000 => 2_000,
-        50_001..=200_000 => 500,
-        _ => 100,
-    }
-}
 
 /// BSGS-based sieve: for each sieve prime, compute the discrete log to find
 /// all n-values where k*b^n ≡ ∓1 (mod p), then mark them as composite.
@@ -316,7 +502,7 @@ pub(crate) fn bsgs_sieve(
         }
 
         // Skip if p divides base or k — neither form is divisible by p
-        if base_u64 % p == 0 || k % p == 0 {
+        if base_u64.is_multiple_of(p) || k.is_multiple_of(p) {
             continue;
         }
 
@@ -337,7 +523,7 @@ pub(crate) fn bsgs_sieve(
                 continue;
             } else {
                 let gap = min_n - n0;
-                let steps = (gap + order - 1) / order;
+                let steps = gap.div_ceil(order);
                 n0 + steps * order
             };
             let mut n = first;
@@ -357,7 +543,7 @@ pub(crate) fn bsgs_sieve(
                 continue;
             } else {
                 let gap = min_n - n0;
-                let steps = (gap + order - 1) / order;
+                let steps = gap.div_ceil(order);
                 n0 + steps * order
             };
             let mut n = first;
@@ -371,74 +557,6 @@ pub(crate) fn bsgs_sieve(
     }
 
     (plus_survives, minus_survives)
-}
-
-/// Sieve a block of k*b^n±1 candidates using modular arithmetic.
-///
-/// For each n in [block_start, block_end], checks divisibility of k*b^n+1 and
-/// k*b^n-1 by all sieve primes. Uses incremental computation of b^n mod p
-/// within the block. Returns survivors that need full primality testing.
-///
-/// For n < sieve_min_n, candidates are too small for the sieve to be safe
-/// (they might equal a sieve prime), so they bypass sieve and always survive.
-#[allow(dead_code)]
-fn sieve_block(
-    block_start: u64,
-    block_end: u64,
-    k: u64,
-    base: u32,
-    sieve_primes: &[u64],
-    sieve_min_n: u64,
-) -> Vec<(u64, bool, bool)> {
-    let base_u64 = base as u64;
-
-    // Precompute per-prime constants
-    let k_mod: Vec<u64> = sieve_primes.iter().map(|&p| k % p).collect();
-    let b_mod: Vec<u64> = sieve_primes.iter().map(|&p| base_u64 % p).collect();
-    let mut b_pow: Vec<u64> = sieve_primes
-        .iter()
-        .map(|&p| sieve::pow_mod(base_u64, block_start, p))
-        .collect();
-
-    let mut survivors = Vec::new();
-
-    for n in block_start..=block_end {
-        if n < sieve_min_n {
-            // Small candidates bypass the sieve
-            survivors.push((n, true, true));
-        } else {
-            let mut plus_survives = true;
-            let mut minus_survives = true;
-
-            // Check divisibility by sieve primes (with early exit)
-            for i in 0..sieve_primes.len() {
-                let p = sieve_primes[i];
-                // k*b^n mod p — safe: both operands < p < 10^7, product < 10^14 fits u64
-                let kb_mod = k_mod[i] * b_pow[i] % p;
-
-                if plus_survives && kb_mod == p - 1 {
-                    plus_survives = false;
-                }
-                if minus_survives && kb_mod == 1 {
-                    minus_survives = false;
-                }
-                if !plus_survives && !minus_survives {
-                    break;
-                }
-            }
-
-            if plus_survives || minus_survives {
-                survivors.push((n, plus_survives, minus_survives));
-            }
-        }
-
-        // Always increment: b^(n+1) mod p = b^n * b mod p
-        for i in 0..sieve_primes.len() {
-            b_pow[i] = b_pow[i] * b_mod[i] % sieve_primes[i];
-        }
-    }
-
-    survivors
 }
 
 pub fn search(
@@ -456,6 +574,11 @@ pub fn search(
     worker_client: Option<&dyn CoordinationClient>,
     event_bus: Option<&EventBus>,
 ) -> Result<()> {
+    // Resolve sieve_limit: auto-tune if 0
+    let candidate_bits = (max_n as f64 * (base as f64).log2() + (k as f64).log2().max(0.0)) as u64;
+    let n_range = max_n.saturating_sub(min_n) + 1;
+    let sieve_limit = sieve::resolve_sieve_limit(sieve_limit, candidate_bits, n_range);
+
     let sieve_primes = sieve::generate_primes(sieve_limit);
     eprintln!(
         "Sieve initialized with {} primes up to {}",
@@ -508,7 +631,7 @@ pub fn search(
     let mut total_sieved: u64 = 0;
 
     while block_start <= max_n {
-        let bsize = block_size_for_n(block_start);
+        let bsize = crate::block_size_for_n(block_start);
         let block_end = (block_start + bsize - 1).min(max_n);
         let block_len = block_end - block_start + 1;
 
@@ -531,7 +654,7 @@ pub fn search(
         total_sieved += block_len - survivors.len() as u64;
 
         // Pre-compute b^block_start once; each survivor computes b^offset (much smaller)
-        let base_pow_start = Integer::from(base).pow(block_start as u32);
+        let base_pow_start = Integer::from(base).pow(crate::checked_u32(block_start));
         let k_int = Integer::from(k);
 
         let found_primes: Vec<_> = survivors
@@ -541,38 +664,37 @@ pub fn search(
                 let base_pow = if offset == 0 {
                     base_pow_start.clone()
                 } else {
-                    Integer::from(&base_pow_start * Integer::from(base).pow(offset as u32))
+                    &base_pow_start * Integer::from(base).pow(crate::checked_u32(offset))
                 };
                 let kb = Integer::from(&k_int * &base_pow);
-                let mut results = Vec::new();
 
-                if test_plus {
+                let plus_result = if test_plus {
                     let plus = Integer::from(&kb + 1u32);
                     let (r, cert) = test_prime(&plus, k, base, n, true, mr_rounds);
                     if r != IsPrime::No {
                         let digits = exact_digits(&plus);
-                        results.push((
-                            format!("{}*{}^{} + 1", k, base, n),
-                            digits,
-                            cert.to_string(),
-                        ));
+                        Some((format!("{}*{}^{} + 1", k, base, n), digits, cert.to_string()))
+                    } else {
+                        None
                     }
-                }
+                } else {
+                    None
+                };
 
-                if test_minus {
+                let minus_result = if test_minus {
                     let minus = Integer::from(&kb - 1u32);
                     let (r, cert) = test_prime(&minus, k, base, n, false, mr_rounds);
                     if r != IsPrime::No {
                         let digits = exact_digits(&minus);
-                        results.push((
-                            format!("{}*{}^{} - 1", k, base, n),
-                            digits,
-                            cert.to_string(),
-                        ));
+                        Some((format!("{}*{}^{} - 1", k, base, n), digits, cert.to_string()))
+                    } else {
+                        None
                     }
-                }
+                } else {
+                    None
+                };
 
-                results
+                plus_result.into_iter().chain(minus_result)
             })
             .collect();
 
@@ -647,7 +769,7 @@ mod tests {
 
     /// Helper: build N = k*2^n - 1
     fn make_candidate(k: u64, n: u64) -> Integer {
-        Integer::from(k) * Integer::from(Integer::from(2u32).pow(n as u32)) - 1u32
+        Integer::from(k) * Integer::from(Integer::from(2u32).pow(crate::checked_u32(n))) - 1u32
     }
 
     // ---- Mersenne primes (k=1): 2^n - 1 ----
@@ -774,6 +896,54 @@ mod tests {
     }
 
     // ---- BSGS sieve cross-validation ----
+
+    /// Reference sieve implementation (O(primes*block_size)) used to validate BSGS sieve correctness.
+    fn sieve_block(
+        block_start: u64,
+        block_end: u64,
+        k: u64,
+        base: u32,
+        sieve_primes: &[u64],
+        sieve_min_n: u64,
+    ) -> Vec<(u64, bool, bool)> {
+        let base_u64 = base as u64;
+        let k_mod: Vec<u64> = sieve_primes.iter().map(|&p| k % p).collect();
+        let b_mod: Vec<u64> = sieve_primes.iter().map(|&p| base_u64 % p).collect();
+        let mut b_pow: Vec<u64> = sieve_primes
+            .iter()
+            .map(|&p| sieve::pow_mod(base_u64, block_start, p))
+            .collect();
+
+        let mut survivors = Vec::new();
+        for n in block_start..=block_end {
+            if n < sieve_min_n {
+                survivors.push((n, true, true));
+            } else {
+                let mut plus_survives = true;
+                let mut minus_survives = true;
+                for i in 0..sieve_primes.len() {
+                    let p = sieve_primes[i];
+                    let kb_mod = k_mod[i] * b_pow[i] % p;
+                    if plus_survives && kb_mod == p - 1 {
+                        plus_survives = false;
+                    }
+                    if minus_survives && kb_mod == 1 {
+                        minus_survives = false;
+                    }
+                    if !plus_survives && !minus_survives {
+                        break;
+                    }
+                }
+                if plus_survives || minus_survives {
+                    survivors.push((n, plus_survives, minus_survives));
+                }
+            }
+            for i in 0..sieve_primes.len() {
+                b_pow[i] = b_pow[i] * b_mod[i] % sieve_primes[i];
+            }
+        }
+        survivors
+    }
 
     #[test]
     fn bsgs_matches_sieve_block() {

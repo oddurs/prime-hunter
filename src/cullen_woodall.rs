@@ -1,3 +1,39 @@
+//! # Cullen & Woodall — n·2^n ± 1 Prime Search
+//!
+//! Searches for Cullen primes (n·2^n + 1) and Woodall primes (n·2^n − 1)
+//! simultaneously over a range of n. Both are extremely sparse: only 16 Cullen
+//! primes and 45 Woodall primes are known (as of 2025).
+//!
+//! ## Algorithm
+//!
+//! 1. **Incremental modular sieve**: For each sieve prime p, tracks
+//!    f(n) = n·2^n mod p using the recurrence:
+//!    - g(n+1) = 2·g(n) mod p,  where g(n) = 2^n mod p
+//!    - f(n+1) = 2·f(n) + g(n+1) mod p
+//!      This avoids computing n·2^n from scratch for each n.
+//!
+//! 2. **Proth test for Cullen** (`test_cullen`): C_n = n·2^n + 1 is of the
+//!    form k·2^n + 1 with k = n. Since n < 2^n for all n ≥ 1, Proth's theorem
+//!    always applies, yielding deterministic proofs.
+//!
+//! 3. **LLR test for Woodall** (`test_woodall`): W_n = n·2^n − 1. Decompose
+//!    n = m·2^e (m odd), giving W_n = m·2^(n+e) − 1, which is the LLR form
+//!    k·2^exp − 1 with k = m (odd) and exp = n + e.
+//!
+//! ## Complexity
+//!
+//! - Sieve: O(π(L) · (max_n − min_n)) — linear scan per prime.
+//! - Proth test: O(n · M(n)) per Cullen survivor.
+//! - LLR test: O((n+e) · M(n)) per Woodall survivor.
+//!
+//! ## References
+//!
+//! - OEIS: [A005849](https://oeis.org/A005849) — Cullen primes (n such that n·2^n + 1 is prime).
+//! - OEIS: [A002234](https://oeis.org/A002234) — Woodall primes (n such that n·2^n − 1 is prime).
+//! - James Cullen, "Question 15897", Educational Times, 1905.
+//! - Allan J.C. Cunningham and H.J. Woodall, "Factorisation of Q = (2^q ∓ q)
+//!   and q·2^q ∓ 1", Messenger of Mathematics, 1917.
+
 use anyhow::Result;
 use rayon::prelude::*;
 use rug::integer::IsPrime;
@@ -12,6 +48,7 @@ use crate::checkpoint::{self, Checkpoint};
 use crate::db::Database;
 use crate::events::{self, EventBus};
 use crate::kbn;
+use crate::pfgw;
 use crate::progress::Progress;
 use crate::CoordinationClient;
 use crate::{exact_digits, mr_screened_test, sieve};
@@ -130,17 +167,6 @@ fn test_woodall(candidate: &Integer, n: u64, mr_rounds: u32) -> (IsPrime, &'stat
     (r, cert)
 }
 
-/// Adaptive block size for Cullen/Woodall search.
-fn block_size_for_n(n: u64) -> u64 {
-    match n {
-        0..=1_000 => 10_000,
-        1_001..=10_000 => 5_000,
-        10_001..=50_000 => 1_000,
-        50_001..=200_000 => 200,
-        _ => 50,
-    }
-}
-
 pub fn search(
     min_n: u64,
     max_n: u64,
@@ -154,6 +180,12 @@ pub fn search(
     worker_client: Option<&dyn CoordinationClient>,
     event_bus: Option<&EventBus>,
 ) -> Result<()> {
+    // Resolve sieve_limit: auto-tune if 0
+    // Cullen/Woodall: n*2^n has ~max_n + log2(max_n) bits
+    let candidate_bits = max_n + (max_n as f64).log2() as u64;
+    let n_range = max_n.saturating_sub(min_n) + 1;
+    let sieve_limit = sieve::resolve_sieve_limit(sieve_limit, candidate_bits, n_range);
+
     let sieve_primes = sieve::generate_primes(sieve_limit);
     eprintln!(
         "Sieve initialized with {} primes up to {}",
@@ -209,7 +241,7 @@ pub fn search(
     let mut total_sieved: u64 = 0;
 
     while block_start <= max_n {
-        let bsize = block_size_for_n(block_start);
+        let bsize = crate::block_size_for_n_heavy(block_start);
         let block_end = (block_start + bsize - 1).min(max_n);
         let block_len = block_end - block_start + 1;
 
@@ -234,40 +266,75 @@ pub fn search(
         let found_primes: Vec<_> = survivors
             .into_par_iter()
             .flat_map_iter(|(n, test_cullen_flag, test_woodall_flag)| {
-                let n_2_n = Integer::from(n) * Integer::from(2u32).pow(n as u32);
-                let mut results = Vec::new();
+                let n_2_n = Integer::from(n) * Integer::from(2u32).pow(crate::checked_u32(n));
 
-                if test_cullen_flag {
+                let cullen_result = if test_cullen_flag {
                     let cullen = Integer::from(&n_2_n + 1u32);
-                    let (r, cert) = test_cullen(&cullen, n, mr_rounds);
-                    if r != IsPrime::No {
-                        let digits = exact_digits(&cullen);
-                        results.push((
-                            format!("{}*2^{} + 1", n, n),
-                            digits,
-                            cert.to_string(),
-                            "cullen",
-                        ));
-                    }
-                }
+                    let expr = format!("{}*2^{}+1", n, n);
 
-                if test_woodall_flag {
-                    let woodall = Integer::from(&n_2_n - 1u32);
-                    if woodall > 0u32 {
-                        let (r, cert) = test_woodall(&woodall, n, mr_rounds);
-                        if r != IsPrime::No {
-                            let digits = exact_digits(&woodall);
-                            results.push((
-                                format!("{}*2^{} - 1", n, n),
-                                digits,
-                                cert.to_string(),
-                                "woodall",
-                            ));
+                    // Try PFGW acceleration (50-100x faster for large candidates)
+                    match pfgw::try_test(&expr, &cullen, pfgw::PfgwMode::Prp) {
+                        Some(pfgw::PfgwResult::Prime { method, is_deterministic }) => {
+                            let cert = if is_deterministic {
+                                format!("deterministic ({})", method)
+                            } else {
+                                "probabilistic".to_string()
+                            };
+                            let digits = exact_digits(&cullen);
+                            Some((format!("{}*2^{} + 1", n, n), digits, cert, "cullen"))
+                        }
+                        Some(pfgw::PfgwResult::Composite) => None,
+                        _ => {
+                            // Unavailable or not configured — fall through to GMP
+                            let (r, cert) = test_cullen(&cullen, n, mr_rounds);
+                            if r != IsPrime::No {
+                                let digits = exact_digits(&cullen);
+                                Some((format!("{}*2^{} + 1", n, n), digits, cert.to_string(), "cullen"))
+                            } else {
+                                None
+                            }
                         }
                     }
-                }
+                } else {
+                    None
+                };
 
-                results
+                let woodall_result = if test_woodall_flag {
+                    let woodall = Integer::from(&n_2_n - 1u32);
+                    if woodall > 0u32 {
+                        let expr = format!("{}*2^{}-1", n, n);
+
+                        // Try PFGW acceleration
+                        match pfgw::try_test(&expr, &woodall, pfgw::PfgwMode::Prp) {
+                            Some(pfgw::PfgwResult::Prime { method, is_deterministic }) => {
+                                let cert = if is_deterministic {
+                                    format!("deterministic ({})", method)
+                                } else {
+                                    "probabilistic".to_string()
+                                };
+                                let digits = exact_digits(&woodall);
+                                Some((format!("{}*2^{} - 1", n, n), digits, cert, "woodall"))
+                            }
+                            Some(pfgw::PfgwResult::Composite) => None,
+                            _ => {
+                                // Unavailable or not configured — fall through to GMP
+                                let (r, cert) = test_woodall(&woodall, n, mr_rounds);
+                                if r != IsPrime::No {
+                                    let digits = exact_digits(&woodall);
+                                    Some((format!("{}*2^{} - 1", n, n), digits, cert.to_string(), "woodall"))
+                                } else {
+                                    None
+                                }
+                            }
+                        }
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+
+                cullen_result.into_iter().chain(woodall_result)
             })
             .collect();
 
@@ -311,6 +378,22 @@ pub fn search(
             last_checkpoint = Instant::now();
         }
 
+        if worker_client.is_some_and(|wc| wc.is_stop_requested()) {
+            checkpoint::save(
+                checkpoint_path,
+                &Checkpoint::CullenWoodall {
+                    last_n: block_end,
+                    min_n: Some(min_n),
+                    max_n: Some(max_n),
+                },
+            )?;
+            eprintln!(
+                "Stop requested by coordinator, checkpoint saved at n={}",
+                block_end
+            );
+            return Ok(());
+        }
+
         block_start = block_end + 1;
     }
 
@@ -328,11 +411,11 @@ mod tests {
     use crate::sieve;
 
     fn cullen(n: u64) -> Integer {
-        Integer::from(n) * Integer::from(2u32).pow(n as u32) + 1u32
+        Integer::from(n) * Integer::from(2u32).pow(crate::checked_u32(n)) + 1u32
     }
 
     fn woodall(n: u64) -> Integer {
-        Integer::from(n) * Integer::from(2u32).pow(n as u32) - 1u32
+        Integer::from(n) * Integer::from(2u32).pow(crate::checked_u32(n)) - 1u32
     }
 
     #[test]
@@ -470,7 +553,7 @@ mod tests {
         let exp = n + e as u64;
         assert_eq!(exp, 7);
         // Verify: m * 2^exp - 1 = 3 * 128 - 1 = 383
-        let reconstructed = Integer::from(m) * Integer::from(2u32).pow(exp as u32) - 1u32;
+        let reconstructed = Integer::from(m) * Integer::from(2u32).pow(crate::checked_u32(exp)) - 1u32;
         assert_eq!(reconstructed, woodall(n));
     }
 }

@@ -1,5 +1,21 @@
 "use client";
 
+/**
+ * @module auth-context
+ *
+ * Supabase Auth context provider for the dashboard. Wraps the entire
+ * app in `<AuthProvider>` to provide `useAuth()` hooks with:
+ *
+ * - `user` / `session` — Current Supabase Auth state
+ * - `signIn()` / `signOut()` — Email/password authentication
+ * - `loading` — True during initial session restoration
+ *
+ * `<AuthGuard>` gates all routes except `/login`, redirecting
+ * unauthenticated users to the login page. Session state is managed
+ * by Supabase's `onAuthStateChange` listener (handles refresh tokens
+ * and tab-focus re-authentication automatically).
+ */
+
 import {
   createContext,
   useContext,

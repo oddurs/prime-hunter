@@ -1,3 +1,41 @@
+//! # Wagstaff — (2^p + 1)/3 Prime Search
+//!
+//! Searches for Wagstaff primes: numbers of the form (2^p + 1)/3 where p is
+//! an odd prime. These are related to Mersenne primes but much rarer — only
+//! ~30 are known (as of 2025).
+//!
+//! ## Algebraic Background
+//!
+//! For odd p, 2^p + 1 ≡ 0 (mod 3) because 2 ≡ −1 (mod 3), so 2^p ≡ −1 (mod 3)
+//! for odd p. The quotient (2^p + 1)/3 is an integer. If it is prime, p must
+//! itself be prime (since 2^(ab) + 1 has algebraic factors).
+//!
+//! ## Algorithm
+//!
+//! 1. **Multiplicative order sieve** (`WagstaffSieve`): For each sieve prime q > 3,
+//!    computes ord_q(2). If ord ≡ 2 (mod 4), then 2^(ord/2) ≡ −1 (mod q), so
+//!    (2^p + 1)/3 is divisible by q whenever p ≡ ord/2 (mod ord). Entries with
+//!    ord ≡ 0 (mod 4) are excluded because their half-order is even and can never
+//!    match an odd prime exponent. Entries are deduplicated and sorted by order.
+//!
+//! 2. **No deterministic proof exists**: Unlike Mersenne or Proth primes, there
+//!    is no known efficient deterministic test for Wagstaff primes. All results
+//!    are probabilistic (PRP). The Vrba-Reix test (via GWNUM) provides a fast
+//!    PRP test specific to this form.
+//!
+//! ## Complexity
+//!
+//! - Sieve construction: O(π(L)² ) due to multiplicative order computation.
+//! - Sieve per candidate: O(S) where S is the number of sieve entries.
+//! - PRP test: O(p · M(p)) via GMP modular exponentiation.
+//!
+//! ## References
+//!
+//! - OEIS: [A000978](https://oeis.org/A000978) — Wagstaff prime exponents.
+//! - Samuel S. Wagstaff Jr., "Divisors of Mersenne Numbers", Mathematics of
+//!   Computation, 40(161), 1983.
+//! - Tony Forbes, "A Search for Wagstaff Primes", 2011.
+
 use anyhow::Result;
 use rayon::prelude::*;
 use rug::integer::IsPrime;
@@ -10,6 +48,7 @@ use std::time::Instant;
 use crate::checkpoint::{self, Checkpoint};
 use crate::db::Database;
 use crate::events::{self, EventBus};
+use crate::pfgw;
 use crate::progress::Progress;
 use crate::CoordinationClient;
 use crate::{exact_digits, mr_screened_test, sieve};
@@ -95,6 +134,12 @@ pub fn search(
         candidate_exponents.last().unwrap()
     );
 
+    // Resolve sieve_limit: auto-tune if 0
+    // Wagstaff: (2^p+1)/3 has ~max_exp bits
+    let candidate_bits = max_exp;
+    let n_range = candidate_exponents.len() as u64;
+    let sieve_limit = sieve::resolve_sieve_limit(sieve_limit, candidate_bits, n_range);
+
     // Build modular sieve
     let sieve_primes = sieve::generate_primes(sieve_limit);
     eprintln!(
@@ -156,17 +201,60 @@ pub fn search(
 
         sieved_out += (block.len() - survivors.len()) as u64;
 
-        // Test survivors with Miller-Rabin
+        // Test survivors: try PFGW first (50-100x faster), fall back to GMP MR.
+        // Note: PRST does not support Wagstaff form — PRST requires k*b^n±1 with integer k,
+        // but (2^p+1)/3 does not map to this form. PFGW is the correct accelerator here.
+        // Future: GWNUM direct FFI with Vrba-Reix test (Phase 3) will be even faster.
         let found_primes: Vec<_> = survivors
             .into_par_iter()
             .filter_map(|p| {
-                let two_p_plus_1 = (Integer::from(1u32) << p as u32) + 1u32;
+                let two_p_plus_1 = (Integer::from(1u32) << crate::checked_u32(p)) + 1u32;
                 debug_assert!(
                     two_p_plus_1.is_divisible_u(3),
                     "2^{} + 1 must be divisible by 3 for odd prime p",
                     p
                 );
                 let candidate = two_p_plus_1 / 3u32;
+
+                // Try GWNUM Vrba-Reix test (when --features gwnum is enabled)
+                #[cfg(feature = "gwnum")]
+                {
+                    let digits = crate::estimate_digits(&candidate);
+                    if digits >= 10_000 {
+                        match crate::gwnum::vrba_reix_test(p) {
+                            Ok(true) => {
+                                let digits = exact_digits(&candidate);
+                                return Some((p, digits, "probabilistic (Vrba-Reix)".to_string()));
+                            }
+                            Ok(false) => return None,
+                            Err(_) => {} // fall through to PFGW
+                        }
+                    }
+                }
+
+                // Try PFGW acceleration (Wagstaff: PRP only, no deterministic test exists)
+                if let Some(pfgw_result) = pfgw::try_test(
+                    &format!("(2^{}+1)/3", p),
+                    &candidate,
+                    pfgw::PfgwMode::Prp,
+                ) {
+                    match pfgw_result {
+                        pfgw::PfgwResult::Prime {
+                            method,
+                            is_deterministic,
+                        } => {
+                            let digits = exact_digits(&candidate);
+                            let certainty = if is_deterministic {
+                                format!("deterministic ({})", method)
+                            } else {
+                                "probabilistic".to_string()
+                            };
+                            return Some((p, digits, certainty));
+                        }
+                        pfgw::PfgwResult::Composite => return None,
+                        pfgw::PfgwResult::Unavailable { .. } => {} // fall through to GMP
+                    }
+                }
 
                 let r = mr_screened_test(&candidate, mr_rounds);
                 if r != IsPrime::No {
@@ -260,7 +348,7 @@ mod tests {
     use crate::sieve;
 
     fn wagstaff(p: u64) -> Integer {
-        ((Integer::from(1u32) << p as u32) + 1u32) / 3u32
+        ((Integer::from(1u32) << crate::checked_u32(p)) + 1u32) / 3u32
     }
 
     #[test]
@@ -358,6 +446,33 @@ mod tests {
 
         // ord_23(2) = 11, odd → excluded (2^p can never be -1 mod 23)
         assert_eq!(sieve::multiplicative_order(2, 23), 11);
+    }
+
+    #[test]
+    fn wagstaff_never_deterministic() {
+        // Wagstaff primes have no known deterministic test — GMP's is_probably_prime
+        // should never return IsPrime::Yes (which indicates a proven prime), only
+        // IsPrime::Probably for the known Wagstaff primes.
+        for &p in &[5u64, 7, 11, 13, 17, 19, 23, 31, 43, 61, 79, 101, 127] {
+            let w = wagstaff(p);
+            let result = w.is_probably_prime(25);
+            assert_ne!(
+                result,
+                IsPrime::No,
+                "(2^{}+1)/3 should pass MR",
+                p
+            );
+            // For large enough Wagstaff numbers, GMP can't prove primality deterministically.
+            // GMP returns IsPrime::Yes for very small numbers (< 2^64), so only check p >= 67.
+            if p >= 67 {
+                assert_eq!(
+                    result,
+                    IsPrime::Probably,
+                    "(2^{}+1)/3 should be Probably, not Yes — no deterministic proof exists",
+                    p
+                );
+            }
+        }
     }
 
     #[test]

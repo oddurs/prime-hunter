@@ -1,5 +1,17 @@
 "use client";
 
+/**
+ * @module use-primes
+ *
+ * React hook for querying the `primes` table via Supabase with
+ * server-side filtering, sorting, and pagination. Supports filtering
+ * by form, digit range, proof method, and text search on expressions.
+ *
+ * Exports `PrimeRecord` (list view), `PrimeDetail` (detail dialog),
+ * and `PrimeFilter` (query parameters). Used by the Browse page and
+ * the main dashboard primes table.
+ */
+
 import { useEffect, useState, useCallback } from "react";
 import { supabase } from "@/lib/supabase";
 

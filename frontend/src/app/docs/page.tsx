@@ -1,5 +1,20 @@
 "use client";
 
+/**
+ * @module docs/page
+ *
+ * Documentation viewer page. Fetches markdown documents from the Rust
+ * backend's `/api/docs` endpoint and renders them with:
+ *
+ * - **GitHub-Flavored Markdown** (tables, task lists, strikethrough)
+ * - **KaTeX math rendering** (inline `$...$` and display `$$...$$`)
+ * - **Syntax highlighting** for code blocks
+ * - **Sidebar navigation** with search across all documents
+ *
+ * Documents are sourced from the `docs/` directory in the repository,
+ * including roadmaps, research notes, and algorithm documentation.
+ */
+
 import { useEffect, useState, useCallback, Suspense, useMemo } from "react";
 import { useSearchParams, useRouter, usePathname } from "next/navigation";
 import ReactMarkdown from "react-markdown";
@@ -273,7 +288,13 @@ function DocsPageInner() {
 
   const renderedDocContent = useMemo(() => {
     if (!activeDoc) return "";
-    return stripLeadingHeading(activeDoc.content);
+    let content = stripLeadingHeading(activeDoc.content);
+    // Auto-link bare OEIS references (A######) that aren't already in links
+    content = content.replace(
+      /(?<!\[)(?<!\(https?:\/\/oeis\.org\/)\b(A\d{6,7})\b(?!\])/g,
+      "[$1](https://oeis.org/$1)"
+    );
+    return content;
   }, [activeDoc]);
 
   // Filter search results by active tab

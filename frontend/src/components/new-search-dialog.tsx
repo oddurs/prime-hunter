@@ -1,6 +1,16 @@
 "use client";
 
-import { useState } from "react";
+/**
+ * @module new-search-dialog
+ *
+ * Modal dialog for launching a new prime search. Presents a form with
+ * all 12 supported prime forms (factorial, kbn, palindromic, etc.),
+ * each with their specific parameter fields. Submits to the Rust
+ * backend's `/api/searches/start` endpoint. Includes algorithm
+ * descriptions and parameter validation.
+ */
+
+import { useMemo, useState } from "react";
 import { API_BASE } from "@/lib/format";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -18,6 +28,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Info } from "lucide-react";
 
 interface NewSearchDialogProps {
   open: boolean;
@@ -25,7 +36,160 @@ interface NewSearchDialogProps {
   onCreated: () => void;
 }
 
-type SearchType = "kbn" | "factorial" | "palindromic";
+type SearchType =
+  | "kbn"
+  | "factorial"
+  | "palindromic"
+  | "primorial"
+  | "cullen_woodall"
+  | "wagstaff"
+  | "carol_kynea"
+  | "twin"
+  | "sophie_germain"
+  | "repunit"
+  | "gen_fermat";
+
+interface FormMeta {
+  label: string;
+  description: string;
+  hint: string;
+  proof: string;
+  fields: { key: string; label: string; placeholder?: string }[];
+  defaults: Record<string, number>;
+}
+
+const formMeta: Record<SearchType, FormMeta> = {
+  kbn: {
+    label: "KBN (k*b^n +/- 1)",
+    description: "General Proth/Riesel form. Tests both +1 and -1.",
+    hint: "Uses Proth test (base 2, +1), LLR test (-1), or BSGS sieve + MR fallback. Deterministic proofs via Pocklington/Morrison when applicable.",
+    proof: "Deterministic (Proth/LLR/Pocklington)",
+    fields: [
+      { key: "k", label: "k", placeholder: "3" },
+      { key: "base", label: "Base", placeholder: "2" },
+      { key: "min_n", label: "Min n", placeholder: "1" },
+      { key: "max_n", label: "Max n", placeholder: "100000" },
+    ],
+    defaults: { k: 3, base: 2, min_n: 1, max_n: 100000 },
+  },
+  factorial: {
+    label: "Factorial (n! +/- 1)",
+    description: "Tests n!+1 and n!-1 for each n in range.",
+    hint: "Incremental factorial computation. Pocklington proof for n!+1, Morrison proof for n!-1. Both +1 and -1 tested in parallel.",
+    proof: "Deterministic (Pocklington/Morrison)",
+    fields: [
+      { key: "start", label: "Start n", placeholder: "1" },
+      { key: "end", label: "End n", placeholder: "10000" },
+    ],
+    defaults: { start: 1, end: 10000 },
+  },
+  palindromic: {
+    label: "Palindromic",
+    description: "Palindromic primes in a given base. Even-digit palindromes auto-skipped.",
+    hint: "Generates half-values and mirrors them. Deep modular sieve eliminates most composites before GMP testing.",
+    proof: "Probabilistic (Miller-Rabin)",
+    fields: [
+      { key: "base", label: "Base", placeholder: "10" },
+      { key: "min_digits", label: "Min digits", placeholder: "1" },
+      { key: "max_digits", label: "Max digits", placeholder: "11" },
+    ],
+    defaults: { base: 10, min_digits: 1, max_digits: 11 },
+  },
+  primorial: {
+    label: "Primorial (p# +/- 1)",
+    description: "Tests p#+1 and p#-1 where p# is the product of all primes up to p.",
+    hint: "Same proof strategy as factorial (shared prime factorization). Extremely rare finds — only 7 known for each sign.",
+    proof: "Deterministic (Pocklington/Morrison)",
+    fields: [
+      { key: "start", label: "Start prime", placeholder: "2" },
+      { key: "end", label: "End prime", placeholder: "10000" },
+    ],
+    defaults: { start: 2, end: 10000 },
+  },
+  cullen_woodall: {
+    label: "Cullen/Woodall",
+    description: "Cullen: n*2^n+1, Woodall: n*2^n-1. Both tested per n.",
+    hint: "Uses incremental multiplication. LLR-provable since k = n. Carol/Kynea forms also decompose to this pattern.",
+    proof: "Deterministic (LLR)",
+    fields: [
+      { key: "min_n", label: "Min n", placeholder: "1" },
+      { key: "max_n", label: "Max n", placeholder: "100000" },
+    ],
+    defaults: { min_n: 1, max_n: 100000 },
+  },
+  wagstaff: {
+    label: "Wagstaff",
+    description: "Wagstaff numbers: (2^p+1)/3 for prime p.",
+    hint: "No deterministic proof exists — results are always probable primes (PRP). No active competing project. Only 44 known Wagstaff primes.",
+    proof: "Probabilistic (PRP only)",
+    fields: [
+      { key: "min_exp", label: "Min exponent", placeholder: "3" },
+      { key: "max_exp", label: "Max exponent", placeholder: "100000" },
+    ],
+    defaults: { min_exp: 3, max_exp: 100000 },
+  },
+  carol_kynea: {
+    label: "Carol/Kynea",
+    description: "Carol: (2^n-1)^2-2, Kynea: (2^n+1)^2-2.",
+    hint: "Decompose to k*2^(n+1)-1 form (Carol: k=2^(n-1)-1, Kynea: k=2^(n-1)+1). LLR-provable.",
+    proof: "Deterministic (LLR)",
+    fields: [
+      { key: "min_n", label: "Min n", placeholder: "2" },
+      { key: "max_n", label: "Max n", placeholder: "100000" },
+    ],
+    defaults: { min_n: 2, max_n: 100000 },
+  },
+  twin: {
+    label: "Twin Primes",
+    description: "Twin primes of form k*b^n+1 and k*b^n-1 (both must be prime).",
+    hint: "Intersects BSGS sieve survivors for +1 and -1. Both candidates tested only if both survive the sieve.",
+    proof: "Deterministic (Proth + LLR)",
+    fields: [
+      { key: "k", label: "k", placeholder: "1" },
+      { key: "base", label: "Base", placeholder: "2" },
+      { key: "min_n", label: "Min n", placeholder: "1" },
+      { key: "max_n", label: "Max n", placeholder: "100000" },
+    ],
+    defaults: { k: 1, base: 2, min_n: 1, max_n: 100000 },
+  },
+  sophie_germain: {
+    label: "Sophie Germain",
+    description: "Sophie Germain: p=k*b^n-1 where both p and 2p+1 are prime.",
+    hint: "Reuses KBN sieve: p=k*b^n-1, safe prime=2k*b^n-1. Both are LLR-testable.",
+    proof: "Deterministic (LLR)",
+    fields: [
+      { key: "k", label: "k", placeholder: "1" },
+      { key: "base", label: "Base", placeholder: "2" },
+      { key: "min_n", label: "Min n", placeholder: "1" },
+      { key: "max_n", label: "Max n", placeholder: "100000" },
+    ],
+    defaults: { k: 1, base: 2, min_n: 1, max_n: 100000 },
+  },
+  repunit: {
+    label: "Repunit",
+    description: "Repunit primes: R(b,n) = (b^n-1)/(b-1) for prime n.",
+    hint: "Each sieve prime eliminates at most one exponent. Only prime exponents tested. Probabilistic results (no known proof method).",
+    proof: "Probabilistic (Miller-Rabin)",
+    fields: [
+      { key: "base", label: "Base", placeholder: "10" },
+      { key: "min_n", label: "Min n", placeholder: "2" },
+      { key: "max_n", label: "Max n", placeholder: "100000" },
+    ],
+    defaults: { base: 10, min_n: 2, max_n: 100000 },
+  },
+  gen_fermat: {
+    label: "Generalized Fermat",
+    description: "Generalized Fermat primes: b^(2^n)+1 for even b.",
+    hint: "Deterministic Pepin/Proth proof when 2^t > m (b = 2^t * m, m odd). Scans base range for a fixed Fermat exponent.",
+    proof: "Deterministic (Pepin/Proth when applicable)",
+    fields: [
+      { key: "fermat_exp", label: "Fermat exponent n", placeholder: "1" },
+      { key: "min_base", label: "Min base (even)", placeholder: "2" },
+      { key: "max_base", label: "Max base", placeholder: "1000000" },
+    ],
+    defaults: { fermat_exp: 1, min_base: 2, max_base: 1000000 },
+  },
+};
 
 interface Preset {
   name: string;
@@ -78,13 +242,6 @@ const presets: Preset[] = [
     values: { start: 1000, end: 10000 },
   },
   {
-    name: "Factorial (frontier)",
-    description: "n!+/-1 from 10k to 100k — large candidates",
-    tag: "Heavy",
-    type: "factorial",
-    values: { start: 10000, end: 100000 },
-  },
-  {
     name: "Palindromic (base 10)",
     description: "Decimal palindromes, 1-11 digits",
     tag: "Fast",
@@ -92,25 +249,45 @@ const presets: Preset[] = [
     values: { base: 10, min_digits: 1, max_digits: 11 },
   },
   {
-    name: "Palindromic (large)",
-    description: "Decimal palindromes, 11-17 digits",
-    tag: "Long",
-    type: "palindromic",
-    values: { base: 10, min_digits: 11, max_digits: 17 },
+    name: "Twin primes",
+    description: "Twin primes k*2^n +/- 1, n up to 100k",
+    tag: "Novel",
+    type: "twin",
+    values: { k: 1, base: 2, min_n: 1, max_n: 100000 },
   },
   {
-    name: "Palindromic (base 2)",
-    description: "Binary palindromes, 1-31 digits",
-    type: "palindromic",
-    values: { base: 2, min_digits: 1, max_digits: 31 },
+    name: "Wagstaff (small)",
+    description: "(2^p+1)/3 for prime p up to 100k",
+    type: "wagstaff",
+    values: { min_exp: 3, max_exp: 100000 },
+  },
+  {
+    name: "Cullen/Woodall",
+    description: "n*2^n+1 and n*2^n-1 up to n=50k",
+    type: "cullen_woodall",
+    values: { min_n: 1, max_n: 50000 },
+  },
+  {
+    name: "Sophie Germain",
+    description: "p and 2p+1 both prime, k*2^n-1 form",
+    tag: "Novel",
+    type: "sophie_germain",
+    values: { k: 1, base: 2, min_n: 1, max_n: 100000 },
+  },
+  {
+    name: "Gen Fermat (n=1)",
+    description: "b^2+1 for even b up to 1M",
+    tag: "Fast",
+    type: "gen_fermat",
+    values: { fermat_exp: 1, min_base: 2, max_base: 1000000 },
+  },
+  {
+    name: "Repunit (base 10)",
+    description: "(10^n-1)/9 for prime n up to 100k",
+    type: "repunit",
+    values: { base: 10, min_n: 2, max_n: 100000 },
   },
 ];
-
-const defaults: Record<SearchType, Record<string, number>> = {
-  kbn: { k: 3, base: 2, min_n: 1, max_n: 100000 },
-  factorial: { start: 1, end: 10000 },
-  palindromic: { base: 10, min_digits: 1, max_digits: 11 },
-};
 
 const tagColors: Record<string, string> = {
   Fast: "bg-green-500/15 text-green-500 border-green-500/30",
@@ -122,13 +299,45 @@ const tagColors: Record<string, string> = {
 export function NewSearchDialog({ open, onOpenChange, onCreated }: NewSearchDialogProps) {
   const [mode, setMode] = useState<"presets" | "custom">("presets");
   const [searchType, setSearchType] = useState<SearchType>("kbn");
-  const [values, setValues] = useState<Record<string, number>>(defaults.kbn);
+  const [values, setValues] = useState<Record<string, number>>(formMeta.kbn.defaults);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
+  const meta = formMeta[searchType];
+
+  const algorithmHints = useMemo(() => {
+    const m = formMeta[searchType];
+    const hints: string[] = [];
+
+    if (searchType === "kbn" && values.base === 2) {
+      if (values.k && values.k % 2 === 1) {
+        hints.push("Proth test available for +1 side (deterministic, single exponentiation)");
+      }
+      hints.push("LLR test available for -1 side (deterministic, n-2 squarings)");
+    }
+
+    if (searchType === "kbn" && values.base !== 2) {
+      hints.push("Non-base-2: BSGS sieve + Miller-Rabin fallback. Less explored territory — higher discovery probability.");
+    }
+
+    if (searchType === "wagstaff") {
+      hints.push("No deterministic proof exists for Wagstaff primes. All results are PRP.");
+    }
+
+    if (searchType === "gen_fermat" && values.fermat_exp >= 10) {
+      hints.push("Large Fermat exponent: candidates grow as b^(2^n). Expect very large numbers.");
+    }
+
+    if (m.proof.startsWith("Deterministic")) {
+      hints.push(`Proof: ${m.proof} — results publishable to Top5000 / OEIS.`);
+    }
+
+    return hints;
+  }, [searchType, values.base, values.k, values.fermat_exp]);
+
   function handleTypeChange(type: SearchType) {
     setSearchType(type);
-    setValues(defaults[type]);
+    setValues(formMeta[type].defaults);
     setError(null);
   }
 
@@ -224,68 +433,44 @@ export function NewSearchDialog({ open, onOpenChange, onCreated }: NewSearchDial
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="kbn">KBN (k*b^n +/- 1)</SelectItem>
-                  <SelectItem value="factorial">Factorial (n! +/- 1)</SelectItem>
-                  <SelectItem value="palindromic">Palindromic</SelectItem>
+                  {(Object.entries(formMeta) as [SearchType, FormMeta][]).map(([key, m]) => (
+                    <SelectItem key={key} value={key}>
+                      {m.label}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
+              <p className="text-xs text-muted-foreground mt-1.5">{meta.description}</p>
             </div>
 
-            {searchType === "kbn" && (
-              <>
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="text-xs font-medium text-muted-foreground mb-1 block">k</label>
-                    <Input type="number" value={values.k} onChange={(e) => handleValueChange("k", e.target.value)} />
-                  </div>
-                  <div>
-                    <label className="text-xs font-medium text-muted-foreground mb-1 block">Base</label>
-                    <Input type="number" value={values.base} onChange={(e) => handleValueChange("base", e.target.value)} />
-                  </div>
+            <div className={meta.fields.length <= 2 ? "grid grid-cols-2 gap-3" : "grid grid-cols-2 gap-3"}>
+              {meta.fields.map((field) => (
+                <div key={field.key}>
+                  <label className="text-xs font-medium text-muted-foreground mb-1 block">
+                    {field.label}
+                  </label>
+                  <Input
+                    type="number"
+                    value={values[field.key] ?? ""}
+                    placeholder={field.placeholder}
+                    onChange={(e) => handleValueChange(field.key, e.target.value)}
+                  />
                 </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="text-xs font-medium text-muted-foreground mb-1 block">Min n</label>
-                    <Input type="number" value={values.min_n} onChange={(e) => handleValueChange("min_n", e.target.value)} />
-                  </div>
-                  <div>
-                    <label className="text-xs font-medium text-muted-foreground mb-1 block">Max n</label>
-                    <Input type="number" value={values.max_n} onChange={(e) => handleValueChange("max_n", e.target.value)} />
-                  </div>
-                </div>
-              </>
-            )}
+              ))}
+            </div>
 
-            {searchType === "factorial" && (
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="text-xs font-medium text-muted-foreground mb-1 block">Start</label>
-                  <Input type="number" value={values.start} onChange={(e) => handleValueChange("start", e.target.value)} />
+            {algorithmHints.length > 0 && (
+              <div className="rounded-md bg-muted p-3 space-y-1">
+                <div className="flex items-center gap-1.5 text-xs font-medium text-foreground">
+                  <Info className="size-3.5" />
+                  Algorithm info
                 </div>
-                <div>
-                  <label className="text-xs font-medium text-muted-foreground mb-1 block">End</label>
-                  <Input type="number" value={values.end} onChange={(e) => handleValueChange("end", e.target.value)} />
-                </div>
+                {algorithmHints.map((hint, i) => (
+                  <p key={i} className="text-xs text-muted-foreground">
+                    {hint}
+                  </p>
+                ))}
               </div>
-            )}
-
-            {searchType === "palindromic" && (
-              <>
-                <div>
-                  <label className="text-xs font-medium text-muted-foreground mb-1 block">Base</label>
-                  <Input type="number" value={values.base} onChange={(e) => handleValueChange("base", e.target.value)} />
-                </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="text-xs font-medium text-muted-foreground mb-1 block">Min digits</label>
-                    <Input type="number" value={values.min_digits} onChange={(e) => handleValueChange("min_digits", e.target.value)} />
-                  </div>
-                  <div>
-                    <label className="text-xs font-medium text-muted-foreground mb-1 block">Max digits</label>
-                    <Input type="number" value={values.max_digits} onChange={(e) => handleValueChange("max_digits", e.target.value)} />
-                  </div>
-                </div>
-              </>
             )}
 
             {error && (

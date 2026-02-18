@@ -1,5 +1,13 @@
 "use client";
 
+/**
+ * @module search-card
+ *
+ * Card component for displaying an active or completed search process.
+ * Shows search type, parameters, progress (tested/found), elapsed time,
+ * and provides start/stop controls via the REST API.
+ */
+
 import { useEffect, useState } from "react";
 import {
   Card,

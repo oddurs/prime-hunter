@@ -1,3 +1,23 @@
+//! # Database — PostgreSQL Storage Layer
+//!
+//! Provides async database operations for prime records, search metadata, and
+//! fleet coordination via `sqlx::PgPool` connecting to Supabase PostgreSQL.
+//!
+//! ## Schema
+//!
+//! - `primes`: expression, form, digits, found_at, proof_method, search_params
+//! - `search_jobs`: job configuration, status, progress tracking
+//! - `work_blocks`: distributable work units for cluster coordination
+//! - `workers`: heartbeat-based fleet registry
+//! - `agent_tasks`: AI agent task queue
+//!
+//! ## Sync Wrapper
+//!
+//! Engine modules run inside Rayon thread pools (no Tokio runtime). The
+//! `insert_prime_sync` method bridges async sqlx operations into sync contexts
+//! via `tokio::runtime::Handle::block_on`. This is safe because Rayon threads
+//! are not Tokio tasks — they won't deadlock the executor.
+
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -505,7 +525,9 @@ impl Database {
             sqlx::query_as::<_, AgentTaskRow>(
                 "SELECT id, title, description, status, priority, agent_model, assigned_agent,
                         source, result, tokens_used, cost_usd::FLOAT8 AS cost_usd,
-                        created_at, started_at, completed_at, parent_task_id
+                        created_at, started_at, completed_at, parent_task_id,
+                        max_cost_usd::FLOAT8 AS max_cost_usd, permission_level,
+                        template_name, on_child_failure
                  FROM agent_tasks WHERE status = $1
                  ORDER BY created_at DESC LIMIT $2",
             )
@@ -517,7 +539,9 @@ impl Database {
             sqlx::query_as::<_, AgentTaskRow>(
                 "SELECT id, title, description, status, priority, agent_model, assigned_agent,
                         source, result, tokens_used, cost_usd::FLOAT8 AS cost_usd,
-                        created_at, started_at, completed_at, parent_task_id
+                        created_at, started_at, completed_at, parent_task_id,
+                        max_cost_usd::FLOAT8 AS max_cost_usd, permission_level,
+                        template_name, on_child_failure
                  FROM agent_tasks
                  ORDER BY created_at DESC LIMIT $1",
             )
@@ -532,7 +556,9 @@ impl Database {
         let row = sqlx::query_as::<_, AgentTaskRow>(
             "SELECT id, title, description, status, priority, agent_model, assigned_agent,
                     source, result, tokens_used, cost_usd::FLOAT8 AS cost_usd,
-                    created_at, started_at, completed_at, parent_task_id
+                    created_at, started_at, completed_at, parent_task_id,
+                    max_cost_usd::FLOAT8 AS max_cost_usd, permission_level,
+                    template_name, on_child_failure
              FROM agent_tasks WHERE id = $1",
         )
         .bind(id)
@@ -548,19 +574,25 @@ impl Database {
         priority: &str,
         agent_model: Option<&str>,
         source: &str,
+        max_cost_usd: Option<f64>,
+        permission_level: i32,
     ) -> Result<AgentTaskRow> {
         let row = sqlx::query_as::<_, AgentTaskRow>(
-            "INSERT INTO agent_tasks (title, description, priority, agent_model, source)
-             VALUES ($1, $2, $3, $4, $5)
+            "INSERT INTO agent_tasks (title, description, priority, agent_model, source, max_cost_usd, permission_level)
+             VALUES ($1, $2, $3, $4, $5, $6, $7)
              RETURNING id, title, description, status, priority, agent_model, assigned_agent,
                        source, result, tokens_used, cost_usd::FLOAT8 AS cost_usd,
-                       created_at, started_at, completed_at, parent_task_id",
+                       created_at, started_at, completed_at, parent_task_id,
+                       max_cost_usd::FLOAT8 AS max_cost_usd, permission_level,
+                       template_name, on_child_failure",
         )
         .bind(title)
         .bind(description)
         .bind(priority)
         .bind(agent_model)
         .bind(source)
+        .bind(max_cost_usd)
+        .bind(permission_level)
         .fetch_one(&self.pool)
         .await?;
         Ok(row)
@@ -683,6 +715,391 @@ impl Database {
         Ok(())
     }
 
+    // --- Agent execution engine ---
+
+    /// Claim the highest-priority pending agent task, atomically setting it to in_progress.
+    /// Priority order: urgent=0 > high=1 > normal=2 > low=3, then FIFO by created_at.
+    pub async fn claim_pending_agent_task(
+        &self,
+        assigned_agent: &str,
+    ) -> Result<Option<AgentTaskRow>> {
+        let row = sqlx::query_as::<_, AgentTaskRow>(
+            "WITH next_task AS (
+                SELECT id FROM agent_tasks
+                WHERE status = 'pending'
+                -- Skip tasks that have unsatisfied dependencies
+                AND NOT EXISTS (
+                    SELECT 1 FROM agent_task_deps d
+                    JOIN agent_tasks dep ON dep.id = d.depends_on
+                    WHERE d.task_id = agent_tasks.id
+                    AND dep.status NOT IN ('completed')
+                )
+                -- Skip parent tasks (they auto-complete when children finish)
+                AND NOT EXISTS (
+                    SELECT 1 FROM agent_tasks child
+                    WHERE child.parent_task_id = agent_tasks.id
+                )
+                ORDER BY
+                    CASE priority
+                        WHEN 'urgent' THEN 0
+                        WHEN 'high' THEN 1
+                        WHEN 'normal' THEN 2
+                        WHEN 'low' THEN 3
+                        ELSE 4
+                    END,
+                    created_at ASC
+                LIMIT 1
+                FOR UPDATE SKIP LOCKED
+            )
+            UPDATE agent_tasks SET
+                status = 'in_progress',
+                assigned_agent = $1,
+                started_at = NOW()
+            FROM next_task
+            WHERE agent_tasks.id = next_task.id
+            RETURNING agent_tasks.id, agent_tasks.title, agent_tasks.description,
+                      agent_tasks.status, agent_tasks.priority, agent_tasks.agent_model,
+                      agent_tasks.assigned_agent, agent_tasks.source, agent_tasks.result,
+                      agent_tasks.tokens_used, agent_tasks.cost_usd::FLOAT8 AS cost_usd,
+                      agent_tasks.created_at, agent_tasks.started_at, agent_tasks.completed_at,
+                      agent_tasks.parent_task_id,
+                      agent_tasks.max_cost_usd::FLOAT8 AS max_cost_usd,
+                      agent_tasks.permission_level,
+                      agent_tasks.template_name, agent_tasks.on_child_failure",
+        )
+        .bind(assigned_agent)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row)
+    }
+
+    /// Mark an agent task as completed/failed with result data.
+    pub async fn complete_agent_task(
+        &self,
+        task_id: i64,
+        status: &str,
+        result: Option<&serde_json::Value>,
+        tokens_used: i64,
+        cost_usd: f64,
+    ) -> Result<()> {
+        sqlx::query(
+            "UPDATE agent_tasks SET
+                status = $1,
+                result = $2,
+                tokens_used = tokens_used + $3,
+                cost_usd = cost_usd + $4,
+                completed_at = NOW()
+             WHERE id = $5",
+        )
+        .bind(status)
+        .bind(result)
+        .bind(tokens_used)
+        .bind(cost_usd)
+        .bind(task_id)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Check if all budget periods allow more agent spending.
+    /// Returns true if spending is allowed (under budget on ALL periods).
+    /// If any period is over budget, returns false.
+    pub async fn check_agent_budget(&self) -> Result<bool> {
+        let over_budget: Option<bool> = sqlx::query_scalar(
+            "SELECT BOOL_OR(spent_usd >= budget_usd) FROM agent_budgets
+             WHERE period_start <= NOW()
+               AND period_start + CASE period
+                   WHEN 'daily' THEN INTERVAL '1 day'
+                   WHEN 'weekly' THEN INTERVAL '1 week'
+                   WHEN 'monthly' THEN INTERVAL '1 month'
+                   END > NOW()",
+        )
+        .fetch_optional(&self.pool)
+        .await?;
+        // If no rows match or no period is over budget, allow spending
+        Ok(!over_budget.unwrap_or(false))
+    }
+
+    /// Increment spent_usd and tokens_used on ALL active budget period rows.
+    pub async fn update_agent_budget_spending(
+        &self,
+        tokens: i64,
+        cost: f64,
+    ) -> Result<()> {
+        sqlx::query(
+            "UPDATE agent_budgets SET
+                spent_usd = spent_usd + $1,
+                tokens_used = tokens_used + $2,
+                updated_at = NOW()
+             WHERE period_start <= NOW()
+               AND period_start + CASE period
+                   WHEN 'daily' THEN INTERVAL '1 day'
+                   WHEN 'weekly' THEN INTERVAL '1 week'
+                   WHEN 'monthly' THEN INTERVAL '1 month'
+                   END > NOW()",
+        )
+        .bind(cost)
+        .bind(tokens)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Rotate budget periods whose window has elapsed.
+    /// Resets spent_usd/tokens_used and advances period_start to the current window.
+    pub async fn rotate_agent_budget_periods(&self) -> Result<u64> {
+        let result = sqlx::query(
+            "UPDATE agent_budgets SET
+                spent_usd = 0,
+                tokens_used = 0,
+                period_start = CASE period
+                    WHEN 'daily' THEN date_trunc('day', NOW())
+                    WHEN 'weekly' THEN date_trunc('week', NOW())
+                    WHEN 'monthly' THEN date_trunc('month', NOW())
+                    END,
+                updated_at = NOW()
+             WHERE period_start + CASE period
+                 WHEN 'daily' THEN INTERVAL '1 day'
+                 WHEN 'weekly' THEN INTERVAL '1 week'
+                 WHEN 'monthly' THEN INTERVAL '1 month'
+                 END <= NOW()",
+        )
+        .execute(&self.pool)
+        .await?;
+        Ok(result.rows_affected())
+    }
+
+    // --- Agent templates & task decomposition ---
+
+    /// Retrieve all agent workflow templates, ordered by name.
+    pub async fn get_all_templates(&self) -> Result<Vec<AgentTemplateRow>> {
+        let rows = sqlx::query_as::<_, AgentTemplateRow>(
+            "SELECT id, name, description, steps, created_at
+             FROM agent_templates ORDER BY name",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows)
+    }
+
+    /// Retrieve a single template by name.
+    pub async fn get_template_by_name(&self, name: &str) -> Result<Option<AgentTemplateRow>> {
+        let row = sqlx::query_as::<_, AgentTemplateRow>(
+            "SELECT id, name, description, steps, created_at
+             FROM agent_templates WHERE name = $1",
+        )
+        .bind(name)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row)
+    }
+
+    /// Expand a template into a parent task and child tasks within a single transaction.
+    ///
+    /// Creates one parent task (with `template_name` set) and one child task per step.
+    /// Child permission levels are capped at the parent's level. Dependencies between
+    /// steps (via `depends_on_step` indices) become rows in `agent_task_deps`.
+    ///
+    /// Returns the parent task ID on success.
+    pub async fn expand_template(
+        &self,
+        template_name: &str,
+        parent_title: &str,
+        parent_desc: &str,
+        priority: &str,
+        max_cost_usd: Option<f64>,
+        permission_level: i32,
+    ) -> Result<i64> {
+        let template = self
+            .get_template_by_name(template_name)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("Template '{}' not found", template_name))?;
+
+        let steps = template
+            .steps
+            .as_array()
+            .ok_or_else(|| anyhow::anyhow!("Template steps is not an array"))?;
+
+        let mut tx = self.pool.begin().await?;
+
+        // Insert parent task
+        let parent_id: i64 = sqlx::query_scalar(
+            "INSERT INTO agent_tasks (title, description, priority, source, max_cost_usd,
+                                      permission_level, template_name, on_child_failure)
+             VALUES ($1, $2, $3, 'manual', $4, $5, $6, 'fail')
+             RETURNING id",
+        )
+        .bind(parent_title)
+        .bind(parent_desc)
+        .bind(priority)
+        .bind(max_cost_usd)
+        .bind(permission_level)
+        .bind(template_name)
+        .fetch_one(&mut *tx)
+        .await?;
+
+        // Insert child tasks, collecting their IDs for dependency wiring
+        let mut child_ids: Vec<i64> = Vec::with_capacity(steps.len());
+
+        for step in steps {
+            let step_title = step
+                .get("title")
+                .and_then(|t| t.as_str())
+                .unwrap_or("Untitled step");
+            let step_desc = step
+                .get("description")
+                .and_then(|d| d.as_str())
+                .unwrap_or("");
+            let step_level = step
+                .get("permission_level")
+                .and_then(|l| l.as_i64())
+                .unwrap_or(1) as i32;
+
+            // Child permission = min(step requested, parent's level)
+            let child_level = step_level.min(permission_level);
+
+            let child_title = format!("{}: {}", parent_title, step_title);
+
+            let child_id: i64 = sqlx::query_scalar(
+                "INSERT INTO agent_tasks (title, description, priority, source, parent_task_id,
+                                          permission_level, template_name)
+                 VALUES ($1, $2, $3, 'automated', $4, $5, $6)
+                 RETURNING id",
+            )
+            .bind(&child_title)
+            .bind(step_desc)
+            .bind(priority)
+            .bind(parent_id)
+            .bind(child_level)
+            .bind(template_name)
+            .fetch_one(&mut *tx)
+            .await?;
+
+            child_ids.push(child_id);
+        }
+
+        // Wire up dependencies based on depends_on_step indices
+        for (i, step) in steps.iter().enumerate() {
+            if let Some(dep_idx) = step.get("depends_on_step").and_then(|d| d.as_u64()) {
+                let dep_idx = dep_idx as usize;
+                if dep_idx < child_ids.len() && dep_idx != i {
+                    sqlx::query(
+                        "INSERT INTO agent_task_deps (task_id, depends_on) VALUES ($1, $2)",
+                    )
+                    .bind(child_ids[i])
+                    .bind(child_ids[dep_idx])
+                    .execute(&mut *tx)
+                    .await?;
+                }
+            }
+        }
+
+        tx.commit().await?;
+        Ok(parent_id)
+    }
+
+    /// Check if all children of a parent task are terminal (completed/cancelled/failed).
+    /// If so, mark the parent as completed or failed based on `on_child_failure` policy.
+    ///
+    /// Returns `Some(parent_row)` if the parent was just completed, `None` if children
+    /// are still pending/running.
+    pub async fn try_complete_parent(&self, parent_id: i64) -> Result<Option<AgentTaskRow>> {
+        // Count non-terminal children
+        let pending: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM agent_tasks
+             WHERE parent_task_id = $1
+             AND status NOT IN ('completed', 'cancelled', 'failed')",
+        )
+        .bind(parent_id)
+        .fetch_one(&self.pool)
+        .await?;
+
+        if pending > 0 {
+            return Ok(None);
+        }
+
+        // All children are terminal — check for failures
+        let parent = self
+            .get_agent_task(parent_id)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("Parent task {} not found", parent_id))?;
+
+        // Already terminal
+        if matches!(
+            parent.status.as_str(),
+            "completed" | "failed" | "cancelled"
+        ) {
+            return Ok(None);
+        }
+
+        let any_failed: bool = sqlx::query_scalar(
+            "SELECT EXISTS(
+                SELECT 1 FROM agent_tasks
+                WHERE parent_task_id = $1 AND status = 'failed'
+            )",
+        )
+        .bind(parent_id)
+        .fetch_one(&self.pool)
+        .await?;
+
+        let new_status = if any_failed && parent.on_child_failure == "fail" {
+            "failed"
+        } else {
+            "completed"
+        };
+
+        sqlx::query(
+            "UPDATE agent_tasks SET status = $1, completed_at = NOW() WHERE id = $2",
+        )
+        .bind(new_status)
+        .bind(parent_id)
+        .execute(&self.pool)
+        .await?;
+
+        self.get_agent_task(parent_id).await
+    }
+
+    /// Get all child tasks of a parent, ordered by ID (creation order).
+    pub async fn get_child_tasks(&self, parent_id: i64) -> Result<Vec<AgentTaskRow>> {
+        let rows = sqlx::query_as::<_, AgentTaskRow>(
+            "SELECT id, title, description, status, priority, agent_model, assigned_agent,
+                    source, result, tokens_used, cost_usd::FLOAT8 AS cost_usd,
+                    created_at, started_at, completed_at, parent_task_id,
+                    max_cost_usd::FLOAT8 AS max_cost_usd, permission_level,
+                    template_name, on_child_failure
+             FROM agent_tasks
+             WHERE parent_task_id = $1
+             ORDER BY id",
+        )
+        .bind(parent_id)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows)
+    }
+
+    /// Get dependency task IDs for a given task.
+    pub async fn get_task_deps(&self, task_id: i64) -> Result<Vec<i64>> {
+        let rows: Vec<(i64,)> = sqlx::query_as(
+            "SELECT depends_on FROM agent_task_deps WHERE task_id = $1",
+        )
+        .bind(task_id)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows.into_iter().map(|(id,)| id).collect())
+    }
+
+    /// Cancel all pending sibling tasks of a parent (used when on_child_failure = 'fail').
+    pub async fn cancel_pending_siblings(&self, parent_id: i64) -> Result<u64> {
+        let result = sqlx::query(
+            "UPDATE agent_tasks SET status = 'cancelled', completed_at = NOW()
+             WHERE parent_task_id = $1 AND status = 'pending'",
+        )
+        .bind(parent_id)
+        .execute(&self.pool)
+        .await?;
+        Ok(result.rows_affected())
+    }
+
     // --- Verification ---
 
     pub async fn get_unverified_primes(&self, limit: i64) -> Result<Vec<PrimeDetail>> {
@@ -703,7 +1120,7 @@ impl Database {
         force: bool,
     ) -> Result<Vec<PrimeDetail>> {
         let verified_clause = if force { "" } else { "NOT verified AND" };
-        let (sql, has_form) = if let Some(_) = form {
+        let (sql, has_form) = if form.is_some() {
             (
                 format!(
                     "SELECT id, form, expression, digits, found_at, search_params, proof_method
@@ -814,6 +1231,488 @@ impl Database {
         let count = query.fetch_one(&self.pool).await?;
         Ok(count)
     }
+
+    // --- Agent memory ---
+
+    /// Retrieve all agent memory entries, ordered by category then key.
+    pub async fn get_all_agent_memory(&self) -> Result<Vec<AgentMemoryRow>> {
+        let rows = sqlx::query_as::<_, AgentMemoryRow>(
+            "SELECT id, key, value, category, created_by_task, created_at, updated_at
+             FROM agent_memory ORDER BY category, key",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows)
+    }
+
+    /// Retrieve agent memory entries filtered by category.
+    pub async fn get_agent_memory_by_category(&self, category: &str) -> Result<Vec<AgentMemoryRow>> {
+        let rows = sqlx::query_as::<_, AgentMemoryRow>(
+            "SELECT id, key, value, category, created_by_task, created_at, updated_at
+             FROM agent_memory WHERE category = $1 ORDER BY key",
+        )
+        .bind(category)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows)
+    }
+
+    /// Upsert an agent memory entry. If the key already exists, update value/category/task.
+    pub async fn upsert_agent_memory(
+        &self,
+        key: &str,
+        value: &str,
+        category: &str,
+        task_id: Option<i64>,
+    ) -> Result<AgentMemoryRow> {
+        let row = sqlx::query_as::<_, AgentMemoryRow>(
+            "INSERT INTO agent_memory (key, value, category, created_by_task)
+             VALUES ($1, $2, $3, $4)
+             ON CONFLICT (key) DO UPDATE SET
+               value = EXCLUDED.value,
+               category = EXCLUDED.category,
+               created_by_task = EXCLUDED.created_by_task,
+               updated_at = now()
+             RETURNING id, key, value, category, created_by_task, created_at, updated_at",
+        )
+        .bind(key)
+        .bind(value)
+        .bind(category)
+        .bind(task_id)
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(row)
+    }
+
+    /// Delete an agent memory entry by key. Returns true if a row was deleted.
+    pub async fn delete_agent_memory(&self, key: &str) -> Result<bool> {
+        let result = sqlx::query("DELETE FROM agent_memory WHERE key = $1")
+            .bind(key)
+            .execute(&self.pool)
+            .await?;
+        Ok(result.rows_affected() > 0)
+    }
+
+    /// Get sibling tasks that share the same parent, excluding the given task.
+    pub async fn get_sibling_tasks(
+        &self,
+        parent_id: i64,
+        exclude_id: i64,
+    ) -> Result<Vec<AgentTaskRow>> {
+        let rows = sqlx::query_as::<_, AgentTaskRow>(
+            "SELECT id, title, description, status, priority, agent_model, assigned_agent,
+                    source, result, tokens_used, cost_usd::FLOAT8 AS cost_usd,
+                    created_at, started_at, completed_at, parent_task_id,
+                    max_cost_usd::FLOAT8 AS max_cost_usd, permission_level,
+                    template_name, on_child_failure
+             FROM agent_tasks
+             WHERE parent_task_id = $1 AND id != $2
+             ORDER BY created_at DESC LIMIT 10",
+        )
+        .bind(parent_id)
+        .bind(exclude_id)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows)
+    }
+
+    /// Get previous attempts at tasks with the same title (failed/cancelled), excluding the given task.
+    pub async fn get_previous_attempts(
+        &self,
+        title: &str,
+        exclude_id: i64,
+    ) -> Result<Vec<AgentTaskRow>> {
+        let rows = sqlx::query_as::<_, AgentTaskRow>(
+            "SELECT id, title, description, status, priority, agent_model, assigned_agent,
+                    source, result, tokens_used, cost_usd::FLOAT8 AS cost_usd,
+                    created_at, started_at, completed_at, parent_task_id,
+                    max_cost_usd::FLOAT8 AS max_cost_usd, permission_level,
+                    template_name, on_child_failure
+             FROM agent_tasks
+             WHERE title = $1 AND id != $2 AND status IN ('failed', 'cancelled')
+             ORDER BY created_at DESC LIMIT 5",
+        )
+        .bind(title)
+        .bind(exclude_id)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows)
+    }
+
+    // ── Project Management ──────────────────────────────────────
+
+    /// Create a new project with phases from a parsed TOML configuration.
+    pub async fn create_project(
+        &self,
+        config: &crate::project::ProjectConfig,
+        toml_source: Option<&str>,
+    ) -> Result<i64> {
+        use crate::project;
+
+        let slug = project::slugify(&config.project.name);
+        let phases = if config.strategy.auto_strategy && config.strategy.phases.is_empty() {
+            project::generate_auto_strategy(config)
+        } else {
+            config.strategy.phases.clone()
+        };
+
+        let mut tx = self.pool.begin().await?;
+
+        let project_id: i64 = sqlx::query_scalar(
+            "INSERT INTO projects (slug, name, description, objective, form, toml_source,
+                                   target, competitive, strategy, infrastructure, budget)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+             RETURNING id",
+        )
+        .bind(&slug)
+        .bind(&config.project.name)
+        .bind(&config.project.description)
+        .bind(config.project.objective.to_string())
+        .bind(&config.project.form)
+        .bind(toml_source)
+        .bind(serde_json::to_value(&config.target)?)
+        .bind(serde_json::to_value(&config.competitive)?)
+        .bind(serde_json::to_value(&config.strategy)?)
+        .bind(serde_json::to_value(&config.infrastructure)?)
+        .bind(serde_json::to_value(&config.budget)?)
+        .fetch_one(&mut *tx)
+        .await?;
+
+        // Insert phases
+        for (i, phase) in phases.iter().enumerate() {
+            sqlx::query(
+                "INSERT INTO project_phases
+                    (project_id, name, description, phase_order, search_params,
+                     block_size, depends_on, activation_condition, completion_condition)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
+            )
+            .bind(project_id)
+            .bind(&phase.name)
+            .bind(&phase.description)
+            .bind(i as i32)
+            .bind(&phase.search_params)
+            .bind(phase.block_size.unwrap_or(1000))
+            .bind(
+                phase
+                    .depends_on
+                    .as_ref()
+                    .cloned()
+                    .unwrap_or_default()
+                    .as_slice(),
+            )
+            .bind(phase.activation_condition.as_deref())
+            .bind(&phase.completion)
+            .execute(&mut *tx)
+            .await?;
+        }
+
+        tx.commit().await?;
+        Ok(project_id)
+    }
+
+    /// List projects, optionally filtered by status.
+    pub async fn get_projects(
+        &self,
+        status_filter: Option<&str>,
+    ) -> Result<Vec<crate::project::ProjectRow>> {
+        let rows = if let Some(status) = status_filter {
+            sqlx::query_as::<_, crate::project::ProjectRow>(
+                "SELECT id, slug, name, description, objective, form, status, toml_source,
+                        target, competitive, strategy, infrastructure, budget,
+                        total_tested, total_found, best_prime_id, best_digits,
+                        total_core_hours::FLOAT8 AS total_core_hours,
+                        total_cost_usd::FLOAT8 AS total_cost_usd,
+                        created_at, started_at, completed_at, updated_at
+                 FROM projects WHERE status = $1 ORDER BY created_at DESC",
+            )
+            .bind(status)
+            .fetch_all(&self.pool)
+            .await?
+        } else {
+            sqlx::query_as::<_, crate::project::ProjectRow>(
+                "SELECT id, slug, name, description, objective, form, status, toml_source,
+                        target, competitive, strategy, infrastructure, budget,
+                        total_tested, total_found, best_prime_id, best_digits,
+                        total_core_hours::FLOAT8 AS total_core_hours,
+                        total_cost_usd::FLOAT8 AS total_cost_usd,
+                        created_at, started_at, completed_at, updated_at
+                 FROM projects ORDER BY created_at DESC",
+            )
+            .fetch_all(&self.pool)
+            .await?
+        };
+        Ok(rows)
+    }
+
+    /// Get a single project by slug.
+    pub async fn get_project_by_slug(
+        &self,
+        slug: &str,
+    ) -> Result<Option<crate::project::ProjectRow>> {
+        let row = sqlx::query_as::<_, crate::project::ProjectRow>(
+            "SELECT id, slug, name, description, objective, form, status, toml_source,
+                    target, competitive, strategy, infrastructure, budget,
+                    total_tested, total_found, best_prime_id, best_digits,
+                    total_core_hours::FLOAT8 AS total_core_hours,
+                    total_cost_usd::FLOAT8 AS total_cost_usd,
+                    created_at, started_at, completed_at, updated_at
+             FROM projects WHERE slug = $1",
+        )
+        .bind(slug)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row)
+    }
+
+    /// Get all phases for a project, ordered by phase_order.
+    pub async fn get_project_phases(
+        &self,
+        project_id: i64,
+    ) -> Result<Vec<crate::project::ProjectPhaseRow>> {
+        let rows = sqlx::query_as::<_, crate::project::ProjectPhaseRow>(
+            "SELECT id, project_id, name, description, phase_order, status,
+                    search_params, block_size, depends_on, activation_condition,
+                    completion_condition, search_job_id,
+                    total_tested, total_found, started_at, completed_at
+             FROM project_phases WHERE project_id = $1 ORDER BY phase_order",
+        )
+        .bind(project_id)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows)
+    }
+
+    /// Update a project's status (draft → active, active → paused, etc.).
+    pub async fn update_project_status(&self, project_id: i64, status: &str) -> Result<()> {
+        let now = chrono::Utc::now();
+        let started = if status == "active" {
+            Some(now)
+        } else {
+            None
+        };
+        let completed = if matches!(status, "completed" | "cancelled" | "failed") {
+            Some(now)
+        } else {
+            None
+        };
+
+        sqlx::query(
+            "UPDATE projects SET status = $1, updated_at = NOW(),
+                    started_at = COALESCE($2, started_at),
+                    completed_at = COALESCE($3, completed_at)
+             WHERE id = $4",
+        )
+        .bind(status)
+        .bind(started)
+        .bind(completed)
+        .bind(project_id)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Update aggregated progress counters on a project.
+    pub async fn update_project_progress(
+        &self,
+        project_id: i64,
+        total_tested: i64,
+        total_found: i64,
+    ) -> Result<()> {
+        sqlx::query(
+            "UPDATE projects SET total_tested = $1, total_found = $2, updated_at = NOW()
+             WHERE id = $3",
+        )
+        .bind(total_tested)
+        .bind(total_found)
+        .bind(project_id)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Update a phase's status.
+    pub async fn update_phase_status(&self, phase_id: i64, status: &str) -> Result<()> {
+        let completed = if matches!(status, "completed" | "skipped" | "failed") {
+            Some(chrono::Utc::now())
+        } else {
+            None
+        };
+
+        sqlx::query(
+            "UPDATE project_phases SET status = $1, completed_at = COALESCE($2, completed_at)
+             WHERE id = $3",
+        )
+        .bind(status)
+        .bind(completed)
+        .bind(phase_id)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Update phase progress counters.
+    pub async fn update_phase_progress(
+        &self,
+        phase_id: i64,
+        total_tested: i64,
+        total_found: i64,
+    ) -> Result<()> {
+        sqlx::query(
+            "UPDATE project_phases SET total_tested = $1, total_found = $2 WHERE id = $3",
+        )
+        .bind(total_tested)
+        .bind(total_found)
+        .bind(phase_id)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Activate a phase: set status to active, link the search job.
+    pub async fn activate_phase(&self, phase_id: i64, search_job_id: i64) -> Result<()> {
+        sqlx::query(
+            "UPDATE project_phases SET status = 'active', search_job_id = $1, started_at = NOW()
+             WHERE id = $2",
+        )
+        .bind(search_job_id)
+        .bind(phase_id)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Link a search job to a project (set the FK on search_jobs).
+    pub async fn link_search_job_to_project(
+        &self,
+        job_id: i64,
+        project_id: i64,
+    ) -> Result<()> {
+        sqlx::query("UPDATE search_jobs SET project_id = $1 WHERE id = $2")
+            .bind(project_id)
+            .bind(job_id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    /// Insert a project event for the activity log.
+    pub async fn insert_project_event(
+        &self,
+        project_id: i64,
+        event_type: &str,
+        summary: &str,
+        detail: Option<&serde_json::Value>,
+    ) -> Result<()> {
+        sqlx::query(
+            "INSERT INTO project_events (project_id, event_type, summary, detail)
+             VALUES ($1, $2, $3, $4)",
+        )
+        .bind(project_id)
+        .bind(event_type)
+        .bind(summary)
+        .bind(detail)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Get recent events for a project.
+    pub async fn get_project_events(
+        &self,
+        project_id: i64,
+        limit: i64,
+    ) -> Result<Vec<crate::project::ProjectEventRow>> {
+        let rows = sqlx::query_as::<_, crate::project::ProjectEventRow>(
+            "SELECT id, project_id, event_type, summary, detail, created_at
+             FROM project_events WHERE project_id = $1
+             ORDER BY created_at DESC LIMIT $2",
+        )
+        .bind(project_id)
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows)
+    }
+
+    // ── Records Tracking ────────────────────────────────────────
+
+    /// Upsert a world record entry (insert or update on form+category).
+    pub async fn upsert_record(
+        &self,
+        form: &str,
+        category: &str,
+        expression: &str,
+        digits: i64,
+        holder: Option<&str>,
+        discovered_at: Option<&str>,
+        source: Option<&str>,
+        source_url: Option<&str>,
+        our_best_id: Option<i64>,
+        our_best_digits: i64,
+    ) -> Result<()> {
+        let disc_date = discovered_at.and_then(|d| {
+            chrono::NaiveDate::parse_from_str(d, "%Y")
+                .or_else(|_| chrono::NaiveDate::parse_from_str(d, "%Y-%m-%d"))
+                .or_else(|_| chrono::NaiveDate::parse_from_str(d, "%b %Y"))
+                .ok()
+        });
+
+        sqlx::query(
+            "INSERT INTO records (form, category, expression, digits, holder, discovered_at,
+                                  source, source_url, our_best_id, our_best_digits)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+             ON CONFLICT (form, category) DO UPDATE SET
+               expression = EXCLUDED.expression,
+               digits = EXCLUDED.digits,
+               holder = EXCLUDED.holder,
+               discovered_at = COALESCE(EXCLUDED.discovered_at, records.discovered_at),
+               source = EXCLUDED.source,
+               source_url = EXCLUDED.source_url,
+               our_best_id = EXCLUDED.our_best_id,
+               our_best_digits = EXCLUDED.our_best_digits,
+               updated_at = NOW()",
+        )
+        .bind(form)
+        .bind(category)
+        .bind(expression)
+        .bind(digits)
+        .bind(holder)
+        .bind(disc_date)
+        .bind(source)
+        .bind(source_url)
+        .bind(our_best_id)
+        .bind(our_best_digits)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Get all records with our-best comparison.
+    pub async fn get_records(&self) -> Result<Vec<crate::project::RecordRow>> {
+        let rows = sqlx::query_as::<_, crate::project::RecordRow>(
+            "SELECT id, form, category, expression, digits, holder, discovered_at,
+                    source, source_url, our_best_id, our_best_digits, fetched_at, updated_at
+             FROM records ORDER BY form, category",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows)
+    }
+
+    /// Get our largest prime for a given form (used for records comparison).
+    pub async fn get_best_prime_for_form(
+        &self,
+        form: &str,
+    ) -> Result<Option<PrimeRecord>> {
+        let row = sqlx::query_as::<_, PrimeRecord>(
+            "SELECT id, form, expression, digits, found_at, proof_method
+             FROM primes WHERE form = $1 ORDER BY digits DESC LIMIT 1",
+        )
+        .bind(form)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row)
+    }
 }
 
 // --- Row types for coordination tables ---
@@ -887,6 +1786,25 @@ pub struct AgentTaskRow {
     pub started_at: Option<chrono::DateTime<chrono::Utc>>,
     pub completed_at: Option<chrono::DateTime<chrono::Utc>>,
     pub parent_task_id: Option<i64>,
+    pub max_cost_usd: Option<f64>,
+    pub permission_level: i32,
+    pub template_name: Option<String>,
+    pub on_child_failure: String,
+}
+
+#[derive(Serialize, Deserialize, sqlx::FromRow)]
+pub struct AgentTemplateRow {
+    pub id: i64,
+    pub name: String,
+    pub description: String,
+    pub steps: Value,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+}
+
+#[derive(Serialize, sqlx::FromRow)]
+pub struct AgentTaskDepRow {
+    pub task_id: i64,
+    pub depends_on: i64,
 }
 
 #[derive(Serialize, sqlx::FromRow)]
@@ -908,6 +1826,17 @@ pub struct AgentBudgetRow {
     pub spent_usd: f64,
     pub tokens_used: i64,
     pub period_start: chrono::DateTime<chrono::Utc>,
+    pub updated_at: chrono::DateTime<chrono::Utc>,
+}
+
+#[derive(Serialize, sqlx::FromRow)]
+pub struct AgentMemoryRow {
+    pub id: i64,
+    pub key: String,
+    pub value: String,
+    pub category: String,
+    pub created_by_task: Option<i64>,
+    pub created_at: chrono::DateTime<chrono::Utc>,
     pub updated_at: chrono::DateTime<chrono::Utc>,
 }
 

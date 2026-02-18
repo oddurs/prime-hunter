@@ -1,3 +1,50 @@
+//! # Generalized Fermat — b^(2^n) + 1 Prime Search
+//!
+//! Searches for generalized Fermat primes: numbers of the form b^(2^n) + 1
+//! where b is an even base. The classical Fermat numbers F_n = 2^(2^n) + 1
+//! are the special case b = 2.
+//!
+//! ## Algebraic Background
+//!
+//! A number b^m + 1 can only be prime if m is a power of 2 (otherwise
+//! x + 1 | x^m + 1 has non-trivial algebraic factors). The base b must
+//! be even (if b is odd, b^(2^n) + 1 is even and > 2).
+//!
+//! ## Sieve Strategy
+//!
+//! For sieve prime q, b^(2^n) + 1 ≡ 0 (mod q) iff b^(2^n) ≡ −1 (mod q).
+//! By Fermat's little theorem, this requires that the multiplicative order
+//! of b mod q is exactly 2^(n+1). The sieve computes ord_q(b) and checks
+//! if it equals 2^(n+1) for any n in the search range.
+//!
+//! ## Primality Testing
+//!
+//! ### Pépin/Proth Deterministic Test
+//!
+//! b^(2^n) + 1 has N−1 = b^(2^n) = (b/2^t)·2^(t·2^n) where t = v₂(b).
+//! When 2^t > m (the odd part of b), the 2-power in N−1 exceeds √N,
+//! and the Proth/Pépin test provides a deterministic proof. This applies
+//! to all power-of-2 bases and many others (e.g., b = 6: t = 1, m = 3,
+//! so 2 > 3 fails — Pépin is not provable for b = 6).
+//!
+//! ### Fallback
+//!
+//! When Pépin is not provable, the Proth test result is treated as a
+//! strong PRP and confirmed with Miller–Rabin.
+//!
+//! ## Complexity
+//!
+//! - Sieve: O(π(L)) multiplicative order computations.
+//! - Pépin test: O(2^n · M(2^n)) — 2^n squarings of 2^n-bit numbers.
+//!
+//! ## References
+//!
+//! - OEIS: [A019434](https://oeis.org/A019434) — Fermat primes (b = 2).
+//! - OEIS: [A056993](https://oeis.org/A056993) — Generalized Fermat primes.
+//! - Pierre de Fermat, 1640 (conjecture that all F_n are prime).
+//! - Pépin's test (1877): F_n is prime iff 3^((F_n−1)/2) ≡ −1 (mod F_n).
+//! - PrimeGrid Generalized Fermat Prime Search: <https://www.primegrid.com/>
+
 use anyhow::Result;
 use rayon::prelude::*;
 use rug::integer::IsPrime;
@@ -12,6 +59,7 @@ use crate::checkpoint::{self, Checkpoint};
 use crate::db::Database;
 use crate::events::{self, EventBus};
 use crate::kbn;
+use crate::pfgw;
 use crate::progress::Progress;
 use crate::CoordinationClient;
 use crate::{exact_digits, sieve};
@@ -21,7 +69,7 @@ use crate::{exact_digits, sieve};
 /// The condition is: let b = 2^t * m (m odd, t >= 1). The proof is valid
 /// when 2^t > m, which ensures the 2-part of N-1 exceeds sqrt(N).
 fn is_pepin_provable(b: u64) -> bool {
-    if b == 0 || b % 2 != 0 {
+    if b == 0 || !b.is_multiple_of(2) {
         return false;
     }
     let t = b.trailing_zeros(); // 2-adic valuation
@@ -85,18 +133,18 @@ fn sieve_gf(
         }
         // exp = 2^fermat_n mod (q-1)
         let exp = sieve::pow_mod(2, fermat_n as u64, q - 1);
-        for i in 0..range {
+        for (i, survives_i) in survives.iter_mut().enumerate().take(range) {
             let b = min_b + 2 * i as u64;
             if b < sieve_min_b {
                 continue;
             }
-            if b % q == 0 {
+            if b.is_multiple_of(q) {
                 // b^(2^n) ≡ 0 (mod q), so b^(2^n)+1 ≡ 1 ≢ 0 (mod q)
                 continue;
             }
             let r = sieve::pow_mod(b % q, exp, q);
             if r == q - 1 {
-                survives[i] = false;
+                *survives_i = false;
             }
         }
     }
@@ -120,12 +168,12 @@ pub fn search(
     event_bus: Option<&EventBus>,
 ) -> Result<()> {
     // Ensure bases are even
-    let min_b = if min_base % 2 == 0 {
+    let min_b = if min_base.is_multiple_of(2) {
         min_base.max(2)
     } else {
         min_base + 1
     };
-    let max_b = if max_base % 2 == 0 {
+    let max_b = if max_base.is_multiple_of(2) {
         max_base
     } else {
         max_base - 1
@@ -135,6 +183,12 @@ pub fn search(
         eprintln!("No even bases in range. Search complete.");
         return Ok(());
     }
+
+    // Resolve sieve_limit: auto-tune if 0
+    // b^(2^n) + 1 has ~2^n * log2(max_base) bits
+    let candidate_bits = ((1u64 << fermat_n) as f64 * (max_b as f64).log2()) as u64;
+    let n_range = (max_b - min_b) / 2 + 1;
+    let sieve_limit = sieve::resolve_sieve_limit(sieve_limit, candidate_bits, n_range);
 
     let sieve_primes = sieve::generate_primes(sieve_limit);
     let total_bases = (max_b - min_b) / 2 + 1;
@@ -197,8 +251,29 @@ pub fn search(
             .par_iter()
             .filter_map(|&b| {
                 // Compute b^(2^n) + 1
-                let b_pow = Integer::from(b).pow(1u32 << fermat_n);
+                let exponent = crate::checked_u32(1u64 << fermat_n);
+                let b_pow = Integer::from(b).pow(exponent);
                 let candidate = Integer::from(&b_pow + 1u32);
+                let expr = format!("{}^{}+1", b, exponent);
+
+                // Try PFGW acceleration (50-100x faster for large candidates)
+                if let Some(pfgw_result) =
+                    pfgw::try_test(&expr, &candidate, pfgw::PfgwMode::Prp)
+                {
+                    match pfgw_result {
+                        pfgw::PfgwResult::Prime { method, is_deterministic } => {
+                            let certainty = if is_deterministic {
+                                format!("deterministic ({})", method)
+                            } else {
+                                "probabilistic".to_string()
+                            };
+                            let digits = exact_digits(&candidate);
+                            return Some((b, digits, certainty));
+                        }
+                        pfgw::PfgwResult::Composite => return None,
+                        pfgw::PfgwResult::Unavailable { .. } => {} // fall through
+                    }
+                }
 
                 let (result, certainty) = test_gf(&candidate, b, fermat_n, mr_rounds);
                 if result == IsPrime::No {

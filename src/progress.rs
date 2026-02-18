@@ -1,3 +1,16 @@
+//! # Progress — Atomic Search Progress Counters
+//!
+//! Thread-safe progress tracking shared between engine search threads and the
+//! background status reporter. Uses atomics for lock-free counter updates
+//! from parallel Rayon workers, and a Mutex only for the current-candidate
+//! string (low contention — updated once per block, not per candidate).
+//!
+//! ## Background Reporter
+//!
+//! A dedicated thread prints progress to stderr every 30 seconds:
+//! tested count, found count, rate (candidates/sec), and current candidate.
+//! Shuts down cleanly via the `shutdown` atomic flag.
+
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;

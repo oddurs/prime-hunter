@@ -1,0 +1,23 @@
+[project]
+name = "factorial-survey"
+description = "Systematic survey of n! ± 1 primes"
+objective = "survey"
+form = "factorial"
+
+[target]
+range_start = 1
+range_end = 10000
+
+[competitive]
+current_record_expression = "208003! - 1"
+current_record_digits = 1015843
+current_record_holder = "Sou Fukui"
+oeis_sequence = "A002981"
+
+[strategy]
+auto_strategy = true
+
+[budget]
+max_cost_usd = 50.0
+cost_alert_threshold_usd = 25.0
+cloud_rate_usd_per_core_hour = 0.04

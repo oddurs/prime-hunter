@@ -1,5 +1,14 @@
 "use client";
 
+/**
+ * @module host-node-card
+ *
+ * Card representing a single server node in the fleet. Groups all
+ * workers, searches, and deployments running on the same hostname.
+ * Displays hardware metrics (CPU, memory, disk) via `MetricsBar` and
+ * lists processes via `ProcessRow`. Used on the Fleet page.
+ */
+
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { MetricsBar } from "@/components/metrics-bar";

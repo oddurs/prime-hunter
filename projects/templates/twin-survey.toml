@@ -1,0 +1,22 @@
+[project]
+name = "twin-survey"
+description = "Survey twin primes in k*2^n ± 1 form"
+objective = "survey"
+form = "twin"
+
+[target]
+range_start = 1
+range_end = 100000
+
+[competitive]
+current_record_expression = "2996863034895*2^1290000 ± 1"
+current_record_digits = 388342
+current_record_holder = "PrimeGrid"
+
+[strategy]
+auto_strategy = true
+
+[budget]
+max_cost_usd = 100.0
+cost_alert_threshold_usd = 50.0
+cloud_rate_usd_per_core_hour = 0.04

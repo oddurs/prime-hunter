@@ -1,0 +1,4 @@
+# Apple Silicon: use apple-m1 target, NOT native (Rust bug #93889 resolves
+# native to cyclone/2013 chip, producing worse code).
+[target.aarch64-apple-darwin]
+rustflags = ["-C", "target-cpu=apple-m1"]

@@ -1,0 +1,21 @@
+[project]
+name = "gen-fermat-survey"
+description = "Survey generalized Fermat primes b^(2^n)+1"
+objective = "survey"
+form = "gen_fermat"
+
+[target]
+range_start = 2
+range_end = 100000
+
+[competitive]
+oeis_sequence = "A019434"
+reference_urls = ["https://t5k.org/top20/page.php?id=16"]
+
+[strategy]
+auto_strategy = true
+
+[budget]
+max_cost_usd = 100.0
+cost_alert_threshold_usd = 50.0
+cloud_rate_usd_per_core_hour = 0.04

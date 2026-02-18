@@ -1,5 +1,16 @@
 "use client";
 
+/**
+ * @module use-prime-realtime
+ *
+ * Subscribes to Supabase Realtime `postgres_changes` on the `primes`
+ * table. When a new prime is INSERTed by any worker, the hook pushes
+ * it into a local state array for toast notifications and live table
+ * updates — no polling required.
+ *
+ * @see {@link src/components/prime-notifier.tsx} — consumes this hook
+ */
+
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 

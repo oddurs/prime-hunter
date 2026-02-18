@@ -1,0 +1,34 @@
+[project]
+name = "wagstaff-record-2026"
+description = "Hunt for new Wagstaff primes above the current frontier"
+objective = "record"
+form = "wagstaff"
+
+[target]
+target_digits = 5000000
+
+[competitive]
+current_record_expression = "(2^13347311 + 1) / 3"
+current_record_digits = 4017941
+current_record_holder = "Ryan Propper"
+oeis_sequence = "A000978"
+reference_urls = ["https://t5k.org/top20/page.php?id=67"]
+
+[strategy]
+auto_strategy = true
+
+[infrastructure]
+min_ram_gb = 32
+min_cores = 16
+recommended_cores = 64
+preferred_tools = ["gwnum"]
+
+[budget]
+max_cost_usd = 2000.0
+cost_alert_threshold_usd = 500.0
+cloud_rate_usd_per_core_hour = 0.04
+
+[workers]
+min_workers = 2
+max_workers = 16
+recommended_workers = 8

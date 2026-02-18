@@ -82,6 +82,100 @@ jobs:
           restore-keys: ${{ runner.os }}-cargo-
       - run: cargo build
 
+  rust-test-flint:
+    name: Test (FLINT)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install GMP + FLINT
+        run: sudo apt-get update && sudo apt-get install -y libgmp-dev libflint-dev
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-flint-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-flint-
+      - run: cargo test --lib --features flint
+
+  # Note: GWNUM CI is deferred — requires x86-64 gwnum.a which isn't packaged
+  # for apt. When available, add a rust-test-gwnum job similar to rust-test-flint.
+
+  rust-bench-check:
+    name: Bench Compile
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install GMP
+        run: sudo apt-get update && sudo apt-get install -y libgmp-dev
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+      - run: cargo bench --no-run
+
+  rust-integration:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: primehunt_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      TEST_DATABASE_URL: postgres://postgres:test@localhost:5432/primehunt_test
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install GMP
+        run: sudo apt-get update && sudo apt-get install -y libgmp-dev
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+      - name: Apply migrations
+        run: |
+          for f in supabase/migrations/*.sql; do
+            sed -e '/ALTER PUBLICATION/d' -e '/ENABLE ROW LEVEL SECURITY/d' -e '/^CREATE POLICY/d' "$f" \
+              | psql "$TEST_DATABASE_URL" -q 2>&1 || true
+          done
+      - name: Run CLI tests (no DB)
+        run: cargo test --test cli_tests -- help unknown factorial_missing kbn_missing palindromic_missing database_url
+      - name: Run DB integration tests
+        run: cargo test --test db_integration -- --test-threads=1
+      - name: Run API integration tests
+        run: cargo test --test api_integration -- --test-threads=1
+      - name: Run security tests
+        run: cargo test --test security_tests -- --test-threads=1
+      - name: Run CLI search tests
+        run: cargo test --test cli_tests -- finds_known finds_mersenne finds_primes
+        timeout-minutes: 5
+
   frontend:
     name: Frontend
     runs-on: ubuntu-latest
@@ -100,5 +194,26 @@ jobs:
         run: npx tsc --noEmit
       - name: Lint
         run: npm run lint || true
+      - name: Test
+        run: npm test
       - name: Build
         run: npm run build
+
+  frontend-e2e:
+    name: Frontend E2E
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - name: Install Playwright
+        run: npx playwright install chromium --with-deps
+      - name: Run E2E tests
+        run: npx playwright test

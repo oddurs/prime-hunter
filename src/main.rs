@@ -1,9 +1,34 @@
+//! # Main — CLI Entry Point and Search Orchestration
+//!
+//! Routes CLI subcommands to engine search functions and infrastructure services.
+//! Handles shared concerns: database connection, checkpoint loading, progress
+//! reporting, worker coordination, and the Rayon thread pool configuration.
+//!
+//! ## Subcommands
+//!
+//! Each engine form has a corresponding subcommand (factorial, kbn, palindromic,
+//! primorial, cullen_woodall, wagstaff, carol_kynea, twin, sophie_germain,
+//! repunit, gen_fermat, near_repdigit). The `dashboard` subcommand starts the
+//! web server. The `work` subcommand connects to a search job via PostgreSQL.
+//!
+//! ## Global Options
+//!
+//! - `--database-url` / `DATABASE_URL`: PostgreSQL connection for prime storage.
+//! - `--checkpoint`: JSON file for resumable search state.
+//! - `--mr-rounds`: Miller–Rabin iterations (default 15).
+//! - `--sieve-limit`: Sieve depth (0 = auto-tune per GIMPS heuristic).
+//! - `--qos`: macOS QoS P-core scheduling via `pthread_set_qos_class_self_np`.
+//! - `--threads`: Rayon thread pool size (0 = all cores).
+
 use anyhow::Result;
 use clap::{Parser, Subcommand};
+
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 use primehunt::{
     carol_kynea, cullen_woodall, db, events, factorial, gen_fermat, kbn, near_repdigit,
-    palindromic, pg_worker, primorial, progress, repunit, sophie_germain, twin, verify, wagstaff,
-    worker_client, CoordinationClient,
+    palindromic, pg_worker, primorial, progress, project, repunit, sophie_germain, twin, verify,
+    wagstaff, worker_client, CoordinationClient,
 };
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -23,9 +48,26 @@ struct Cli {
     #[arg(long, default_value_t = 15)]
     mr_rounds: u32,
 
-    /// Sieve limit for generating small primes used in modular pre-filtering
-    #[arg(long, default_value_t = 10_000_000)]
+    /// Sieve limit for generating small primes used in modular pre-filtering.
+    /// Set to 0 for auto-tuning based on candidate size.
+    #[arg(long, default_value_t = 0)]
     sieve_limit: u64,
+
+    /// Minimum digit count to use PRST for primality testing (0 to disable)
+    #[arg(long, default_value_t = 10_000)]
+    prst_min_digits: u64,
+
+    /// Path to PRST binary (auto-detected from PATH if not set)
+    #[arg(long)]
+    prst_path: Option<PathBuf>,
+
+    /// Minimum digit count to use PFGW for primality testing (0 to disable)
+    #[arg(long, default_value_t = 10_000)]
+    pfgw_min_digits: u64,
+
+    /// Path to PFGW binary (auto-detected from PATH if not set)
+    #[arg(long)]
+    pfgw_path: Option<PathBuf>,
 
     /// Coordinator dashboard URL (e.g. http://coordinator:8080). When set, worker registers
     /// itself, heartbeats progress, and reports found primes to the coordinator.
@@ -35,6 +77,14 @@ struct Cli {
     /// Worker ID for fleet identification (defaults to hostname)
     #[arg(long)]
     worker_id: Option<String>,
+
+    /// Set macOS QoS class to user-initiated for rayon threads (P-core scheduling on Apple Silicon)
+    #[arg(long)]
+    qos: bool,
+
+    /// Number of rayon worker threads (defaults to all logical cores)
+    #[arg(long)]
+    threads: Option<usize>,
 
     #[command(subcommand)]
     command: Commands,
@@ -209,7 +259,59 @@ enum Commands {
         /// Re-verify even if already verified
         #[arg(long)]
         force: bool,
+        /// Verification tool to use: "default" (tier1+tier2), "pfgw" (PFGW cross-verification)
+        #[arg(long, default_value = "default")]
+        tool: String,
     },
+    /// Manage prime-hunting projects (campaigns with phases, budgets, records)
+    Project {
+        #[command(subcommand)]
+        action: ProjectAction,
+    },
+}
+
+#[derive(Subcommand)]
+enum ProjectAction {
+    /// Import a project from a TOML file
+    Import {
+        /// Path to the TOML project file
+        #[arg(long)]
+        file: PathBuf,
+    },
+    /// List all projects
+    List {
+        /// Filter by status (draft, active, paused, completed, cancelled, failed)
+        #[arg(long)]
+        status: Option<String>,
+    },
+    /// Show project details
+    Show {
+        /// Project slug
+        slug: String,
+    },
+    /// Activate a project (start orchestration)
+    Activate {
+        /// Project slug
+        slug: String,
+    },
+    /// Pause a project
+    Pause {
+        /// Project slug
+        slug: String,
+    },
+    /// Cancel a project
+    Cancel {
+        /// Project slug
+        slug: String,
+    },
+    /// Estimate cost for a project TOML file
+    Estimate {
+        /// Path to the TOML project file
+        #[arg(long)]
+        file: PathBuf,
+    },
+    /// Refresh world records from t5k.org
+    RefreshRecords,
 }
 
 fn main() -> Result<()> {
@@ -217,6 +319,28 @@ fn main() -> Result<()> {
     let _ = dotenvy::dotenv();
 
     let cli = Cli::parse();
+
+    // Initialize PRST configuration (optional GWNUM-accelerated testing)
+    primehunt::prst::init(
+        cli.prst_min_digits,
+        cli.prst_path.clone(),
+        std::time::Duration::from_secs(3600),
+    );
+
+    // Initialize PFGW configuration (optional accelerated testing for non-kbn forms)
+    primehunt::pfgw::init(
+        cli.pfgw_min_digits,
+        cli.pfgw_path.clone(),
+        std::time::Duration::from_secs(3600),
+    );
+
+    // Configure rayon thread pool (optional QoS + thread count)
+    configure_rayon(cli.threads, cli.qos);
+
+    // Handle Project subcommand
+    if let Commands::Project { action } = &cli.command {
+        return run_project(&cli, action);
+    }
 
     if let Commands::Dashboard { port, static_dir } = &cli.command {
         let database_url = cli.database_url.as_deref().ok_or_else(|| {
@@ -239,6 +363,7 @@ fn main() -> Result<()> {
         form,
         batch_size,
         force,
+        tool,
     } = &cli.command
     {
         let database_url = cli.database_url.as_deref().ok_or_else(|| {
@@ -254,6 +379,7 @@ fn main() -> Result<()> {
             form.as_deref(),
             *batch_size,
             *force,
+            tool,
         );
     }
 
@@ -295,7 +421,10 @@ fn main() -> Result<()> {
         Commands::SophieGermain { .. } => "sophie_germain",
         Commands::Repunit { .. } => "repunit",
         Commands::GenFermat { .. } => "gen_fermat",
-        Commands::Dashboard { .. } | Commands::Work { .. } | Commands::Verify { .. } => {
+        Commands::Dashboard { .. }
+        | Commands::Work { .. }
+        | Commands::Verify { .. }
+        | Commands::Project { .. } => {
             unreachable!()
         }
     };
@@ -395,7 +524,10 @@ fn main() -> Result<()> {
             "max_base": max_base
         })
         .to_string(),
-        Commands::Dashboard { .. } | Commands::Work { .. } | Commands::Verify { .. } => {
+        Commands::Dashboard { .. }
+        | Commands::Work { .. }
+        | Commands::Verify { .. }
+        | Commands::Project { .. } => {
             unreachable!()
         }
     };
@@ -696,7 +828,10 @@ fn main() -> Result<()> {
             coord,
             eb,
         ),
-        Commands::Dashboard { .. } | Commands::Work { .. } | Commands::Verify { .. } => {
+        Commands::Dashboard { .. }
+        | Commands::Work { .. }
+        | Commands::Verify { .. }
+        | Commands::Project { .. } => {
             unreachable!()
         }
     };
@@ -1089,6 +1224,57 @@ fn run_search_block(
     }
 }
 
+/// Configure the rayon global thread pool with optional QoS and thread count.
+fn configure_rayon(threads: Option<usize>, qos: bool) {
+    let num_threads = threads.unwrap_or(0); // 0 = rayon default (all logical cores)
+
+    #[cfg(target_os = "macos")]
+    if qos {
+        let result = rayon::ThreadPoolBuilder::new()
+            .num_threads(num_threads)
+            .spawn_handler(|thread| {
+                std::thread::Builder::new().spawn(move || {
+                    // Set QoS to user-initiated so macOS schedules on P-cores.
+                    // SAFETY: pthread_set_qos_class_self_np is a well-defined macOS API
+                    // that sets the QoS class for the current thread. No memory safety concerns.
+                    unsafe {
+                        libc::pthread_set_qos_class_self_np(
+                            libc::qos_class_t::QOS_CLASS_USER_INITIATED,
+                            0,
+                        );
+                    }
+                    thread.run();
+                })?;
+                Ok(())
+            })
+            .build_global();
+
+        match result {
+            Ok(()) => {
+                eprintln!("Rayon threads configured with macOS QoS: user-initiated (P-core scheduling)");
+            }
+            Err(e) => {
+                eprintln!("Warning: could not configure rayon thread pool: {}", e);
+            }
+        }
+        return;
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    if qos {
+        eprintln!("Warning: --qos flag is only effective on macOS, ignoring");
+    }
+
+    if num_threads > 0 {
+        if let Err(e) = rayon::ThreadPoolBuilder::new()
+            .num_threads(num_threads)
+            .build_global()
+        {
+            eprintln!("Warning: could not configure rayon thread pool: {}", e);
+        }
+    }
+}
+
 /// Run the verify subcommand.
 fn run_verify(
     rt: &tokio::runtime::Runtime,
@@ -1098,6 +1284,7 @@ fn run_verify(
     form: Option<&str>,
     batch_size: i64,
     force: bool,
+    tool: &str,
 ) -> Result<()> {
     let primes = if let Some(id) = id {
         match rt.block_on(db.get_prime_by_id(id))? {
@@ -1121,8 +1308,8 @@ fn run_verify(
 
     eprintln!("Verifying {} primes...", primes.len());
     eprintln!(
-        "{:<8} {:<40} {:<12} {:<12} {}",
-        "ID", "Expression", "Tier 1", "Tier 2", "Status"
+        "{:<8} {:<40} {:<12} {:<12} Status",
+        "ID", "Expression", "Tier 1", "Tier 2"
     );
     eprintln!("{}", "-".repeat(90));
 
@@ -1131,7 +1318,18 @@ fn run_verify(
     let mut skipped = 0u64;
 
     for prime in &primes {
-        let result = verify::verify_prime(prime);
+        let result = if tool == "pfgw" {
+            // Cross-verify using PFGW subprocess (independent tool)
+            let candidate = verify::reconstruct_candidate(&prime.form, &prime.expression);
+            match candidate {
+                Ok(c) => verify::verify_pfgw(&prime.form, &prime.expression, &c),
+                Err(e) => verify::VerifyResult::Failed {
+                    reason: format!("Cannot reconstruct: {}", e),
+                },
+            }
+        } else {
+            verify::verify_prime(prime)
+        };
 
         let expr_display = if prime.expression.len() > 38 {
             format!("{}...", &prime.expression[..35])
@@ -1172,5 +1370,189 @@ fn run_verify(
         "\nSummary: {} verified, {} failed, {} skipped",
         verified, failed, skipped
     );
+    Ok(())
+}
+
+/// Handle the `project` subcommand and its actions.
+fn run_project(cli: &Cli, action: &ProjectAction) -> Result<()> {
+    // Estimate doesn't need a database connection
+    if let ProjectAction::Estimate { file } = action {
+        let config = project::parse_toml_file(file)?;
+        let est = project::estimate_project_cost(&config);
+        eprintln!("Cost estimate for '{}':", config.project.name);
+        eprintln!("  Form:                {}", config.project.form);
+        eprintln!("  Objective:           {}", config.project.objective);
+        eprintln!("  Est. candidates:     {}", est.estimated_candidates);
+        eprintln!("  Est. core-hours:     {:.1}", est.total_core_hours);
+        eprintln!("  Est. cost (USD):     ${:.2}", est.total_cost_usd);
+        eprintln!("  Est. duration:       {:.1}h with {} workers", est.estimated_duration_hours, est.workers_recommended);
+        return Ok(());
+    }
+
+    let database_url = cli.database_url.as_deref().ok_or_else(|| {
+        anyhow::anyhow!("DATABASE_URL is required (set via --database-url or env)")
+    })?;
+    let rt = tokio::runtime::Runtime::new()?;
+    let database = rt.block_on(db::Database::connect(database_url))?;
+
+    match action {
+        ProjectAction::Import { file } => {
+            let toml_content = std::fs::read_to_string(file)?;
+            let config = project::parse_toml(&toml_content)?;
+            let id = rt.block_on(database.create_project(&config, Some(&toml_content)))?;
+            let slug = project::slugify(&config.project.name);
+            eprintln!("Project '{}' created (id={}, slug={})", config.project.name, id, slug);
+            eprintln!("  Objective: {}", config.project.objective);
+            eprintln!("  Form:      {}", config.project.form);
+            let phases = if config.strategy.auto_strategy && config.strategy.phases.is_empty() {
+                project::generate_auto_strategy(&config)
+            } else {
+                config.strategy.phases.clone()
+            };
+            eprintln!("  Phases:    {}", phases.len());
+            for phase in &phases {
+                eprintln!("    - {}", phase.name);
+            }
+            eprintln!("\nActivate with: primehunt project activate {}", slug);
+        }
+        ProjectAction::List { status } => {
+            let projects = rt.block_on(database.get_projects(status.as_deref()))?;
+            if projects.is_empty() {
+                eprintln!("No projects found");
+                return Ok(());
+            }
+            eprintln!(
+                "{:<30} {:<12} {:<12} {:<12} {:<10} {:<10}",
+                "SLUG", "STATUS", "FORM", "OBJECTIVE", "TESTED", "FOUND"
+            );
+            eprintln!("{}", "-".repeat(86));
+            for p in &projects {
+                eprintln!(
+                    "{:<30} {:<12} {:<12} {:<12} {:<10} {:<10}",
+                    p.slug, p.status, p.form, p.objective, p.total_tested, p.total_found
+                );
+            }
+        }
+        ProjectAction::Show { slug } => {
+            let proj = rt
+                .block_on(database.get_project_by_slug(slug))?
+                .ok_or_else(|| anyhow::anyhow!("Project '{}' not found", slug))?;
+            let phases = rt.block_on(database.get_project_phases(proj.id))?;
+            let events = rt.block_on(database.get_project_events(proj.id, 10))?;
+
+            eprintln!("Project: {} ({})", proj.name, proj.slug);
+            eprintln!("  Status:      {}", proj.status);
+            eprintln!("  Objective:   {}", proj.objective);
+            eprintln!("  Form:        {}", proj.form);
+            eprintln!("  Total tested: {}", proj.total_tested);
+            eprintln!("  Total found:  {}", proj.total_found);
+            eprintln!("  Best digits:  {}", proj.best_digits);
+            eprintln!("  Core hours:   {:.1}", proj.total_core_hours);
+            eprintln!("  Cost (USD):   ${:.2}", proj.total_cost_usd);
+            eprintln!("  Created:     {}", proj.created_at);
+
+            eprintln!("\nPhases ({}):", phases.len());
+            for phase in &phases {
+                let job_str = phase
+                    .search_job_id
+                    .map(|id| format!(" → job {}", id))
+                    .unwrap_or_default();
+                eprintln!(
+                    "  [{:>9}] {}{} (tested={}, found={})",
+                    phase.status, phase.name, job_str, phase.total_tested, phase.total_found
+                );
+            }
+
+            if !events.is_empty() {
+                eprintln!("\nRecent events:");
+                for evt in &events {
+                    eprintln!("  [{}] {}: {}", evt.created_at.format("%Y-%m-%d %H:%M"), evt.event_type, evt.summary);
+                }
+            }
+        }
+        ProjectAction::Activate { slug } => {
+            let proj = rt
+                .block_on(database.get_project_by_slug(slug))?
+                .ok_or_else(|| anyhow::anyhow!("Project '{}' not found", slug))?;
+            if proj.status != "draft" && proj.status != "paused" {
+                anyhow::bail!(
+                    "Cannot activate project with status '{}' (must be 'draft' or 'paused')",
+                    proj.status
+                );
+            }
+            rt.block_on(database.update_project_status(proj.id, "active"))?;
+            rt.block_on(database.insert_project_event(
+                proj.id,
+                "activated",
+                &format!("Project '{}' activated", proj.name),
+                None,
+            ))?;
+            eprintln!("Project '{}' activated. Orchestration will start on next dashboard tick.", slug);
+        }
+        ProjectAction::Pause { slug } => {
+            let proj = rt
+                .block_on(database.get_project_by_slug(slug))?
+                .ok_or_else(|| anyhow::anyhow!("Project '{}' not found", slug))?;
+            if proj.status != "active" {
+                anyhow::bail!("Cannot pause project with status '{}' (must be 'active')", proj.status);
+            }
+            rt.block_on(database.update_project_status(proj.id, "paused"))?;
+            rt.block_on(database.insert_project_event(
+                proj.id,
+                "paused",
+                &format!("Project '{}' paused", proj.name),
+                None,
+            ))?;
+            eprintln!("Project '{}' paused", slug);
+        }
+        ProjectAction::Cancel { slug } => {
+            let proj = rt
+                .block_on(database.get_project_by_slug(slug))?
+                .ok_or_else(|| anyhow::anyhow!("Project '{}' not found", slug))?;
+            rt.block_on(database.update_project_status(proj.id, "cancelled"))?;
+            rt.block_on(database.insert_project_event(
+                proj.id,
+                "cancelled",
+                &format!("Project '{}' cancelled", proj.name),
+                None,
+            ))?;
+            eprintln!("Project '{}' cancelled", slug);
+        }
+        ProjectAction::RefreshRecords => {
+            let updated = rt.block_on(project::refresh_all_records(&database))?;
+            eprintln!("Refreshed {} records", updated);
+
+            let records = rt.block_on(database.get_records())?;
+            if !records.is_empty() {
+                eprintln!(
+                    "\n{:<18} {:<40} {:<12} {:<15} {:<12}",
+                    "FORM", "RECORD", "DIGITS", "HOLDER", "OUR BEST"
+                );
+                eprintln!("{}", "-".repeat(97));
+                for r in &records {
+                    let expr = if r.expression.len() > 38 {
+                        format!("{}...", &r.expression[..35])
+                    } else {
+                        r.expression.clone()
+                    };
+                    let our = if r.our_best_digits > 0 {
+                        format!("{}", r.our_best_digits)
+                    } else {
+                        "-".to_string()
+                    };
+                    eprintln!(
+                        "{:<18} {:<40} {:<12} {:<15} {:<12}",
+                        r.form,
+                        expr,
+                        r.digits,
+                        r.holder.as_deref().unwrap_or("-"),
+                        our
+                    );
+                }
+            }
+        }
+        ProjectAction::Estimate { .. } => unreachable!(),
+    }
+
     Ok(())
 }

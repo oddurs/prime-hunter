@@ -1,3 +1,27 @@
+//! # Checkpoint — Resumable Search State Persistence
+//!
+//! Saves and loads search progress as JSON files with SHA-256 integrity
+//! verification and generational backups. Each search form has its own
+//! `Checkpoint` variant storing the minimal state needed to resume.
+//!
+//! ## Atomic Writes
+//!
+//! Checkpoint files are written atomically: write to a temp file, then rename.
+//! This prevents corruption from mid-write crashes or power loss.
+//!
+//! ## Integrity
+//!
+//! A SHA-256 hash is stored alongside the JSON data. On load, the hash is
+//! verified — corrupted checkpoints are detected and skipped, falling back
+//! to the most recent valid generation (up to 3 generations kept).
+//!
+//! ## Checkpoint Variants
+//!
+//! One variant per search form (Factorial, Palindromic, Kbn, Primorial,
+//! CullenWoodall, Wagstaff, CarolKynea, Twin, SophieGermain, Repunit,
+//! GenFermat, NearRepdigit). Each stores the minimum state needed to
+//! resume without re-sieving or re-computing intermediate values.
+
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};

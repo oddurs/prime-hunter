@@ -1,0 +1,28 @@
+[project]
+name = "factorial-record-2026"
+description = "Hunt for factorial primes beyond the current frontier"
+objective = "record"
+form = "factorial"
+
+[target]
+target_digits = 1100000
+
+[competitive]
+current_record_expression = "208003! - 1"
+current_record_digits = 1015843
+current_record_holder = "Sou Fukui"
+oeis_sequence = "A002981"
+reference_urls = ["https://t5k.org/top20/page.php?id=15"]
+
+[strategy]
+auto_strategy = true
+
+[infrastructure]
+min_ram_gb = 16
+min_cores = 8
+recommended_cores = 32
+
+[budget]
+max_cost_usd = 500.0
+cost_alert_threshold_usd = 100.0
+cloud_rate_usd_per_core_hour = 0.04

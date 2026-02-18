@@ -1,3 +1,37 @@
+//! # Twin — Twin Prime Search (k·b^n ± 1)
+//!
+//! Searches for twin prime pairs where both k·b^n + 1 and k·b^n − 1 are
+//! simultaneously prime. These are vastly rarer than individual primes —
+//! the twin prime constant C₂ ≈ 1.32 governs the asymptotic density.
+//!
+//! ## Algorithm
+//!
+//! 1. **Intersected BSGS sieve**: Reuses `kbn::bsgs_sieve` to independently
+//!    sieve the +1 and −1 forms. Only n-values where *both* forms survive are
+//!    tested. This intersection typically eliminates >99.9% of candidates.
+//!
+//! 2. **Sequential testing**: For each surviving n, tests k·b^n + 1 first
+//!    (Proth test is fast for composites). Only if +1 is prime does it test
+//!    k·b^n − 1 (LLR or Miller–Rabin). This avoids the expensive −1 test
+//!    in >50% of cases.
+//!
+//! 3. **Deterministic proofs**: When both forms get deterministic proofs
+//!    (Proth for +1, LLR for −1), the twin pair is certified deterministic.
+//!    Otherwise it is probabilistic.
+//!
+//! ## Complexity
+//!
+//! - Sieve: Same as `kbn::bsgs_sieve` (run once for both forms).
+//! - Testing: O(n · M(n)) per survivor, but with early exit on +1 composite.
+//!
+//! ## References
+//!
+//! - OEIS: [A001097](https://oeis.org/A001097) — Twin primes.
+//! - OEIS: [A007508](https://oeis.org/A007508) — Number of twin prime pairs below 10^n.
+//! - First Hardy–Littlewood conjecture: the number of twin primes below x is
+//!   asymptotic to 2·C₂·x / (ln x)².
+//! - PrimeGrid Twin Prime Search: <https://www.primegrid.com/>
+
 use anyhow::Result;
 use rayon::prelude::*;
 use rug::integer::IsPrime;
@@ -16,16 +50,6 @@ use crate::progress::Progress;
 use crate::CoordinationClient;
 use crate::{exact_digits, sieve};
 
-/// Adaptive block size for twin prime search (same as kbn).
-fn block_size_for_n(n: u64) -> u64 {
-    match n {
-        0..=1_000 => 10_000,
-        1_001..=10_000 => 10_000,
-        10_001..=50_000 => 2_000,
-        50_001..=200_000 => 500,
-        _ => 100,
-    }
-}
 
 pub fn search(
     k: u64,
@@ -42,6 +66,11 @@ pub fn search(
     worker_client: Option<&dyn CoordinationClient>,
     event_bus: Option<&EventBus>,
 ) -> Result<()> {
+    // Resolve sieve_limit: auto-tune if 0
+    let candidate_bits = (max_n as f64 * (base as f64).log2() + (k as f64).log2().max(0.0)) as u64;
+    let n_range = max_n.saturating_sub(min_n) + 1;
+    let sieve_limit = sieve::resolve_sieve_limit(sieve_limit, candidate_bits, n_range);
+
     let sieve_primes = sieve::generate_primes(sieve_limit);
     eprintln!(
         "Twin prime search: {}*{}^n ± 1, n=[{}, {}]",
@@ -98,7 +127,7 @@ pub fn search(
     let mut total_sieved: u64 = 0;
 
     while block_start <= max_n {
-        let bsize = block_size_for_n(block_start);
+        let bsize = crate::block_size_for_n(block_start);
         let block_end = (block_start + bsize - 1).min(max_n);
         let block_len = block_end - block_start + 1;
 
@@ -115,7 +144,7 @@ pub fn search(
 
         total_sieved += block_len - survivors.len() as u64;
 
-        let base_pow_start = Integer::from(base).pow(block_start as u32);
+        let base_pow_start = Integer::from(base).pow(crate::checked_u32(block_start));
         let k_int = Integer::from(k);
 
         let found_twins: Vec<_> = survivors
@@ -125,7 +154,7 @@ pub fn search(
                 let base_pow = if offset == 0 {
                     base_pow_start.clone()
                 } else {
-                    Integer::from(&base_pow_start * Integer::from(base).pow(offset as u32))
+                    &base_pow_start * Integer::from(base).pow(crate::checked_u32(offset))
                 };
                 let kb = Integer::from(&k_int * &base_pow);
 
@@ -233,11 +262,11 @@ mod tests {
     use super::*;
 
     fn kb_plus(k: u64, base: u32, n: u64) -> Integer {
-        Integer::from(k) * Integer::from(base).pow(n as u32) + 1u32
+        Integer::from(k) * Integer::from(base).pow(crate::checked_u32(n)) + 1u32
     }
 
     fn kb_minus(k: u64, base: u32, n: u64) -> Integer {
-        Integer::from(k) * Integer::from(base).pow(n as u32) - 1u32
+        Integer::from(k) * Integer::from(base).pow(crate::checked_u32(n)) - 1u32
     }
 
     #[test]

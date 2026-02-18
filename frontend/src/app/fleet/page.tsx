@@ -1,5 +1,16 @@
 "use client";
 
+/**
+ * @module fleet/page
+ *
+ * Fleet monitoring page. Shows all server nodes grouped by hostname,
+ * each with hardware metrics (CPU/memory/disk), running workers,
+ * active searches, and remote deployments. Provides controls to add
+ * new servers, deploy searches, and stop workers.
+ *
+ * Data comes from the WebSocket (fleet heartbeats, not Supabase).
+ */
+
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { useWs } from "@/contexts/websocket-context";
@@ -38,6 +49,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { API_BASE, formatTime, formatUptime, numberWithCommas } from "@/lib/format";
+import { ViewHeader } from "@/components/view-header";
 import type { Deployment, WorkerStatus } from "@/hooks/use-websocket";
 
 type WorkerHealth = "healthy" | "stale" | "offline";
@@ -235,20 +247,19 @@ export default function FleetPage() {
 
   return (
     <>
-      <div className="flex flex-wrap items-center justify-between gap-3 mb-5 pb-4 border-b">
-        <div>
-          <h1 className="text-2xl font-semibold text-foreground">Fleet</h1>
-          <p className="text-sm text-muted-foreground">
-            Worker health, deployment lifecycle, and distributed search operations.
-          </p>
-        </div>
-        <div className="flex gap-2">
-          <Button variant="outline" size="sm" onClick={() => setNewSearchOpen(true)}>
-            New Search
-          </Button>
-          <Button size="sm" onClick={() => setAddServerOpen(true)}>Add Server</Button>
-        </div>
-      </div>
+      <ViewHeader
+        title="Fleet"
+        subtitle="Worker health, deployment lifecycle, and distributed search operations."
+        actions={
+          <>
+            <Button variant="outline" size="sm" onClick={() => setNewSearchOpen(true)}>
+              New Search
+            </Button>
+            <Button size="sm" onClick={() => setAddServerOpen(true)}>Add Server</Button>
+          </>
+        }
+        className="mb-5"
+      />
 
       <div className="grid grid-cols-2 lg:grid-cols-5 gap-3 mb-5">
         <Card className="rounded-md shadow-none">

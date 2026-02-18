@@ -1,3 +1,37 @@
+//! # Repunit — Repunit Prime Search
+//!
+//! Searches for repunit primes: primes of the form R(b, n) = (b^n − 1)/(b − 1),
+//! which are numbers consisting of n repetitions of the digit 1 in base b.
+//! In base 10, these are 1, 11, 111, 1111, .... Only prime exponents n can yield
+//! repunit primes (since R(b, ab) = R(b, a) · (b^a)^(b−1) + ... has algebraic factors).
+//!
+//! ## Sieve Strategy
+//!
+//! The repunit sieve is distinctive: each sieve prime q eliminates at most *one*
+//! exponent n. Specifically:
+//!
+//! - If q ∤ (b−1): R(b, n) ≡ 0 (mod q) iff ord_q(b) | n. Since n is prime,
+//!   this means n = ord_q(b) (if that order is itself prime).
+//!
+//! - If q | (b−1): R(b, n) ≡ n (mod q) by the geometric series formula, so
+//!   q | R(b, n) iff n ≡ 0 (mod q), i.e., n = q.
+//!
+//! This "one elimination per prime" property makes the sieve less effective
+//! than for other forms, requiring deeper sieving or more PRP tests.
+//!
+//! ## Complexity
+//!
+//! - Sieve construction: O(π(L)²) due to multiplicative order computation.
+//! - Sieve per candidate: O(1) lookup (hash map from exponent to index).
+//! - PRP test: O(n · M(n)) per survivor.
+//!
+//! ## References
+//!
+//! - OEIS: [A004023](https://oeis.org/A004023) — Repunit prime indices in base 10.
+//! - OEIS: [A085104](https://oeis.org/A085104) — Generalized repunit primes.
+//! - Harvey Dubner, "Generalized Repunit Primes", Mathematics of Computation,
+//!   61(204), 1993.
+
 use anyhow::Result;
 use rayon::prelude::*;
 use rug::integer::IsPrime;
@@ -11,6 +45,7 @@ use std::time::Instant;
 use crate::checkpoint::{self, Checkpoint};
 use crate::db::Database;
 use crate::events::{self, EventBus};
+use crate::pfgw;
 use crate::progress::Progress;
 use crate::CoordinationClient;
 use crate::{exact_digits, mr_screened_test, sieve};
@@ -45,7 +80,7 @@ fn sieve_repunit(
             continue;
         }
 
-        if b_minus_1 % q == 0 {
+        if b_minus_1.is_multiple_of(q) {
             // q | (b-1): R(b,n) ≡ n (mod q), composite iff n = q
             if let Some(&idx) = n_to_idx.get(&q) {
                 survives[idx] = false;
@@ -78,6 +113,12 @@ pub fn search(
     event_bus: Option<&EventBus>,
 ) -> Result<()> {
     assert!(base >= 2, "Base must be >= 2");
+
+    // Resolve sieve_limit: auto-tune if 0
+    // R(b,n) ≈ b^(n-1) has ~max_n * log2(base) bits
+    let candidate_bits = (max_n as f64 * (base as f64).log2()) as u64;
+    let n_range = max_n.saturating_sub(min_n) + 1;
+    let sieve_limit = sieve::resolve_sieve_limit(sieve_limit, candidate_bits, n_range);
 
     let sieve_primes = sieve::generate_primes(sieve_limit);
     eprintln!(
@@ -148,7 +189,7 @@ pub fn search(
     // Process in blocks for checkpointing
     let block_size = 100;
     let mut last_checkpoint = Instant::now();
-    let b_minus_1 = (base - 1) as u32;
+    let b_minus_1 = base - 1;
 
     for chunk in survivors.chunks(block_size) {
         let block_min = chunk[0];
@@ -159,7 +200,28 @@ pub fn search(
         let found: Vec<_> = chunk
             .par_iter()
             .filter_map(|&n| {
-                let val = Integer::from(Integer::from(base).pow(n as u32) - 1u32) / b_minus_1;
+                let val = (Integer::from(base).pow(crate::checked_u32(n)) - 1u32) / b_minus_1;
+                let pfgw_expr = format!("({}^{}-1)/{}", base, n, base - 1);
+
+                // Try PFGW acceleration (50-100x faster for large candidates)
+                if let Some(pfgw_result) =
+                    pfgw::try_test(&pfgw_expr, &val, pfgw::PfgwMode::Prp)
+                {
+                    match pfgw_result {
+                        pfgw::PfgwResult::Prime { method, is_deterministic } => {
+                            let certainty = if is_deterministic {
+                                format!("deterministic ({})", method)
+                            } else {
+                                "probabilistic".to_string()
+                            };
+                            let digits = exact_digits(&val);
+                            return Some((n, digits, certainty));
+                        }
+                        pfgw::PfgwResult::Composite => return None,
+                        pfgw::PfgwResult::Unavailable { .. } => {} // fall through
+                    }
+                }
+
                 let result = mr_screened_test(&val, mr_rounds);
                 if result == IsPrime::No {
                     return None;
@@ -243,7 +305,7 @@ mod tests {
     use super::*;
 
     fn repunit(base: u32, n: u64) -> Integer {
-        (Integer::from(base).pow(n as u32) - 1u32) / (base - 1) as u32
+        (Integer::from(base).pow(crate::checked_u32(n)) - 1u32) / (base - 1) as u32
     }
 
     #[test]

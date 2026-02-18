@@ -1,3 +1,11 @@
+/**
+ * @module metrics-bar
+ *
+ * Horizontal progress bar for hardware metrics (CPU, memory, disk).
+ * Renders a colored fill bar that transitions from green → amber → red
+ * as utilization increases. Used inside `HostNodeCard` and `AgentControllerCard`.
+ */
+
 interface MetricsBarProps {
   label: string;
   percent: number;

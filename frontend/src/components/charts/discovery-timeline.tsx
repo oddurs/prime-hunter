@@ -1,5 +1,17 @@
 "use client";
 
+/**
+ * @module discovery-timeline
+ *
+ * Stacked area chart showing prime discoveries over time, grouped by
+ * form. Each prime form gets a distinct color band. Time buckets
+ * (day/week/month) are fetched from the `get_discovery_timeline`
+ * Supabase RPC via the `useTimeline()` hook.
+ *
+ * Uses Recharts `AreaChart` with stacked areas for visual comparison
+ * of discovery rates across different prime forms.
+ */
+
 import { useMemo } from "react";
 import {
   AreaChart,

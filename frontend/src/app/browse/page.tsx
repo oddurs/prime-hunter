@@ -1,5 +1,20 @@
 "use client";
 
+/**
+ * @module browse/page
+ *
+ * Primes browser page with a full-featured data table. Supports:
+ *
+ * - **Filtering**: by form, digit range, proof method, text search
+ * - **Sorting**: by any column (expression, digits, date, form)
+ * - **Pagination**: server-side via Supabase `.range()` queries
+ * - **Column visibility**: toggle columns on/off, resizable widths
+ * - **Detail dialog**: click a row to see full prime details + verify
+ *
+ * Uses `@tanstack/react-table` for headless table logic and the
+ * `usePrimes()` hook for Supabase-backed data fetching.
+ */
+
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import {
@@ -11,11 +26,13 @@ import {
   getCoreRowModel,
   useReactTable,
 } from "@tanstack/react-table";
-import { CheckCircle2, Clock } from "lucide-react";
+import { CheckCircle2, Clock, ExternalLink, RefreshCw, Loader2 } from "lucide-react";
+import { toast } from "sonner";
 import { usePrimes, type PrimeFilter, type PrimeRecord } from "@/hooks/use-primes";
 import { useStats } from "@/hooks/use-stats";
 import { API_BASE, formToSlug, formatTime, numberWithCommas } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import { ViewHeader } from "@/components/view-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -97,6 +114,7 @@ export default function BrowsePage() {
   const [detailOpen, setDetailOpen] = useState(false);
   const [pendingPrimeId, setPendingPrimeId] = useState<number | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
+  const [verifying, setVerifying] = useState(false);
 
   const offset = primes.offset;
   const total = primes.total;
@@ -274,6 +292,34 @@ export default function BrowsePage() {
     }
   }
 
+  const handleVerify = useCallback(async () => {
+    if (!selectedPrime) return;
+    setVerifying(true);
+    try {
+      const res = await fetch(
+        `${API_BASE}/api/primes/${selectedPrime.id}/verify`,
+        { method: "POST" }
+      );
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || `HTTP ${res.status}`);
+      }
+      if (data.result === "verified") {
+        toast.success(`Verified: ${data.method} (Tier ${data.tier})`);
+      } else if (data.result === "failed") {
+        toast.error(`Verification failed: ${data.reason}`);
+      } else if (data.result === "skipped") {
+        toast.info(`Verification skipped: ${data.reason}`);
+      }
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Verification request failed";
+      toast.error(message);
+    } finally {
+      setVerifying(false);
+    }
+  }, [selectedPrime]);
+
   function exportData(format: "csv" | "json") {
     if (digitsError) return;
     const params = new URLSearchParams();
@@ -401,84 +447,85 @@ export default function BrowsePage() {
 
   return (
     <>
-      <div className="flex flex-col gap-2 mb-6 pb-4 border-b sm:flex-row sm:items-start sm:justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold text-foreground">Browse</h1>
-          <p className="text-sm text-muted-foreground mt-1">
-            {total === 0
-              ? "No primes yet"
-              : `${numberWithCommas(total)} primes in the archive`}
-          </p>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="outline" size="sm">
-                View
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-56">
-              <DropdownMenuLabel>Columns</DropdownMenuLabel>
-              {table.getAllLeafColumns().map((column) => (
-                <DropdownMenuCheckboxItem
-                  key={column.id}
-                  checked={column.getIsVisible()}
-                  onCheckedChange={(checked) =>
-                    column.toggleVisibility(!!checked)
-                  }
-                  disabled={!column.getCanHide()}
+      <ViewHeader
+        title="Browse"
+        subtitle={
+          total === 0
+            ? "No primes yet"
+            : `${numberWithCommas(total)} primes in the archive`
+        }
+        actions={
+          <>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" size="sm">
+                  View
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-56">
+                <DropdownMenuLabel>Columns</DropdownMenuLabel>
+                {table.getAllLeafColumns().map((column) => (
+                  <DropdownMenuCheckboxItem
+                    key={column.id}
+                    checked={column.getIsVisible()}
+                    onCheckedChange={(checked) =>
+                      column.toggleVisibility(!!checked)
+                    }
+                    disabled={!column.getCanHide()}
+                  >
+                    {column.columnDef.header as string}
+                  </DropdownMenuCheckboxItem>
+                ))}
+                <DropdownMenuSeparator />
+                <DropdownMenuLabel>Density</DropdownMenuLabel>
+                <DropdownMenuRadioGroup
+                  value={density}
+                  onValueChange={(value) => setDensity(value as Density)}
                 >
-                  {column.columnDef.header as string}
+                  <DropdownMenuRadioItem value="comfortable">
+                    Comfortable
+                  </DropdownMenuRadioItem>
+                  <DropdownMenuRadioItem value="compact">
+                    Compact
+                  </DropdownMenuRadioItem>
+                </DropdownMenuRadioGroup>
+                <DropdownMenuSeparator />
+                <DropdownMenuCheckboxItem
+                  checked={wrapExpressions}
+                  onCheckedChange={(checked) => setWrapExpressions(!!checked)}
+                >
+                  Wrap expressions
                 </DropdownMenuCheckboxItem>
-              ))}
-              <DropdownMenuSeparator />
-              <DropdownMenuLabel>Density</DropdownMenuLabel>
-              <DropdownMenuRadioGroup
-                value={density}
-                onValueChange={(value) => setDensity(value as Density)}
-              >
-                <DropdownMenuRadioItem value="comfortable">
-                  Comfortable
-                </DropdownMenuRadioItem>
-                <DropdownMenuRadioItem value="compact">
-                  Compact
-                </DropdownMenuRadioItem>
-              </DropdownMenuRadioGroup>
-              <DropdownMenuSeparator />
-              <DropdownMenuCheckboxItem
-                checked={wrapExpressions}
-                onCheckedChange={(checked) => setWrapExpressions(!!checked)}
-              >
-                Wrap expressions
-              </DropdownMenuCheckboxItem>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem onClick={resetView}>Reset view</DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onClick={resetView}>Reset view</DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
 
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="outline" size="sm">
-                Export
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              <DropdownMenuItem
-                onClick={() => exportData("csv")}
-                disabled={!!digitsError}
-              >
-                Export CSV
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                onClick={() => exportData("json")}
-                disabled={!!digitsError}
-              >
-                Export JSON
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </div>
-      </div>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" size="sm">
+                  Export
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem
+                  onClick={() => exportData("csv")}
+                  disabled={!!digitsError}
+                >
+                  Export CSV
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onClick={() => exportData("json")}
+                  disabled={!!digitsError}
+                >
+                  Export JSON
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </>
+        }
+        className="mb-6"
+      />
 
       <Card className="mb-4">
         <CardContent className="p-4">
@@ -778,6 +825,27 @@ export default function BrowsePage() {
                   </pre>
                 </div>
               )}
+              <div className="flex items-center gap-2 pt-2 border-t">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleVerify}
+                  disabled={verifying}
+                >
+                  {verifying ? (
+                    <Loader2 className="size-3.5 mr-1 animate-spin" />
+                  ) : (
+                    <RefreshCw className="size-3.5 mr-1" />
+                  )}
+                  {verifying ? "Verifying..." : "Re-verify"}
+                </Button>
+                <Button variant="outline" size="sm" asChild>
+                  <Link href={`/prime/?id=${selectedPrime.id}`}>
+                    <ExternalLink className="size-3.5 mr-1" />
+                    Permalink
+                  </Link>
+                </Button>
+              </div>
             </div>
           )}
         </DialogContent>

@@ -1,3 +1,24 @@
+//! # Metrics — Hardware Telemetry Collection
+//!
+//! Collects system-level hardware metrics from each worker node using the
+//! [`sysinfo`] crate. Metrics are attached to heartbeat payloads (both HTTP
+//! and PostgreSQL) and displayed on the dashboard for fleet monitoring.
+//!
+//! ## Collected Metrics
+//!
+//! | Metric | Source | Unit |
+//! |--------|--------|------|
+//! | CPU usage | `System::global_cpu_usage()` | percent (0–100) |
+//! | Memory used/total | `System::used_memory()` / `total_memory()` | GiB |
+//! | Disk used/total | `Disks::new_with_refreshed_list()` | GiB |
+//! | Load averages | `System::load_average()` | 1m, 5m, 15m |
+//!
+//! ## Usage
+//!
+//! Called every 10 seconds by the heartbeat thread in both `WorkerClient`
+//! and `PgWorkerClient`. The `sysinfo::System` instance is reused across
+//! calls (passed by `&mut` reference) to amortize initialization cost.
+
 use serde::{Deserialize, Serialize};
 use sysinfo::System;
 

@@ -1,12 +1,28 @@
 "use client";
 
+/**
+ * @module app-header
+ *
+ * Top navigation bar for the dashboard. Contains the primehunt logo,
+ * page links (Dashboard, Browse, Searches, Fleet, Docs, Agents),
+ * a connection status indicator, theme toggle (dark/light), notification
+ * toggle, and mobile hamburger menu. Highlights the current route.
+ */
+
 import { useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Menu, Moon, Sun } from "lucide-react";
+import { Bell, BellOff, Menu, Moon, Sun } from "lucide-react";
 import { useWs } from "@/contexts/websocket-context";
 import { useTheme } from "@/hooks/use-theme";
+import { useBrowserNotifications } from "@/hooks/use-notifications";
 import { cn } from "@/lib/utils";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { Switch } from "@/components/ui/switch";
 import {
   Sheet,
   SheetContent,
@@ -17,15 +33,23 @@ import {
 
 export function AppHeader() {
   const pathname = usePathname();
-  const { connected, searches } = useWs();
+  const { connected, searches, agentTasks } = useWs();
   const { theme, toggleTheme } = useTheme();
+  const { supported, permission, enabled, setEnabled } = useBrowserNotifications();
   const [mobileOpen, setMobileOpen] = useState(false);
 
   const runningCount = searches.filter((s) => s.status === "running").length;
+  const activeAgentCount = agentTasks.filter(
+    (t) => t.status === "in_progress"
+  ).length;
 
   const navItems = [
     { title: "Dashboard", href: "/", count: undefined },
+    { title: "Projects", href: "/projects", count: undefined },
     { title: "Searches", href: "/searches", count: runningCount || undefined },
+    { title: "Performance", href: "/performance", count: undefined },
+    { title: "Agents", href: "/agents", count: activeAgentCount || undefined },
+    { title: "Fleet", href: "/fleet", count: undefined },
     { title: "Browse", href: "/browse", count: undefined },
     { title: "Docs", href: "/docs", count: undefined },
   ];
@@ -85,6 +109,43 @@ export function AppHeader() {
             )}
             title={connected ? "Connected" : "Disconnected"}
           />
+          {supported && (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button
+                  className="flex size-8 items-center justify-center rounded-md text-[var(--header-foreground)]/60 hover:text-[var(--header-foreground)] hover:bg-white/[0.12] transition-colors"
+                  aria-label="Notification settings"
+                >
+                  {enabled ? (
+                    <Bell className="size-4" />
+                  ) : (
+                    <BellOff className="size-4" />
+                  )}
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-56 p-3">
+                <div className="flex items-center justify-between gap-2">
+                  <label
+                    htmlFor="notif-toggle"
+                    className="text-sm font-medium leading-none"
+                  >
+                    Browser notifications
+                  </label>
+                  <Switch
+                    id="notif-toggle"
+                    checked={enabled}
+                    onCheckedChange={setEnabled}
+                    disabled={permission === "denied"}
+                  />
+                </div>
+                {permission === "denied" && (
+                  <p className="text-xs text-muted-foreground mt-2">
+                    Blocked by browser. Allow in site settings.
+                  </p>
+                )}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )}
           <button
             onClick={toggleTheme}
             className="flex size-8 items-center justify-center rounded-md text-[var(--header-foreground)]/60 hover:text-[var(--header-foreground)] hover:bg-white/[0.12] transition-colors"

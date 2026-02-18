@@ -1,5 +1,14 @@
 "use client";
 
+/**
+ * @module process-row
+ *
+ * Expandable row component for a worker process or managed search.
+ * Shows worker ID, search type, tested/found counts, uptime, and
+ * hardware metrics in a compact layout. Expands to show checkpoint
+ * data and stop/restart controls.
+ */
+
 import { useEffect, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";

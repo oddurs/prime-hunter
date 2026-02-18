@@ -1,0 +1,13 @@
+[package]
+name = "gwnum-sys"
+version = "0.1.0"
+edition = "2021"
+description = "Raw FFI bindings to George Woltman's GWNUM library"
+links = "gwnum"
+# Build requires: x86-64 platform, gwnum.a (from Prime95 source)
+# See docs/roadmaps/gwnum-flint.md for build instructions
+
+[build-dependencies]
+# bindgen = "0.71"  # Uncomment when gwnum headers are available
+
+[dependencies]

@@ -1,3 +1,45 @@
+//! # Primehunt — Core Library
+//!
+//! Re-exports all engine and server modules, and provides shared utilities used
+//! across multiple search forms: trial division pre-filtering, Miller–Rabin
+//! pre-screening, and decimal digit estimation.
+//!
+//! ## Module Organization
+//!
+//! **Engine modules** (prime search algorithms):
+//! - [`factorial`] — n! ± 1 primes (OEIS [A002981](https://oeis.org/A002981), [A002982](https://oeis.org/A002982))
+//! - [`primorial`] — p# ± 1 primes (OEIS [A014545](https://oeis.org/A014545), [A057704](https://oeis.org/A057704))
+//! - [`kbn`] — k·b^n ± 1 (Proth, Riesel, generalized forms)
+//! - [`twin`] — Twin primes k·b^n ± 1 (both prime simultaneously)
+//! - [`sophie_germain`] — Sophie Germain primes p, 2p+1 both prime
+//! - [`palindromic`] — Palindromic primes in arbitrary bases
+//! - [`near_repdigit`] — Near-repdigit palindromic primes
+//! - [`cullen_woodall`] — Cullen (n·2^n + 1) and Woodall (n·2^n − 1)
+//! - [`carol_kynea`] — Carol ((2^n−1)²−2) and Kynea ((2^n+1)²−2)
+//! - [`wagstaff`] — Wagstaff primes (2^p + 1)/3 (OEIS [A000978](https://oeis.org/A000978))
+//! - [`repunit`] — Repunit primes (b^n − 1)/(b − 1)
+//! - [`gen_fermat`] — Generalized Fermat primes b^(2^n) + 1
+//!
+//! **Infrastructure modules** (server, coordination, proofs):
+//! - [`sieve`] — Prime generation, Montgomery multiplication, BSGS discrete log
+//! - [`proof`] — Pocklington N−1, Morrison N+1, BLS proofs
+//! - [`p1`] — Pollard P−1 composite pre-filter
+//! - [`prst`], [`pfgw`] — External tool integration (GWNUM-accelerated testing)
+//! - [`dashboard`], [`db`], [`fleet`], [`checkpoint`], [`progress`], etc.
+//!
+//! ## Shared Utilities
+//!
+//! - `has_small_factor`: Trial division by first 64 primes (up to 311).
+//! - `mr_screened_test`: Two-round Miller–Rabin pre-screen before full test.
+//! - `estimate_digits` / `exact_digits`: Decimal digit count from bit length.
+//!
+//! ## Design Philosophy
+//!
+//! All search modules follow the same pipeline: **sieve → parallel test → proof → log**.
+//! The `CoordinationClient` trait allows search functions to check for stop signals
+//! and report primes to either an HTTP coordinator or PostgreSQL directly.
+
+pub mod agent;
 pub mod carol_kynea;
 pub mod checkpoint;
 pub mod cullen_woodall;
@@ -6,16 +48,23 @@ pub mod db;
 pub mod deploy;
 pub mod events;
 pub mod factorial;
+#[cfg(feature = "flint")]
+pub mod flint;
 pub mod fleet;
 pub mod gen_fermat;
+pub mod gwnum;
 pub mod kbn;
 pub mod metrics;
 pub mod near_repdigit;
+pub mod p1;
 pub mod palindromic;
 pub mod pg_worker;
 pub mod primorial;
 pub mod progress;
+pub mod project;
 pub mod proof;
+pub mod pfgw;
+pub mod prst;
 pub mod repunit;
 pub mod search_manager;
 pub mod sieve;
@@ -49,14 +98,30 @@ const SMALL_PRIMES: [u32; 64] = [
     311,
 ];
 
+/// Convert a `u64` exponent to `u32` for `rug::Integer::pow()`, panicking with a clear
+/// message if the value exceeds `u32::MAX`. This prevents silent truncation that would
+/// produce wrong candidates and either miss primes or report false positives.
+#[inline]
+pub fn checked_u32(n: u64) -> u32 {
+    u32::try_from(n).unwrap_or_else(|_| {
+        panic!(
+            "exponent {} exceeds u32::MAX ({}); candidate would be silently wrong",
+            n,
+            u32::MAX
+        )
+    })
+}
+
 /// Quick check if n is divisible by any small prime.
 /// Returns true if n is definitely composite (has a small factor).
 /// Returns false if n might be prime (passed trial division).
+#[inline]
 pub fn has_small_factor(n: &Integer) -> bool {
     for &p in &SMALL_PRIMES {
         if n.is_divisible_u(p) {
-            // If n equals the small prime itself, it's prime, not composite
-            return n > &Integer::from(p);
+            // If n equals the small prime itself, it's prime, not composite.
+            // Compare via PartialEq<u32> to avoid heap-allocating an Integer.
+            return *n != p;
         }
     }
     false
@@ -64,6 +129,7 @@ pub fn has_small_factor(n: &Integer) -> bool {
 
 /// Two-round Miller-Rabin pre-screening: run 2 fast rounds first, full rounds only for survivors.
 /// Composites are rejected ~7x faster since most fail within 2 rounds.
+#[inline]
 pub fn mr_screened_test(candidate: &Integer, mr_rounds: u32) -> rug::integer::IsPrime {
     use rug::integer::IsPrime;
     if mr_rounds > 2 && candidate.is_probably_prime(2) == IsPrime::No {
@@ -73,6 +139,7 @@ pub fn mr_screened_test(candidate: &Integer, mr_rounds: u32) -> rug::integer::Is
 }
 
 /// Estimate decimal digit count from bit length, avoiding expensive to_string conversion.
+#[inline]
 pub fn estimate_digits(n: &Integer) -> u64 {
     let bits = n.significant_bits();
     if bits == 0 {
@@ -82,8 +149,39 @@ pub fn estimate_digits(n: &Integer) -> u64 {
 }
 
 /// Exact decimal digit count (expensive for very large numbers).
+#[inline]
 pub fn exact_digits(n: &Integer) -> u64 {
     n.to_string_radix(10).len() as u64
+}
+
+/// Block size for k*b^n±1-style searches (kbn, twin, Sophie Germain).
+///
+/// Larger blocks amortize sieve overhead; smaller blocks enable more frequent checkpointing.
+/// For lightweight primality tests (Proth/LLR), blocks can be large.
+#[inline]
+pub fn block_size_for_n(n: u64) -> u64 {
+    match n {
+        0..=1_000 => 10_000,
+        1_001..=10_000 => 10_000,
+        10_001..=50_000 => 2_000,
+        50_001..=200_000 => 500,
+        _ => 100,
+    }
+}
+
+/// Block size for heavy-computation searches (Cullen/Woodall, Carol/Kynea).
+///
+/// Smaller blocks than `block_size_for_n` because each candidate's test is more expensive
+/// (full MR rather than fast Proth/LLR), so checkpoint intervals must be shorter.
+#[inline]
+pub fn block_size_for_n_heavy(n: u64) -> u64 {
+    match n {
+        0..=1_000 => 10_000,
+        1_001..=10_000 => 5_000,
+        10_001..=50_000 => 1_000,
+        50_001..=200_000 => 200,
+        _ => 50,
+    }
 }
 
 #[cfg(test)]
@@ -216,5 +314,18 @@ mod tests {
     #[test]
     fn estimate_digits_zero() {
         assert_eq!(estimate_digits(&Integer::from(0u32)), 1);
+    }
+
+    #[test]
+    fn checked_u32_valid_values() {
+        assert_eq!(checked_u32(0), 0);
+        assert_eq!(checked_u32(1), 1);
+        assert_eq!(checked_u32(u32::MAX as u64), u32::MAX);
+    }
+
+    #[test]
+    #[should_panic(expected = "exceeds u32::MAX")]
+    fn checked_u32_overflow_panics() {
+        checked_u32(u32::MAX as u64 + 1);
     }
 }

@@ -1,3 +1,45 @@
+//! # Near-Repdigit — Near-Repdigit Palindromic Prime Search
+//!
+//! Searches for primes that are palindromes differing from a repdigit (all-9s
+//! number) at exactly two symmetric positions. These have a structured algebraic
+//! form that enables efficient modular sieving and BLS N+1 deterministic proofs.
+//!
+//! ## Candidate Form
+//!
+//! N = 10^(2k+1) − 1 − d·(10^(k+m) + 10^(k−m))
+//!
+//! where:
+//! - k determines the digit count (2k+1 digits)
+//! - d ∈ {1..8} is the digit deficiency from 9
+//! - m ∈ {0..k} is the position offset from center
+//!
+//! When m = 0, the two positions overlap at the center digit, giving:
+//! N = 10^(2k+1) − 1 − 2d·10^k (center digit = 9 − 2d).
+//!
+//! Example: k=1, d=4, m=0 → N = 999 − 80 = 919 (a palindromic prime).
+//!
+//! ## Algorithm
+//!
+//! 1. **Modular sieve** (`candidate_mod_p`): Evaluates N mod p using modular
+//!    exponentiation on the algebraic form — no big integer is constructed.
+//!    Each component 10^x mod p is computed via `pow_mod`.
+//!
+//! 2. **BLS N+1 proof** (`proof::bls_near_repdigit_proof`): N+1 contains
+//!    10^(k−m) = 2^(k−m) · 5^(k−m) as a factor, providing (k−m)·log₂(10) bits
+//!    of known factorization. When this exceeds N^(1/3), BLS proves primality.
+//!
+//! ## Complexity
+//!
+//! - Enumeration: O(k · d_max) = O(k · 8) candidates per digit count.
+//! - Sieve per candidate: O(π(L)) modular exponentiations.
+//!
+//! ## References
+//!
+//! - Harvey Dubner, "Repunit and Near-Repdigit Primes", Journal of Recreational
+//!   Mathematics, 1993.
+//! - BLS: Brillhart, Lehmer, Selfridge, "New Primality Criteria and Factorizations
+//!   of 2^m ± 1", Mathematics of Computation, 29(130), 1975.
+
 use anyhow::Result;
 use rayon::prelude::*;
 use rug::integer::IsPrime;
@@ -11,6 +53,7 @@ use std::time::Instant;
 use crate::checkpoint::{self, Checkpoint};
 use crate::db::Database;
 use crate::events::{self, EventBus};
+use crate::pfgw;
 use crate::progress::Progress;
 use crate::proof;
 use crate::CoordinationClient;
@@ -36,14 +79,14 @@ pub fn is_valid_params(k: u64, d: u32, m: u64) -> bool {
 /// When m=0, positions overlap at center: N = 10^(2k+1) - 1 - 2d*10^k
 pub fn build_candidate(k: u64, d: u32, m: u64) -> Integer {
     let digit_count = 2 * k + 1;
-    let repdigit = Integer::from(10u32).pow(digit_count as u32) - 1u32;
+    let repdigit = Integer::from(10u32).pow(crate::checked_u32(digit_count)) - 1u32;
     if m == 0 {
-        repdigit - Integer::from(2 * d) * Integer::from(10u32).pow(k as u32)
+        repdigit - Integer::from(2 * d) * Integer::from(10u32).pow(crate::checked_u32(k))
     } else {
         repdigit
             - Integer::from(d)
-                * (Integer::from(10u32).pow((k + m) as u32)
-                    + Integer::from(10u32).pow((k - m) as u32))
+                * (Integer::from(10u32).pow(crate::checked_u32(k + m))
+                    + Integer::from(10u32).pow(crate::checked_u32(k - m)))
     }
 }
 
@@ -119,6 +162,11 @@ pub fn search(
     worker_client: Option<&dyn CoordinationClient>,
     event_bus: Option<&EventBus>,
 ) -> Result<()> {
+    // Resolve sieve_limit: auto-tune if 0 (base 10 near-repdigits)
+    let candidate_bits = (max_digits as f64 * 10f64.log2()) as u64;
+    let n_range = (max_digits.saturating_sub(min_digits)) / 2 + 1;
+    let sieve_limit = sieve::resolve_sieve_limit(sieve_limit, candidate_bits, n_range);
+
     let sieve_primes = sieve::generate_primes(sieve_limit);
     eprintln!(
         "Near-repdigit sieve: {} primes up to {}",
@@ -127,7 +175,7 @@ pub fn search(
     );
 
     // Ensure we start on an odd digit count
-    let first_odd = if min_digits % 2 == 0 {
+    let first_odd = if min_digits.is_multiple_of(2) {
         min_digits + 1
     } else {
         min_digits
@@ -185,11 +233,37 @@ pub fn search(
 
         *progress.current.lock().unwrap() = format!("{}-digit near-repdigit", digit_count);
 
-        // MR test phase: parallel over all survivors for this digit count
+        // MR test phase: parallel over all survivors for this digit count.
+        // Try PFGW first for large candidates (50-100x faster), fall back to GMP MR.
         let found_primes: Vec<_> = survivors
             .into_par_iter()
             .filter_map(|(d, m)| {
                 let candidate = build_candidate(k, d, m);
+                let expr = format_expression(k, d, m);
+
+                // Try PFGW acceleration (near-repdigit: PRP only — N-1 doesn't have a
+                // trivially factored form; the BLS proof uses N+1 factorization instead)
+                if let Some(pfgw_result) =
+                    pfgw::try_test(&expr, &candidate, pfgw::PfgwMode::Prp)
+                {
+                    match pfgw_result {
+                        pfgw::PfgwResult::Prime {
+                            method,
+                            is_deterministic,
+                        } => {
+                            let cert = if is_deterministic {
+                                format!("deterministic ({})", method)
+                            } else {
+                                "probabilistic".to_string()
+                            };
+                            let digits = candidate.to_string_radix(10).len() as u64;
+                            return Some((expr, digits, cert));
+                        }
+                        pfgw::PfgwResult::Composite => return None,
+                        pfgw::PfgwResult::Unavailable { .. } => {} // fall through to GMP
+                    }
+                }
+
                 let r = mr_screened_test(&candidate, mr_rounds);
                 if r != IsPrime::No {
                     let bls_ok = proof::bls_near_repdigit_proof(k, d, m, &candidate, &sieve_primes);
@@ -202,7 +276,6 @@ pub fn search(
                         }
                     };
                     let digits = candidate.to_string_radix(10).len() as u64;
-                    let expr = format_expression(k, d, m);
                     Some((expr, digits, cert.to_string()))
                 } else {
                     None

@@ -1,4 +1,36 @@
-use crate::{checkpoint, db, deploy, events, fleet, metrics, search_manager, verify};
+//! # Dashboard — Web Server and Fleet Coordination Hub
+//!
+//! Runs an Axum HTTP server that serves the Next.js frontend, provides REST API
+//! endpoints for prime data, and coordinates the distributed worker fleet via
+//! WebSocket and HTTP heartbeat.
+//!
+//! ## Architecture
+//!
+//! ```text
+//! Browser ←── static files ──→ ServeDir (frontend/out/)
+//!         ←── REST API ──────→ /api/stats, /api/primes, /api/workers, /api/docs
+//!         ←── WebSocket ─────→ /ws (2s push: stats + fleet + searches)
+//!
+//! Workers ──── HTTP POST ────→ /api/register, /api/heartbeat, /api/prime
+//! ```
+//!
+//! ## Key Endpoints
+//!
+//! - `GET /api/stats` — Prime counts by form, largest prime.
+//! - `GET /api/primes?page=N&per_page=N` — Paginated primes with filtering.
+//! - `GET /api/workers` — Connected workers with metrics.
+//! - `POST /api/register` — Worker registration.
+//! - `POST /api/heartbeat` — Worker status update (10s interval).
+//! - `POST /api/prime` — Worker prime discovery report.
+//! - `WS /ws` — Real-time push (stats, fleet, managed searches).
+//! - `POST /api/search_jobs` — Create search job + work blocks (PostgreSQL).
+//!
+//! ## State Management
+//!
+//! `AppState` holds the database pool, in-memory fleet, search manager, event
+//! bus, and deployment tracker. Shared via `Arc` across all handlers.
+
+use crate::{agent, checkpoint, db, deploy, events, fleet, metrics, project, search_manager, verify};
 use anyhow::Result;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{Path as AxumPath, Query, State};
@@ -25,15 +57,16 @@ fn lock_or_recover<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
-struct AppState {
-    db: db::Database,
-    database_url: String,
-    checkpoint_path: PathBuf,
-    fleet: Mutex<fleet::Fleet>,
-    searches: Mutex<search_manager::SearchManager>,
-    deployments: Mutex<deploy::DeploymentManager>,
-    coordinator_metrics: Mutex<Option<metrics::HardwareMetrics>>,
-    event_bus: events::EventBus,
+pub struct AppState {
+    pub db: db::Database,
+    pub database_url: String,
+    pub checkpoint_path: PathBuf,
+    pub fleet: Mutex<fleet::Fleet>,
+    pub searches: Mutex<search_manager::SearchManager>,
+    pub deployments: Mutex<deploy::DeploymentManager>,
+    pub coordinator_metrics: Mutex<Option<metrics::HardwareMetrics>>,
+    pub event_bus: events::EventBus,
+    pub agents: Mutex<agent::AgentManager>,
 }
 
 impl AppState {
@@ -73,29 +106,36 @@ impl AppState {
             }
         }
     }
+
+    /// Create a new AppState with an already-connected database.
+    pub fn with_db(
+        db: db::Database,
+        database_url: &str,
+        checkpoint_path: PathBuf,
+        port: u16,
+    ) -> Arc<Self> {
+        Arc::new(AppState {
+            db,
+            database_url: database_url.to_string(),
+            checkpoint_path,
+            fleet: Mutex::new(fleet::Fleet::new()),
+            searches: Mutex::new(search_manager::SearchManager::new(port, database_url)),
+            deployments: Mutex::new(deploy::DeploymentManager::new()),
+            coordinator_metrics: Mutex::new(None),
+            event_bus: events::EventBus::new(),
+            agents: Mutex::new(agent::AgentManager::new()),
+        })
+    }
 }
 
-pub async fn run(
-    port: u16,
-    database_url: &str,
-    checkpoint_path: &Path,
-    static_dir: Option<&Path>,
-) -> Result<()> {
-    let database = db::Database::connect(database_url).await?;
-    let (ws_tx, _) = tokio::sync::broadcast::channel::<String>(256);
-    let event_bus = events::EventBus::new();
-    event_bus.set_ws_sender(ws_tx.clone());
-    let state = Arc::new(AppState {
-        db: database,
-        database_url: database_url.to_string(),
-        checkpoint_path: checkpoint_path.to_path_buf(),
-        fleet: Mutex::new(fleet::Fleet::new()),
-        searches: Mutex::new(search_manager::SearchManager::new(port, database_url)),
-        deployments: Mutex::new(deploy::DeploymentManager::new()),
-        coordinator_metrics: Mutex::new(None),
-        event_bus,
-    });
+fn gethostname() -> String {
+    std::env::var("HOSTNAME")
+        .or_else(|_| std::env::var("HOST"))
+        .unwrap_or_else(|_| "unknown".to_string())
+}
 
+/// Build the Axum router with all API routes and middleware layers.
+pub fn build_router(state: Arc<AppState>, static_dir: Option<&Path>) -> Router {
     let mut app = Router::new()
         .route("/ws", get(handler_ws))
         .route("/api/status", get(handler_api_status))
@@ -151,7 +191,72 @@ pub async fn run(
             post(handler_api_search_job_cancel),
         )
         .route("/api/notifications", get(handler_api_notifications))
-        .route("/api/events", get(handler_api_events));
+        .route("/api/events", get(handler_api_events))
+        .route(
+            "/api/agents/tasks",
+            get(handler_api_agent_tasks).post(handler_api_agent_task_create),
+        )
+        .route("/api/agents/tasks/{id}", get(handler_api_agent_task_get))
+        .route(
+            "/api/agents/tasks/{id}/cancel",
+            post(handler_api_agent_task_cancel),
+        )
+        .route("/api/agents/events", get(handler_api_agent_events))
+        .route(
+            "/api/agents/templates",
+            get(handler_api_agent_templates),
+        )
+        .route(
+            "/api/agents/templates/{name}/expand",
+            post(handler_api_agent_template_expand),
+        )
+        .route(
+            "/api/agents/tasks/{id}/children",
+            get(handler_api_agent_task_children),
+        )
+        .route(
+            "/api/agents/budgets",
+            get(handler_api_agent_budgets).put(handler_api_agent_budget_update),
+        )
+        .route("/api/primes/{id}/verify", post(handler_api_prime_verify))
+        .route(
+            "/api/agents/memory",
+            get(handler_api_agent_memory_list).post(handler_api_agent_memory_upsert),
+        )
+        .route(
+            "/api/agents/memory/{key}",
+            axum::routing::delete(handler_api_agent_memory_delete),
+        )
+        // Project Management
+        .route(
+            "/api/projects",
+            get(handler_api_projects_list).post(handler_api_projects_create),
+        )
+        .route("/api/projects/import", post(handler_api_projects_import))
+        .route("/api/projects/{slug}", get(handler_api_project_get))
+        .route(
+            "/api/projects/{slug}/activate",
+            post(handler_api_project_activate),
+        )
+        .route(
+            "/api/projects/{slug}/pause",
+            post(handler_api_project_pause),
+        )
+        .route(
+            "/api/projects/{slug}/cancel",
+            post(handler_api_project_cancel),
+        )
+        .route(
+            "/api/projects/{slug}/events",
+            get(handler_api_project_events),
+        )
+        .route(
+            "/api/projects/{slug}/cost",
+            get(handler_api_project_cost),
+        )
+        // Records
+        .route("/api/records", get(handler_api_records))
+        .route("/api/records/refresh", post(handler_api_records_refresh));
 
     if let Some(dir) = static_dir {
         app = app.fallback_service(ServeDir::new(dir).append_index_html_on_directories(true));
@@ -159,20 +264,33 @@ pub async fn run(
         app = app.route("/", get(handler_index));
     }
 
-    let app = app
-        .layer(
-            CorsLayer::new()
-                .allow_origin(Any)
-                .allow_methods(Any)
-                .allow_headers(Any),
-        )
-        .layer(CatchPanicLayer::new())
-        .layer(RequestBodyLimitLayer::new(1024 * 1024)) // 1MB
-        .layer(TimeoutLayer::with_status_code(
-            StatusCode::REQUEST_TIMEOUT,
-            Duration::from_secs(30),
-        ))
-        .with_state(state.clone());
+    app.layer(
+        CorsLayer::new()
+            .allow_origin(Any)
+            .allow_methods(Any)
+            .allow_headers(Any),
+    )
+    .layer(CatchPanicLayer::new())
+    .layer(RequestBodyLimitLayer::new(1024 * 1024)) // 1MB
+    .layer(TimeoutLayer::with_status_code(
+        StatusCode::REQUEST_TIMEOUT,
+        Duration::from_secs(30),
+    ))
+    .with_state(state)
+}
+
+pub async fn run(
+    port: u16,
+    database_url: &str,
+    checkpoint_path: &Path,
+    static_dir: Option<&Path>,
+) -> Result<()> {
+    let database = db::Database::connect(database_url).await?;
+    let (ws_tx, _) = tokio::sync::broadcast::channel::<String>(256);
+    let state = AppState::with_db(database, database_url, checkpoint_path.to_path_buf(), port);
+    state.event_bus.set_ws_sender(ws_tx.clone());
+
+    let app = build_router(state.clone(), static_dir);
 
     // Background task: prune stale workers, reclaim stale blocks, poll searches, collect metrics
     let prune_state = Arc::clone(&state);
@@ -186,6 +304,12 @@ pub async fn run(
             // Prune stale workers from PG
             if let Err(e) = prune_state.db.prune_stale_workers(120).await {
                 eprintln!("Warning: failed to prune stale PG workers: {}", e);
+            }
+            // Rotate expired budget periods
+            match prune_state.db.rotate_agent_budget_periods().await {
+                Ok(n) if n > 0 => eprintln!("Rotated {} budget periods", n),
+                Err(e) => eprintln!("Warning: failed to rotate budget periods: {}", e),
+                _ => {}
             }
             // Reclaim stale work blocks
             match prune_state.db.reclaim_stale_blocks(120).await {
@@ -202,6 +326,10 @@ pub async fn run(
                 let mut mgr = lock_or_recover(&prune_state.searches);
                 mgr.sync_worker_stats(&worker_stats);
                 mgr.poll_completed();
+            }
+            // Orchestrate active projects (advance phases, check budgets)
+            if let Err(e) = project::orchestrate_tick(&prune_state.db).await {
+                eprintln!("Warning: project orchestration tick failed: {}", e);
             }
             // Flush pending prime events (safety net for squash window)
             prune_state.event_bus.flush();
@@ -265,6 +393,232 @@ pub async fn run(
                         eprintln!("  Auto-verify #{} panicked: {}", prime.id, e);
                     }
                 }
+            }
+        }
+    });
+
+    // Background task: agent execution engine (10s interval)
+    let agent_state = Arc::clone(&state);
+    tokio::spawn(async move {
+        let agent_name = format!("coordinator@{}", gethostname());
+        let mut interval = tokio::time::interval(Duration::from_secs(10));
+        interval.tick().await; // skip immediate first tick
+        loop {
+            interval.tick().await;
+
+            // 1. Poll completed agents
+            let completed = lock_or_recover(&agent_state.agents).poll_completed();
+            for c in completed {
+                let status_str = match &c.status {
+                    agent::AgentStatus::Completed => "completed",
+                    agent::AgentStatus::Failed { .. } => "failed",
+                    agent::AgentStatus::TimedOut => "failed",
+                    agent::AgentStatus::Cancelled => "cancelled",
+                    agent::AgentStatus::Running => "in_progress",
+                };
+                let reason = match &c.status {
+                    agent::AgentStatus::Failed { reason } => Some(reason.clone()),
+                    agent::AgentStatus::TimedOut => Some("Timed out".to_string()),
+                    _ => None,
+                };
+                let (result_json, tokens, cost) = match c.result {
+                    Some(ref r) => (
+                        Some(serde_json::json!({
+                            "text": r.result_text,
+                        })),
+                        r.tokens_used,
+                        r.cost_usd,
+                    ),
+                    None => (reason.as_ref().map(|r| serde_json::json!({"error": r})), 0, 0.0),
+                };
+                if let Err(e) = agent_state
+                    .db
+                    .complete_agent_task(c.task_id, status_str, result_json.as_ref(), tokens, cost)
+                    .await
+                {
+                    eprintln!("Agent: failed to complete task {}: {}", c.task_id, e);
+                }
+                let summary = match &c.status {
+                    agent::AgentStatus::Completed => "Task completed".to_string(),
+                    agent::AgentStatus::Failed { reason } => format!("Task failed: {}", reason),
+                    agent::AgentStatus::TimedOut => "Task timed out".to_string(),
+                    agent::AgentStatus::Cancelled => "Task cancelled".to_string(),
+                    _ => "Task finished".to_string(),
+                };
+                let _ = agent_state
+                    .db
+                    .insert_agent_event(Some(c.task_id), status_str, Some("system"), &summary, None)
+                    .await;
+                // Update budget spending
+                if tokens > 0 || cost > 0.0 {
+                    let _ = agent_state
+                        .db
+                        .update_agent_budget_spending(tokens, cost)
+                        .await;
+                }
+                eprintln!(
+                    "Agent task {} finished: {} (tokens={}, cost=${:.4})",
+                    c.task_id, status_str, tokens, cost
+                );
+
+                // Parent auto-completion: if this child's parent exists, check if all siblings done
+                if let Ok(Some(completed_task)) = agent_state.db.get_agent_task(c.task_id).await {
+                    if let Some(parent_id) = completed_task.parent_task_id {
+                        // If this child failed and parent has on_child_failure='fail', cancel remaining
+                        if status_str == "failed" {
+                            if let Ok(Some(parent)) = agent_state.db.get_agent_task(parent_id).await {
+                                if parent.on_child_failure == "fail" {
+                                    let cancelled = agent_state.db.cancel_pending_siblings(parent_id).await.unwrap_or(0);
+                                    if cancelled > 0 {
+                                        eprintln!("Agent: cancelled {} pending siblings of parent {}", cancelled, parent_id);
+                                    }
+                                }
+                            }
+                        }
+                        // Try to auto-complete the parent
+                        if let Ok(Some(parent)) = agent_state.db.try_complete_parent(parent_id).await {
+                            let event_type = if parent.status == "failed" { "parent_failed" } else { "parent_completed" };
+                            let _ = agent_state.db.insert_agent_event(
+                                Some(parent_id), event_type, None,
+                                &format!("Parent task '{}' auto-{}", parent.title, parent.status),
+                                None,
+                            ).await;
+                            eprintln!("Agent: parent task {} auto-{}", parent_id, parent.status);
+                        }
+                    }
+                }
+            }
+
+            // 2. Global budget enforcement: if any period is over budget, kill ALL running agents
+            let budget_ok = agent_state.db.check_agent_budget().await.unwrap_or(true);
+            if !budget_ok {
+                let killed = lock_or_recover(&agent_state.agents).kill_all();
+                for task_id in &killed {
+                    let _ = agent_state
+                        .db
+                        .complete_agent_task(
+                            *task_id,
+                            "failed",
+                            Some(&serde_json::json!({"error": "Global budget exceeded"})),
+                            0,
+                            0.0,
+                        )
+                        .await;
+                    let _ = agent_state
+                        .db
+                        .insert_agent_event(
+                            Some(*task_id),
+                            "budget_exceeded",
+                            Some("system"),
+                            "Killed: global budget exceeded",
+                            None,
+                        )
+                        .await;
+                }
+                if !killed.is_empty() {
+                    eprintln!(
+                        "Agent: global budget exceeded, killed {} agents: {:?}",
+                        killed.len(),
+                        killed
+                    );
+                }
+                continue;
+            }
+
+            // 3. Check capacity
+            let active = lock_or_recover(&agent_state.agents).active_count();
+            if active >= agent::MAX_AGENTS {
+                continue;
+            }
+
+            // 4. Claim a pending task
+            let task = match agent_state
+                .db
+                .claim_pending_agent_task(&agent_name)
+                .await
+            {
+                Ok(Some(t)) => t,
+                Ok(None) => continue,
+                Err(e) => {
+                    eprintln!("Agent: failed to claim task: {}", e);
+                    continue;
+                }
+            };
+
+            eprintln!(
+                "Agent: claimed task {} — \"{}\" (priority={}, model={:?})",
+                task.id, task.title, task.priority, task.agent_model
+            );
+            let _ = agent_state
+                .db
+                .insert_agent_event(
+                    Some(task.id),
+                    "claimed",
+                    Some(&agent_name),
+                    &format!("Task claimed by {}", agent_name),
+                    None,
+                )
+                .await;
+
+            // 5. Assemble context prompts (project files, memory, task history)
+            let context_prompts = agent::assemble_context(&task, &agent_state.db).await;
+
+            // 6. Spawn the agent (scope the lock so it drops before any await)
+            let db_clone = agent_state.db.clone();
+            let spawn_result = {
+                lock_or_recover(&agent_state.agents).spawn_agent(
+                    &task,
+                    db_clone,
+                    task.max_cost_usd,
+                    context_prompts,
+                )
+            };
+            match spawn_result {
+                Ok(_info) => {}
+                Err(e) => {
+                    eprintln!("Agent: failed to spawn for task {}: {}", task.id, e);
+                    let _ = agent_state
+                        .db
+                        .complete_agent_task(
+                            task.id,
+                            "failed",
+                            Some(&serde_json::json!({"error": e})),
+                            0,
+                            0.0,
+                        )
+                        .await;
+                    let _ = agent_state
+                        .db
+                        .insert_agent_event(
+                            Some(task.id),
+                            "failed",
+                            Some("system"),
+                            &format!("Failed to spawn: {}", e),
+                            None,
+                        )
+                        .await;
+                }
+            }
+        }
+    });
+
+    // Background task: refresh world records from t5k.org (24h interval, 10s initial delay)
+    let records_state = Arc::clone(&state);
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_secs(10)).await;
+        eprintln!("Records: initial refresh from t5k.org...");
+        match project::refresh_all_records(&records_state.db).await {
+            Ok(n) => eprintln!("Records: refreshed {} forms", n),
+            Err(e) => eprintln!("Warning: records refresh failed: {}", e),
+        }
+        let mut interval = tokio::time::interval(Duration::from_secs(24 * 3600));
+        interval.tick().await; // consume immediate tick
+        loop {
+            interval.tick().await;
+            eprintln!("Records: 24h refresh from t5k.org...");
+            match project::refresh_all_records(&records_state.db).await {
+                Ok(n) => eprintln!("Records: refreshed {} forms", n),
+                Err(e) => eprintln!("Warning: records refresh failed: {}", e),
             }
         }
     });
@@ -380,6 +734,15 @@ async fn build_update(state: &Arc<AppState>) -> Option<String> {
     // Include search jobs from PG
     let search_jobs = state.db.get_search_jobs().await.unwrap_or_default();
     let recent_notifications = state.event_bus.recent_notifications(20);
+    let agent_tasks = state
+        .db
+        .get_agent_tasks(Some("in_progress"), 100)
+        .await
+        .unwrap_or_default();
+    let agent_budgets = state.db.get_agent_budgets().await.unwrap_or_default();
+    let running_agents = lock_or_recover(&state.agents).get_all();
+    let projects = state.db.get_projects(None).await.unwrap_or_default();
+    let records = state.db.get_records().await.unwrap_or_default();
     serde_json::to_string(&serde_json::json!({
         "type": "update",
         "status": status,
@@ -389,6 +752,11 @@ async fn build_update(state: &Arc<AppState>) -> Option<String> {
         "deployments": deployments,
         "coordinator": coord_metrics,
         "notifications": recent_notifications,
+        "agent_tasks": agent_tasks,
+        "agent_budgets": agent_budgets,
+        "running_agents": running_agents,
+        "projects": projects,
+        "records": records,
     }))
     .ok()
 }
@@ -1604,4 +1972,898 @@ async fn handler_api_notifications(State(state): State<Arc<AppState>>) -> impl I
 async fn handler_api_events(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let events = state.event_bus.recent_events(200);
     Json(serde_json::json!({ "events": events }))
+}
+
+// --- Agent Management API ---
+
+#[derive(Deserialize)]
+struct AgentTasksQuery {
+    status: Option<String>,
+    limit: Option<i64>,
+}
+
+async fn handler_api_agent_tasks(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<AgentTasksQuery>,
+) -> impl IntoResponse {
+    let limit = params.limit.unwrap_or(100);
+    match state
+        .db
+        .get_agent_tasks(params.status.as_deref(), limit)
+        .await
+    {
+        Ok(tasks) => Json(serde_json::json!({ "tasks": tasks })).into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": e.to_string()})),
+        )
+            .into_response(),
+    }
+}
+
+#[derive(Deserialize)]
+struct CreateAgentTaskPayload {
+    title: String,
+    #[serde(default)]
+    description: String,
+    #[serde(default = "default_priority")]
+    priority: String,
+    agent_model: Option<String>,
+    #[serde(default = "default_source")]
+    source: String,
+    max_cost_usd: Option<f64>,
+    #[serde(default = "default_permission_level")]
+    permission_level: i32,
+}
+
+fn default_permission_level() -> i32 {
+    1
+}
+
+fn default_priority() -> String {
+    "normal".to_string()
+}
+
+fn default_source() -> String {
+    "manual".to_string()
+}
+
+async fn handler_api_agent_task_create(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<CreateAgentTaskPayload>,
+) -> impl IntoResponse {
+    match state
+        .db
+        .create_agent_task(
+            &payload.title,
+            &payload.description,
+            &payload.priority,
+            payload.agent_model.as_deref(),
+            &payload.source,
+            payload.max_cost_usd,
+            payload.permission_level,
+        )
+        .await
+    {
+        Ok(task) => {
+            // Insert a "created" event
+            let _ = state
+                .db
+                .insert_agent_event(
+                    Some(task.id),
+                    "created",
+                    None,
+                    &format!("Task created: {}", task.title),
+                    None,
+                )
+                .await;
+            (StatusCode::CREATED, Json(serde_json::json!(task))).into_response()
+        }
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": e.to_string()})),
+        )
+            .into_response(),
+    }
+}
+
+async fn handler_api_agent_task_get(
+    State(state): State<Arc<AppState>>,
+    AxumPath(id): AxumPath<i64>,
+) -> impl IntoResponse {
+    match state.db.get_agent_task(id).await {
+        Ok(Some(task)) => Json(serde_json::json!(task)).into_response(),
+        Ok(None) => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({"error": "Task not found"})),
+        )
+            .into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": e.to_string()})),
+        )
+            .into_response(),
+    }
+}
+
+async fn handler_api_agent_task_cancel(
+    State(state): State<Arc<AppState>>,
+    AxumPath(id): AxumPath<i64>,
+) -> impl IntoResponse {
+    match state.db.cancel_agent_task(id).await {
+        Ok(()) => {
+            lock_or_recover(&state.agents).cancel_agent(id);
+            let _ = state
+                .db
+                .insert_agent_event(Some(id), "cancelled", None, "Task cancelled", None)
+                .await;
+            Json(serde_json::json!({"ok": true, "id": id})).into_response()
+        }
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": e.to_string()})),
+        )
+            .into_response(),
+    }
+}
+
+#[derive(Deserialize)]
+struct AgentEventsQuery {
+    task_id: Option<i64>,
+    limit: Option<i64>,
+}
+
+async fn handler_api_agent_events(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<AgentEventsQuery>,
+) -> impl IntoResponse {
+    let limit = params.limit.unwrap_or(100);
+    match state.db.get_agent_events(params.task_id, limit).await {
+        Ok(events) => Json(serde_json::json!({ "events": events })).into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": e.to_string()})),
+        )
+            .into_response(),
+    }
+}
+
+async fn handler_api_agent_budgets(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    match state.db.get_agent_budgets().await {
+        Ok(budgets) => Json(serde_json::json!({ "budgets": budgets })).into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": e.to_string()})),
+        )
+            .into_response(),
+    }
+}
+
+#[derive(Deserialize)]
+struct UpdateBudgetPayload {
+    id: i64,
+    budget_usd: f64,
+}
+
+async fn handler_api_agent_budget_update(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<UpdateBudgetPayload>,
+) -> impl IntoResponse {
+    match state
+        .db
+        .update_agent_budget(payload.id, payload.budget_usd)
+        .await
+    {
+        Ok(()) => Json(serde_json::json!({"ok": true, "id": payload.id})).into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": e.to_string()})),
+        )
+            .into_response(),
+    }
+}
+
+/// Trigger manual re-verification of a prime.
+async fn handler_api_prime_verify(
+    State(state): State<Arc<AppState>>,
+    AxumPath(id): AxumPath<i64>,
+) -> impl IntoResponse {
+    // Fetch the prime
+    let prime = match state.db.get_prime_by_id(id).await {
+        Ok(Some(p)) => p,
+        Ok(None) => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(serde_json::json!({"error": "Prime not found"})),
+            )
+                .into_response()
+        }
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": e.to_string()})),
+            )
+                .into_response()
+        }
+    };
+
+    // Run verification in a blocking task (uses GMP)
+    let prime_clone = prime.clone();
+    let result = match tokio::task::spawn_blocking(move || verify::verify_prime(&prime_clone)).await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": format!("Verification panicked: {}", e)})),
+            )
+                .into_response()
+        }
+    };
+
+    match result {
+        verify::VerifyResult::Verified { method, tier } => {
+            if let Err(e) = state
+                .db
+                .mark_verified(id, &method, tier as i16)
+                .await
+            {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({"error": e.to_string()})),
+                )
+                    .into_response();
+            }
+            Json(serde_json::json!({
+                "ok": true,
+                "result": "verified",
+                "method": method,
+                "tier": tier
+            }))
+            .into_response()
+        }
+        verify::VerifyResult::Failed { reason } => {
+            let _ = state
+                .db
+                .mark_verification_failed(id, &reason)
+                .await;
+            Json(serde_json::json!({
+                "ok": true,
+                "result": "failed",
+                "reason": reason
+            }))
+            .into_response()
+        }
+        verify::VerifyResult::Skipped { reason } => {
+            Json(serde_json::json!({
+                "ok": true,
+                "result": "skipped",
+                "reason": reason
+            }))
+            .into_response()
+        }
+    }
+}
+
+// --- Agent Memory API ---
+
+async fn handler_api_agent_memory_list(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    match state.db.get_all_agent_memory().await {
+        Ok(entries) => Json(serde_json::json!({ "memories": entries })).into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": e.to_string()})),
+        )
+            .into_response(),
+    }
+}
+
+#[derive(Deserialize)]
+struct UpsertMemoryPayload {
+    key: String,
+    value: String,
+    #[serde(default = "default_memory_category")]
+    category: String,
+}
+
+fn default_memory_category() -> String {
+    "general".to_string()
+}
+
+async fn handler_api_agent_memory_upsert(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<UpsertMemoryPayload>,
+) -> impl IntoResponse {
+    if payload.key.trim().is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": "key must not be empty"})),
+        )
+            .into_response();
+    }
+    match state
+        .db
+        .upsert_agent_memory(&payload.key, &payload.value, &payload.category, None)
+        .await
+    {
+        Ok(entry) => (StatusCode::OK, Json(serde_json::json!(entry))).into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": e.to_string()})),
+        )
+            .into_response(),
+    }
+}
+
+async fn handler_api_agent_memory_delete(
+    State(state): State<Arc<AppState>>,
+    AxumPath(key): AxumPath<String>,
+) -> impl IntoResponse {
+    match state.db.delete_agent_memory(&key).await {
+        Ok(true) => Json(serde_json::json!({"ok": true, "key": key})).into_response(),
+        Ok(false) => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({"error": "Memory entry not found"})),
+        )
+            .into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": e.to_string()})),
+        )
+            .into_response(),
+    }
+}
+
+// --- Agent template & decomposition endpoints ---
+
+/// GET /api/agents/templates — List all workflow templates.
+async fn handler_api_agent_templates(
+    State(state): State<Arc<AppState>>,
+) -> impl IntoResponse {
+    match state.db.get_all_templates().await {
+        Ok(templates) => Json(serde_json::json!(templates)).into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": e.to_string()})),
+        )
+            .into_response(),
+    }
+}
+
+/// POST /api/agents/templates/{name}/expand — Expand a template into parent + child tasks.
+async fn handler_api_agent_template_expand(
+    State(state): State<Arc<AppState>>,
+    AxumPath(name): AxumPath<String>,
+    Json(body): Json<serde_json::Value>,
+) -> impl IntoResponse {
+    let title = body
+        .get("title")
+        .and_then(|t| t.as_str())
+        .unwrap_or("Untitled");
+    let description = body
+        .get("description")
+        .and_then(|d| d.as_str())
+        .unwrap_or("");
+    let priority = body
+        .get("priority")
+        .and_then(|p| p.as_str())
+        .unwrap_or("normal");
+    let max_cost_usd = body
+        .get("max_cost_usd")
+        .and_then(|c| c.as_f64());
+    let permission_level = body
+        .get("permission_level")
+        .and_then(|l| l.as_i64())
+        .unwrap_or(1) as i32;
+
+    match state
+        .db
+        .expand_template(&name, title, description, priority, max_cost_usd, permission_level)
+        .await
+    {
+        Ok(parent_id) => {
+            let _ = state
+                .db
+                .insert_agent_event(
+                    Some(parent_id),
+                    "created",
+                    None,
+                    &format!("Template '{}' expanded into task tree", name),
+                    None,
+                )
+                .await;
+            Json(serde_json::json!({"ok": true, "parent_task_id": parent_id})).into_response()
+        }
+        Err(e) => (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": e.to_string()})),
+        )
+            .into_response(),
+    }
+}
+
+/// GET /api/agents/tasks/{id}/children — Get child tasks of a parent task.
+async fn handler_api_agent_task_children(
+    State(state): State<Arc<AppState>>,
+    AxumPath(id): AxumPath<i64>,
+) -> impl IntoResponse {
+    match state.db.get_child_tasks(id).await {
+        Ok(children) => Json(serde_json::json!(children)).into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": e.to_string()})),
+        )
+            .into_response(),
+    }
+}
+
+// ── Project Management Endpoints ────────────────────────────────
+
+#[derive(Deserialize)]
+struct ProjectListQuery {
+    status: Option<String>,
+}
+
+/// GET /api/projects — List all projects, optionally filtered by status.
+async fn handler_api_projects_list(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<ProjectListQuery>,
+) -> impl IntoResponse {
+    match state.db.get_projects(params.status.as_deref()).await {
+        Ok(projects) => Json(serde_json::json!(projects)).into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": e.to_string()})),
+        )
+            .into_response(),
+    }
+}
+
+#[derive(Deserialize)]
+struct CreateProjectPayload {
+    name: String,
+    description: Option<String>,
+    objective: String,
+    form: String,
+    #[serde(default)]
+    target: serde_json::Value,
+    #[serde(default)]
+    competitive: serde_json::Value,
+    #[serde(default)]
+    strategy: serde_json::Value,
+    #[serde(default)]
+    infrastructure: serde_json::Value,
+    #[serde(default)]
+    budget: serde_json::Value,
+    #[serde(default)]
+    workers: serde_json::Value,
+}
+
+/// POST /api/projects — Create a project from JSON.
+async fn handler_api_projects_create(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<CreateProjectPayload>,
+) -> impl IntoResponse {
+    // Build a TOML-like config from the JSON payload
+    let toml_str = format!(
+        "[project]\nname = {:?}\ndescription = {:?}\nobjective = {:?}\nform = {:?}\n",
+        payload.name,
+        payload.description.as_deref().unwrap_or(""),
+        payload.objective,
+        payload.form,
+    );
+
+    // Build ProjectConfig directly from JSON fields
+    let obj = match payload.objective.as_str() {
+        "record" => project::Objective::Record,
+        "survey" => project::Objective::Survey,
+        "verification" => project::Objective::Verification,
+        "custom" => project::Objective::Custom,
+        other => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({"error": format!("Invalid objective: {}", other)})),
+            )
+                .into_response();
+        }
+    };
+
+    let target: project::TargetConfig = serde_json::from_value(payload.target.clone())
+        .unwrap_or_default();
+    let strategy: project::StrategyConfig = serde_json::from_value(payload.strategy.clone())
+        .unwrap_or_default();
+
+    let config = project::ProjectConfig {
+        project: project::ProjectMeta {
+            name: payload.name.clone(),
+            description: payload.description.unwrap_or_default(),
+            objective: obj,
+            form: payload.form.clone(),
+            author: String::new(),
+            tags: vec![],
+        },
+        target,
+        competitive: serde_json::from_value(payload.competitive).ok(),
+        strategy,
+        infrastructure: serde_json::from_value(payload.infrastructure).ok(),
+        budget: serde_json::from_value(payload.budget).ok(),
+        workers: serde_json::from_value(payload.workers).ok(),
+    };
+
+    match state.db.create_project(&config, Some(&toml_str)).await {
+        Ok(id) => {
+            let slug = project::slugify(&payload.name);
+            eprintln!("Project '{}' created (id={}, slug={})", payload.name, id, slug);
+            (
+                StatusCode::CREATED,
+                Json(serde_json::json!({"id": id, "slug": slug})),
+            )
+                .into_response()
+        }
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": e.to_string()})),
+        )
+            .into_response(),
+    }
+}
+
+#[derive(Deserialize)]
+struct ImportTomlPayload {
+    toml: String,
+}
+
+/// POST /api/projects/import — Import a project from TOML content.
+async fn handler_api_projects_import(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<ImportTomlPayload>,
+) -> impl IntoResponse {
+    let config = match project::parse_toml(&payload.toml) {
+        Ok(c) => c,
+        Err(e) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({"error": format!("TOML parse error: {}", e)})),
+            )
+                .into_response();
+        }
+    };
+
+    match state.db.create_project(&config, Some(&payload.toml)).await {
+        Ok(id) => {
+            let slug = project::slugify(&config.project.name);
+            eprintln!(
+                "Project '{}' imported (id={}, slug={})",
+                config.project.name, id, slug
+            );
+            (
+                StatusCode::CREATED,
+                Json(serde_json::json!({"id": id, "slug": slug})),
+            )
+                .into_response()
+        }
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": e.to_string()})),
+        )
+            .into_response(),
+    }
+}
+
+/// GET /api/projects/{slug} — Get project details with phases and recent events.
+async fn handler_api_project_get(
+    State(state): State<Arc<AppState>>,
+    AxumPath(slug): AxumPath<String>,
+) -> impl IntoResponse {
+    let proj = match state.db.get_project_by_slug(&slug).await {
+        Ok(Some(p)) => p,
+        Ok(None) => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(serde_json::json!({"error": "Project not found"})),
+            )
+                .into_response();
+        }
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": e.to_string()})),
+            )
+                .into_response();
+        }
+    };
+
+    let phases = state
+        .db
+        .get_project_phases(proj.id)
+        .await
+        .unwrap_or_default();
+    let events = state
+        .db
+        .get_project_events(proj.id, 50)
+        .await
+        .unwrap_or_default();
+
+    Json(serde_json::json!({
+        "project": proj,
+        "phases": phases,
+        "events": events,
+    }))
+    .into_response()
+}
+
+/// POST /api/projects/{slug}/activate — Start project orchestration.
+async fn handler_api_project_activate(
+    State(state): State<Arc<AppState>>,
+    AxumPath(slug): AxumPath<String>,
+) -> impl IntoResponse {
+    let proj = match state.db.get_project_by_slug(&slug).await {
+        Ok(Some(p)) => p,
+        Ok(None) => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(serde_json::json!({"error": "Project not found"})),
+            )
+                .into_response();
+        }
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": e.to_string()})),
+            )
+                .into_response();
+        }
+    };
+
+    if proj.status != "draft" && proj.status != "paused" {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "error": format!("Cannot activate project with status '{}'", proj.status)
+            })),
+        )
+            .into_response();
+    }
+
+    if let Err(e) = state.db.update_project_status(proj.id, "active").await {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": e.to_string()})),
+        )
+            .into_response();
+    }
+
+    state
+        .db
+        .insert_project_event(
+            proj.id,
+            "activated",
+            &format!("Project '{}' activated via API", proj.name),
+            None,
+        )
+        .await
+        .ok();
+
+    eprintln!("Project '{}' activated via API", slug);
+    Json(serde_json::json!({"ok": true, "status": "active"})).into_response()
+}
+
+/// POST /api/projects/{slug}/pause — Pause project orchestration.
+async fn handler_api_project_pause(
+    State(state): State<Arc<AppState>>,
+    AxumPath(slug): AxumPath<String>,
+) -> impl IntoResponse {
+    let proj = match state.db.get_project_by_slug(&slug).await {
+        Ok(Some(p)) => p,
+        Ok(None) => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(serde_json::json!({"error": "Project not found"})),
+            )
+                .into_response();
+        }
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": e.to_string()})),
+            )
+                .into_response();
+        }
+    };
+
+    if proj.status != "active" {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "error": format!("Cannot pause project with status '{}'", proj.status)
+            })),
+        )
+            .into_response();
+    }
+
+    if let Err(e) = state.db.update_project_status(proj.id, "paused").await {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": e.to_string()})),
+        )
+            .into_response();
+    }
+
+    state
+        .db
+        .insert_project_event(
+            proj.id,
+            "paused",
+            &format!("Project '{}' paused via API", proj.name),
+            None,
+        )
+        .await
+        .ok();
+
+    Json(serde_json::json!({"ok": true, "status": "paused"})).into_response()
+}
+
+/// POST /api/projects/{slug}/cancel — Cancel a project.
+async fn handler_api_project_cancel(
+    State(state): State<Arc<AppState>>,
+    AxumPath(slug): AxumPath<String>,
+) -> impl IntoResponse {
+    let proj = match state.db.get_project_by_slug(&slug).await {
+        Ok(Some(p)) => p,
+        Ok(None) => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(serde_json::json!({"error": "Project not found"})),
+            )
+                .into_response();
+        }
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": e.to_string()})),
+            )
+                .into_response();
+        }
+    };
+
+    if let Err(e) = state.db.update_project_status(proj.id, "cancelled").await {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": e.to_string()})),
+        )
+            .into_response();
+    }
+
+    state
+        .db
+        .insert_project_event(
+            proj.id,
+            "cancelled",
+            &format!("Project '{}' cancelled via API", proj.name),
+            None,
+        )
+        .await
+        .ok();
+
+    Json(serde_json::json!({"ok": true, "status": "cancelled"})).into_response()
+}
+
+/// GET /api/projects/{slug}/events — Get project activity log.
+async fn handler_api_project_events(
+    State(state): State<Arc<AppState>>,
+    AxumPath(slug): AxumPath<String>,
+) -> impl IntoResponse {
+    let proj = match state.db.get_project_by_slug(&slug).await {
+        Ok(Some(p)) => p,
+        Ok(None) => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(serde_json::json!({"error": "Project not found"})),
+            )
+                .into_response();
+        }
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": e.to_string()})),
+            )
+                .into_response();
+        }
+    };
+
+    match state.db.get_project_events(proj.id, 100).await {
+        Ok(events) => Json(serde_json::json!(events)).into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": e.to_string()})),
+        )
+            .into_response(),
+    }
+}
+
+/// GET /api/projects/{slug}/cost — Get cost estimate for a project.
+async fn handler_api_project_cost(
+    State(state): State<Arc<AppState>>,
+    AxumPath(slug): AxumPath<String>,
+) -> impl IntoResponse {
+    let proj = match state.db.get_project_by_slug(&slug).await {
+        Ok(Some(p)) => p,
+        Ok(None) => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(serde_json::json!({"error": "Project not found"})),
+            )
+                .into_response();
+        }
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": e.to_string()})),
+            )
+                .into_response();
+        }
+    };
+
+    // Parse the stored TOML to estimate cost, or build a minimal config from DB fields
+    let config = if let Some(toml_src) = &proj.toml_source {
+        match project::parse_toml(toml_src) {
+            Ok(c) => c,
+            Err(_) => return Json(serde_json::json!({"error": "Invalid stored TOML"})).into_response(),
+        }
+    } else {
+        // Build minimal config from DB fields
+        project::ProjectConfig {
+            project: project::ProjectMeta {
+                name: proj.name.clone(),
+                description: proj.description.clone(),
+                objective: match proj.objective.as_str() {
+                    "record" => project::Objective::Record,
+                    "survey" => project::Objective::Survey,
+                    "verification" => project::Objective::Verification,
+                    _ => project::Objective::Custom,
+                },
+                form: proj.form.clone(),
+                author: String::new(),
+                tags: vec![],
+            },
+            target: serde_json::from_value(proj.target.clone()).unwrap_or_default(),
+            competitive: serde_json::from_value(proj.competitive.clone()).ok(),
+            strategy: serde_json::from_value(proj.strategy.clone()).unwrap_or_default(),
+            infrastructure: serde_json::from_value(proj.infrastructure.clone()).ok(),
+            budget: serde_json::from_value(proj.budget.clone()).ok(),
+            workers: None,
+        }
+    };
+
+    let estimate = project::estimate_project_cost(&config);
+    Json(serde_json::json!(estimate)).into_response()
+}
+
+// ── Records Endpoints ───────────────────────────────────────────
+
+/// GET /api/records — Get all world records with our-best comparison.
+async fn handler_api_records(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    match state.db.get_records().await {
+        Ok(records) => Json(serde_json::json!(records)).into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": e.to_string()})),
+        )
+            .into_response(),
+    }
+}
+
+/// POST /api/records/refresh — Trigger manual records refresh from t5k.org.
+async fn handler_api_records_refresh(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    match project::refresh_all_records(&state.db).await {
+        Ok(n) => {
+            eprintln!("Records manually refreshed: {} forms updated", n);
+            Json(serde_json::json!({"ok": true, "updated": n})).into_response()
+        }
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": e.to_string()})),
+        )
+            .into_response(),
+    }
 }

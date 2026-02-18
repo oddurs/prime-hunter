@@ -1,5 +1,20 @@
 "use client";
 
+/**
+ * @module layout
+ *
+ * Root layout for the entire dashboard. Wraps all pages in:
+ *
+ * 1. `<AuthProvider>` — Supabase Auth session management
+ * 2. `<WebSocketProvider>` — single WebSocket connection to the Rust backend
+ * 3. `<AppHeader>` — top navigation bar
+ * 4. `<NotificationToaster>` — invisible prime discovery notifier
+ * 5. `<Toaster>` — Sonner toast container
+ *
+ * Unauthenticated users see the login page instead of the dashboard.
+ * Dark mode class is applied to the `<html>` element via `useTheme()`.
+ */
+
 import "./globals.css";
 
 import { AuthProvider, useAuth } from "@/contexts/auth-context";
@@ -46,9 +61,22 @@ export default function RootLayout({
     <html lang="en" className="dark" suppressHydrationWarning>
       <head>
         <title>primehunt dashboard</title>
+        <link rel="manifest" href="/manifest.json" />
+        <meta name="theme-color" content="#f78166" />
+        <meta name="apple-mobile-web-app-capable" content="yes" />
+        <meta
+          name="apple-mobile-web-app-status-bar-style"
+          content="black-translucent"
+        />
+        <link rel="apple-touch-icon" href="/icon-192.png" />
         <script
           dangerouslySetInnerHTML={{
             __html: `try{document.documentElement.className=localStorage.getItem('primehunt-theme')||'dark'}catch(e){}`,
+          }}
+        />
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `if('serviceWorker' in navigator){window.addEventListener('load',function(){navigator.serviceWorker.register('/sw.js')})}`,
           }}
         />
       </head>

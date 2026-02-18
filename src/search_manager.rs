@@ -1,3 +1,25 @@
+//! # SearchManager — Subprocess-Based Search Orchestration
+//!
+//! Manages concurrent search processes spawned by the dashboard. Each search
+//! runs as a child `primehunt` process with the appropriate subcommand and
+//! parameters. The manager tracks up to [`MAX_CONCURRENT`] simultaneous
+//! searches and monitors their lifecycle (running, completed, failed).
+//!
+//! ## Architecture
+//!
+//! ```text
+//! Dashboard API → SearchManager::start() → std::process::Command::spawn()
+//!                 SearchManager::poll()   → Child::try_wait() (non-blocking)
+//!                 SearchManager::stop()   → Child::kill()
+//! ```
+//!
+//! ## SearchParams Enum
+//!
+//! Typed parameter variants for every supported prime form (factorial, kbn,
+//! palindromic, primorial, cullen_woodall, wagstaff, carol_kynea, twin,
+//! sophie_germain, repunit, gen_fermat, near_repdigit). Serialized as
+//! tagged JSON for the REST API and stored in `search_jobs.params`.
+
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
