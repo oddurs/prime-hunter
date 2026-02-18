@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 use crate::search_manager::SearchParams;
 
-#[derive(Clone, Serialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum DeploymentStatus {
     Deploying,
@@ -280,4 +280,208 @@ pub async fn ssh_stop(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn deployment_manager_new_empty() {
+        let dm = DeploymentManager::new();
+        assert!(dm.get_all().is_empty());
+        assert!(dm.get(1).is_none());
+    }
+
+    #[test]
+    fn deploy_creates_deployment() {
+        let mut dm = DeploymentManager::new();
+        let d = dm.deploy(
+            "host1.example.com".into(),
+            "root".into(),
+            "kbn".into(),
+            r#"{"k":3,"base":2}"#.into(),
+            "http://coord:8080".into(),
+            "postgres://...".into(),
+            None,
+            None,
+        );
+        assert_eq!(d.id, 1);
+        assert_eq!(d.hostname, "host1.example.com");
+        assert_eq!(d.ssh_user, "root");
+        assert_eq!(d.status, DeploymentStatus::Deploying);
+        assert_eq!(d.worker_id, "deploy-1");
+        assert!(d.remote_pid.is_none());
+
+        assert_eq!(dm.get_all().len(), 1);
+        assert!(dm.get(1).is_some());
+    }
+
+    #[test]
+    fn deploy_increments_id() {
+        let mut dm = DeploymentManager::new();
+        let d1 = dm.deploy("h1".into(), "u".into(), "t".into(), "p".into(), "c".into(), "d".into(), None, None);
+        let d2 = dm.deploy("h2".into(), "u".into(), "t".into(), "p".into(), "c".into(), "d".into(), None, None);
+        assert_eq!(d1.id, 1);
+        assert_eq!(d2.id, 2);
+    }
+
+    #[test]
+    fn status_lifecycle_deploying_to_running() {
+        let mut dm = DeploymentManager::new();
+        dm.deploy("h".into(), "u".into(), "t".into(), "p".into(), "c".into(), "d".into(), None, None);
+
+        dm.mark_running(1, 12345);
+        let d = dm.get(1).unwrap();
+        assert_eq!(d.status, DeploymentStatus::Running);
+        assert_eq!(d.remote_pid, Some(12345));
+    }
+
+    #[test]
+    fn status_lifecycle_running_to_paused() {
+        let mut dm = DeploymentManager::new();
+        dm.deploy("h".into(), "u".into(), "t".into(), "p".into(), "c".into(), "d".into(), None, None);
+        dm.mark_running(1, 12345);
+
+        dm.mark_paused(1);
+        let d = dm.get(1).unwrap();
+        assert_eq!(d.status, DeploymentStatus::Paused);
+        assert!(d.remote_pid.is_none()); // cleared on pause
+    }
+
+    #[test]
+    fn status_lifecycle_paused_to_resuming() {
+        let mut dm = DeploymentManager::new();
+        dm.deploy("h".into(), "u".into(), "t".into(), "p".into(), "c".into(), "d".into(), None, None);
+        dm.mark_paused(1);
+
+        dm.mark_resuming(1);
+        let d = dm.get(1).unwrap();
+        assert_eq!(d.status, DeploymentStatus::Deploying);
+    }
+
+    #[test]
+    fn status_lifecycle_to_failed() {
+        let mut dm = DeploymentManager::new();
+        dm.deploy("h".into(), "u".into(), "t".into(), "p".into(), "c".into(), "d".into(), None, None);
+
+        dm.mark_failed(1, "SSH connection refused".into());
+        let d = dm.get(1).unwrap();
+        assert_eq!(d.status, DeploymentStatus::Failed);
+        assert_eq!(d.error, Some("SSH connection refused".into()));
+    }
+
+    #[test]
+    fn status_lifecycle_to_stopped() {
+        let mut dm = DeploymentManager::new();
+        dm.deploy("h".into(), "u".into(), "t".into(), "p".into(), "c".into(), "d".into(), None, None);
+        dm.mark_running(1, 999);
+
+        dm.mark_stopped(1);
+        let d = dm.get(1).unwrap();
+        assert_eq!(d.status, DeploymentStatus::Stopped);
+    }
+
+    #[test]
+    fn mark_nonexistent_is_noop() {
+        let mut dm = DeploymentManager::new();
+        dm.mark_running(999, 123); // should not panic
+        dm.mark_failed(999, "err".into());
+        dm.mark_paused(999);
+        dm.mark_stopped(999);
+    }
+
+    #[test]
+    fn get_all_sorted_by_id_desc() {
+        let mut dm = DeploymentManager::new();
+        dm.deploy("h1".into(), "u".into(), "t".into(), "p".into(), "c".into(), "d".into(), None, None);
+        dm.deploy("h2".into(), "u".into(), "t".into(), "p".into(), "c".into(), "d".into(), None, None);
+        dm.deploy("h3".into(), "u".into(), "t".into(), "p".into(), "c".into(), "d".into(), None, None);
+
+        let all = dm.get_all();
+        assert_eq!(all.len(), 3);
+        assert_eq!(all[0].id, 3); // newest first
+        assert_eq!(all[1].id, 2);
+        assert_eq!(all[2].id, 1);
+    }
+
+    #[test]
+    fn build_ssh_command_factorial() {
+        let cmd = build_ssh_command(
+            1,
+            "http://coord:8080",
+            "postgres://db",
+            &SearchParams::Factorial { start: 1, end: 100 },
+        );
+        assert!(cmd.contains("factorial --start 1 --end 100"));
+        assert!(cmd.contains("--worker-id deploy-1"));
+        assert!(cmd.contains("--coordinator http://coord:8080"));
+        assert!(cmd.contains("DATABASE_URL='postgres://db'"));
+        assert!(cmd.contains("deploy-1.checkpoint"));
+        assert!(cmd.contains("deploy-1.log"));
+        assert!(cmd.contains("nohup"));
+        assert!(cmd.contains("echo $!"));
+    }
+
+    #[test]
+    fn build_ssh_command_kbn() {
+        let cmd = build_ssh_command(
+            5,
+            "http://coord:8080",
+            "postgres://db",
+            &SearchParams::Kbn {
+                k: 3,
+                base: 2,
+                min_n: 1000,
+                max_n: 2000,
+            },
+        );
+        assert!(cmd.contains("kbn --k 3 --base 2 --min-n 1000 --max-n 2000"));
+        assert!(cmd.contains("deploy-5"));
+    }
+
+    #[test]
+    fn build_ssh_command_all_forms() {
+        // Just verify none of them panic
+        let forms: Vec<SearchParams> = vec![
+            SearchParams::Factorial { start: 1, end: 10 },
+            SearchParams::Palindromic { base: 10, min_digits: 1, max_digits: 9 },
+            SearchParams::Kbn { k: 3, base: 2, min_n: 1, max_n: 100 },
+            SearchParams::Primorial { start: 2, end: 50 },
+            SearchParams::CullenWoodall { min_n: 1, max_n: 30 },
+            SearchParams::Wagstaff { min_exp: 3, max_exp: 50 },
+            SearchParams::CarolKynea { min_n: 1, max_n: 30 },
+            SearchParams::Twin { k: 3, base: 2, min_n: 1, max_n: 100 },
+            SearchParams::SophieGermain { k: 1, base: 2, min_n: 2, max_n: 100 },
+            SearchParams::Repunit { base: 10, min_n: 2, max_n: 50 },
+            SearchParams::GenFermat { fermat_exp: 1, min_base: 2, max_base: 100 },
+        ];
+        for (i, params) in forms.iter().enumerate() {
+            let cmd = build_ssh_command(i as u64 + 1, "http://c:8080", "postgres://db", params);
+            assert!(cmd.contains("nohup"), "Missing nohup for form {}", i);
+            assert!(cmd.contains(&format!("deploy-{}", i + 1)));
+        }
+    }
+
+    #[test]
+    fn deployment_status_serde() {
+        let statuses = vec![
+            DeploymentStatus::Deploying,
+            DeploymentStatus::Running,
+            DeploymentStatus::Paused,
+            DeploymentStatus::Failed,
+            DeploymentStatus::Stopped,
+        ];
+        let expected_strings = vec!["deploying", "running", "paused", "failed", "stopped"];
+        for (status, expected) in statuses.iter().zip(expected_strings.iter()) {
+            let json = serde_json::to_string(status).unwrap();
+            assert!(
+                json.contains(expected),
+                "Status {:?} serialized as {} but expected {}",
+                status,
+                json,
+                expected
+            );
+        }
+    }
 }

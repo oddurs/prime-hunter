@@ -59,3 +59,80 @@ pub fn collect(sys: &System) -> HardwareMetrics {
         load_avg_15m: (load.fifteen * 100.0).round() / 100.0,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn collect_returns_valid_percentages() {
+        let mut sys = System::new_all();
+        sys.refresh_all();
+        let m = collect(&sys);
+
+        assert!(m.cpu_usage_percent >= 0.0, "CPU usage negative");
+        assert!(m.cpu_usage_percent <= 100.0 * sys.cpus().len() as f32, "CPU usage unreasonable");
+        assert!(m.memory_usage_percent >= 0.0, "Memory usage percent negative");
+        assert!(m.memory_usage_percent <= 100.0, "Memory usage percent > 100");
+        assert!(m.disk_usage_percent >= 0.0, "Disk usage percent negative");
+        assert!(m.disk_usage_percent <= 100.0, "Disk usage percent > 100");
+    }
+
+    #[test]
+    fn collect_returns_non_negative_gb() {
+        let mut sys = System::new_all();
+        sys.refresh_all();
+        let m = collect(&sys);
+
+        assert!(m.memory_used_gb >= 0.0, "Memory used GB negative");
+        assert!(m.memory_total_gb >= 0.0, "Memory total GB negative");
+        assert!(m.memory_used_gb <= m.memory_total_gb, "Used > total memory");
+        assert!(m.disk_used_gb >= 0.0, "Disk used GB negative");
+        assert!(m.disk_total_gb >= 0.0, "Disk total GB negative");
+        assert!(m.disk_used_gb <= m.disk_total_gb, "Used > total disk");
+    }
+
+    #[test]
+    fn collect_returns_non_negative_load() {
+        let mut sys = System::new_all();
+        sys.refresh_all();
+        let m = collect(&sys);
+
+        assert!(m.load_avg_1m >= 0.0, "Load 1m negative");
+        assert!(m.load_avg_5m >= 0.0, "Load 5m negative");
+        assert!(m.load_avg_15m >= 0.0, "Load 15m negative");
+    }
+
+    #[test]
+    fn hardware_metrics_default_is_zeroed() {
+        let m = HardwareMetrics::default();
+        assert_eq!(m.cpu_usage_percent, 0.0);
+        assert_eq!(m.memory_used_gb, 0.0);
+        assert_eq!(m.memory_total_gb, 0.0);
+        assert_eq!(m.disk_used_gb, 0.0);
+        assert_eq!(m.disk_total_gb, 0.0);
+        assert_eq!(m.load_avg_1m, 0.0);
+    }
+
+    #[test]
+    fn hardware_metrics_serde_roundtrip() {
+        let m = HardwareMetrics {
+            cpu_usage_percent: 45.5,
+            memory_used_gb: 8.2,
+            memory_total_gb: 16.0,
+            memory_usage_percent: 51.3,
+            disk_used_gb: 100.0,
+            disk_total_gb: 500.0,
+            disk_usage_percent: 20.0,
+            load_avg_1m: 2.5,
+            load_avg_5m: 1.8,
+            load_avg_15m: 1.2,
+        };
+        let json = serde_json::to_string(&m).unwrap();
+        let parsed: HardwareMetrics = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.cpu_usage_percent, m.cpu_usage_percent);
+        assert_eq!(parsed.memory_used_gb, m.memory_used_gb);
+        assert_eq!(parsed.disk_total_gb, m.disk_total_gb);
+        assert_eq!(parsed.load_avg_15m, m.load_avg_15m);
+    }
+}

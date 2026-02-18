@@ -340,3 +340,244 @@ impl EventBus {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_bus() -> EventBus {
+        EventBus::new()
+    }
+
+    fn prime_event(form: &str, expr: &str) -> Event {
+        Event::PrimeFound {
+            form: form.into(),
+            expression: expr.into(),
+            digits: 10,
+            proof_method: "deterministic".into(),
+            timestamp: Instant::now(),
+        }
+    }
+
+    #[test]
+    fn new_event_bus_has_no_events() {
+        let bus = make_bus();
+        assert!(bus.recent_events(100).is_empty());
+        assert!(bus.recent_notifications(100).is_empty());
+    }
+
+    #[test]
+    fn emit_prime_found_recorded_in_events() {
+        let bus = make_bus();
+        bus.emit(prime_event("factorial", "3!+1"));
+        let events = bus.recent_events(100);
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].kind, "prime");
+        assert!(events[0].message.contains("factorial"));
+        assert!(events[0].message.contains("3!+1"));
+    }
+
+    #[test]
+    fn emit_prime_found_does_not_create_immediate_notification() {
+        // Primes are batched in pending_primes, only flushed on timer or manual flush
+        let bus = make_bus();
+        bus.emit(prime_event("factorial", "3!+1"));
+        // No notification yet (primes are batched)
+        assert!(bus.recent_notifications(100).is_empty());
+    }
+
+    #[test]
+    fn emit_search_started_creates_notification() {
+        let bus = make_bus();
+        bus.emit(Event::SearchStarted {
+            search_type: "kbn".into(),
+            params: "k=3 b=2".into(),
+            timestamp: Instant::now(),
+        });
+        let events = bus.recent_events(100);
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].kind, "search_start");
+
+        let notifs = bus.recent_notifications(100);
+        assert_eq!(notifs.len(), 1);
+        assert_eq!(notifs[0].kind, "search_start");
+        assert!(notifs[0].title.contains("kbn"));
+    }
+
+    #[test]
+    fn emit_search_completed_creates_notification() {
+        let bus = make_bus();
+        bus.emit(Event::SearchCompleted {
+            search_type: "factorial".into(),
+            tested: 1000,
+            found: 5,
+            elapsed_secs: 3.14,
+            timestamp: Instant::now(),
+        });
+        let notifs = bus.recent_notifications(100);
+        assert_eq!(notifs.len(), 1);
+        assert_eq!(notifs[0].kind, "search_done");
+        assert!(notifs[0].details[0].contains("1000"));
+        assert!(notifs[0].details[0].contains("5"));
+    }
+
+    #[test]
+    fn emit_milestone_creates_notification() {
+        let bus = make_bus();
+        bus.emit(Event::Milestone {
+            message: "Reached 10000 digits".into(),
+            timestamp: Instant::now(),
+        });
+        let notifs = bus.recent_notifications(100);
+        assert_eq!(notifs.len(), 1);
+        assert_eq!(notifs[0].kind, "milestone");
+        assert_eq!(notifs[0].title, "Reached 10000 digits");
+    }
+
+    #[test]
+    fn emit_warning_no_notification() {
+        let bus = make_bus();
+        bus.emit(Event::Warning {
+            context: "sieve".into(),
+            message: "low memory".into(),
+            timestamp: Instant::now(),
+        });
+        let events = bus.recent_events(100);
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].kind, "warning");
+
+        // Warnings do NOT create notifications
+        assert!(bus.recent_notifications(100).is_empty());
+    }
+
+    #[test]
+    fn emit_error_creates_notification() {
+        let bus = make_bus();
+        bus.emit(Event::Error {
+            context: "db".into(),
+            message: "connection lost".into(),
+            timestamp: Instant::now(),
+        });
+        let notifs = bus.recent_notifications(100);
+        assert_eq!(notifs.len(), 1);
+        assert_eq!(notifs[0].kind, "error");
+        assert!(notifs[0].title.contains("db"));
+    }
+
+    #[test]
+    fn flush_squashes_primes_by_form() {
+        let bus = make_bus();
+        // Emit primes of two different forms
+        bus.emit(prime_event("factorial", "3!+1"));
+        bus.emit(prime_event("factorial", "11!+1"));
+        bus.emit(prime_event("kbn", "2^31-1"));
+
+        bus.flush();
+
+        let notifs = bus.recent_notifications(100);
+        assert_eq!(notifs.len(), 2); // one per form
+
+        let factorial_notif = notifs.iter().find(|n| n.title.contains("factorial")).unwrap();
+        assert_eq!(factorial_notif.count, 2);
+
+        let kbn_notif = notifs.iter().find(|n| n.title.contains("kbn")).unwrap();
+        assert_eq!(kbn_notif.count, 1);
+    }
+
+    #[test]
+    fn flush_empty_is_noop() {
+        let bus = make_bus();
+        bus.flush();
+        assert!(bus.recent_notifications(100).is_empty());
+    }
+
+    #[test]
+    fn flush_clears_pending_primes() {
+        let bus = make_bus();
+        bus.emit(prime_event("factorial", "3!+1"));
+        bus.flush();
+        // Second flush should not produce more notifications
+        let count_after_first = bus.recent_notifications(100).len();
+        bus.flush();
+        assert_eq!(bus.recent_notifications(100).len(), count_after_first);
+    }
+
+    #[test]
+    fn flush_caps_details_at_five() {
+        let bus = make_bus();
+        for i in 0..8 {
+            bus.emit(prime_event("factorial", &format!("{}!+1", i)));
+        }
+        bus.flush();
+
+        let notifs = bus.recent_notifications(100);
+        assert_eq!(notifs.len(), 1);
+        // 5 detail lines + "and 3 more" = 6
+        assert_eq!(notifs[0].details.len(), 6);
+        assert!(notifs[0].details[5].contains("and 3 more"));
+    }
+
+    #[test]
+    fn recent_events_capped_at_200() {
+        let bus = make_bus();
+        // Emit 250 warnings (warnings add to events but not notifications)
+        for i in 0..250 {
+            bus.emit(Event::Warning {
+                context: "test".into(),
+                message: format!("msg {}", i),
+                timestamp: Instant::now(),
+            });
+        }
+        let events = bus.recent_events(300);
+        assert_eq!(events.len(), RECENT_EVENTS_CAP); // capped at 200
+    }
+
+    #[test]
+    fn recent_notifications_capped_at_50() {
+        let bus = make_bus();
+        // Emit 60 milestones (each creates a notification)
+        for i in 0..60 {
+            bus.emit(Event::Milestone {
+                message: format!("milestone {}", i),
+                timestamp: Instant::now(),
+            });
+        }
+        let notifs = bus.recent_notifications(100);
+        assert_eq!(notifs.len(), NOTIFICATIONS_CAP); // capped at 50
+    }
+
+    #[test]
+    fn recent_events_returns_most_recent_first() {
+        let bus = make_bus();
+        bus.emit(Event::Warning {
+            context: "a".into(),
+            message: "first".into(),
+            timestamp: Instant::now(),
+        });
+        bus.emit(Event::Warning {
+            context: "b".into(),
+            message: "second".into(),
+            timestamp: Instant::now(),
+        });
+        let events = bus.recent_events(10);
+        assert_eq!(events.len(), 2);
+        assert!(events[0].message.contains("second")); // most recent first
+        assert!(events[0].elapsed_secs >= events[1].elapsed_secs);
+    }
+
+    #[test]
+    fn notification_ids_are_unique_and_increasing() {
+        let bus = make_bus();
+        bus.emit(Event::Milestone {
+            message: "a".into(),
+            timestamp: Instant::now(),
+        });
+        bus.emit(Event::Milestone {
+            message: "b".into(),
+            timestamp: Instant::now(),
+        });
+        let notifs = bus.recent_notifications(10);
+        // Most recent first, so notifs[0].id > notifs[1].id
+        assert!(notifs[0].id > notifs[1].id);
+    }
+}

@@ -352,6 +352,178 @@ mod tests {
     }
 
     #[test]
+    fn all_checkpoint_variants_roundtrip() {
+        let dir = tempfile::tempdir().unwrap();
+        let variants: Vec<(&str, Checkpoint)> = vec![
+            (
+                "factorial",
+                Checkpoint::Factorial {
+                    last_n: 42,
+                    start: Some(1),
+                    end: Some(100),
+                },
+            ),
+            (
+                "palindromic",
+                Checkpoint::Palindromic {
+                    digit_count: 7,
+                    half_value: "1234".into(),
+                    min_digits: Some(1),
+                    max_digits: Some(99),
+                },
+            ),
+            (
+                "kbn",
+                Checkpoint::Kbn {
+                    last_n: 500,
+                    min_n: Some(1),
+                    max_n: Some(1000),
+                },
+            ),
+            (
+                "near_repdigit",
+                Checkpoint::NearRepdigit {
+                    digit_count: 11,
+                    d: 3,
+                    m: 2,
+                    min_digits: Some(5),
+                    max_digits: Some(99),
+                },
+            ),
+            (
+                "primorial",
+                Checkpoint::Primorial {
+                    last_prime: 29,
+                    start: Some(2),
+                    end: Some(100),
+                },
+            ),
+            (
+                "cullen_woodall",
+                Checkpoint::CullenWoodall {
+                    last_n: 50,
+                    min_n: Some(1),
+                    max_n: Some(200),
+                },
+            ),
+            (
+                "wagstaff",
+                Checkpoint::Wagstaff {
+                    last_exp: 43,
+                    min_exp: Some(3),
+                    max_exp: Some(200),
+                },
+            ),
+            (
+                "carol_kynea",
+                Checkpoint::CarolKynea {
+                    last_n: 25,
+                    min_n: Some(1),
+                    max_n: Some(100),
+                },
+            ),
+            (
+                "twin",
+                Checkpoint::Twin {
+                    last_n: 100,
+                    k: Some(3),
+                    base: Some(2),
+                    min_n: Some(1),
+                    max_n: Some(1000),
+                },
+            ),
+            (
+                "sophie_germain",
+                Checkpoint::SophieGermain {
+                    last_n: 80,
+                    k: Some(1),
+                    base: Some(2),
+                    min_n: Some(2),
+                    max_n: Some(500),
+                },
+            ),
+            (
+                "repunit",
+                Checkpoint::Repunit {
+                    last_n: 23,
+                    base: Some(10),
+                    min_n: Some(2),
+                    max_n: Some(1000),
+                },
+            ),
+            (
+                "gen_fermat",
+                Checkpoint::GenFermat {
+                    last_base: 42,
+                    fermat_n: Some(3),
+                    min_base: Some(2),
+                    max_base: Some(10000),
+                },
+            ),
+        ];
+
+        for (name, cp) in &variants {
+            let path = dir.path().join(format!("{}.json", name));
+            save(&path, cp).unwrap();
+            let loaded = load(&path).expect(&format!("Failed to load {} checkpoint", name));
+            // Verify by re-serializing both and comparing
+            let original_json = serde_json::to_string(cp).unwrap();
+            let loaded_json = serde_json::to_string(&loaded).unwrap();
+            assert_eq!(
+                original_json, loaded_json,
+                "Roundtrip mismatch for {} checkpoint",
+                name
+            );
+        }
+    }
+
+    #[test]
+    fn checkpoint_with_none_optional_fields() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("cp.json");
+
+        let cp = Checkpoint::Factorial {
+            last_n: 10,
+            start: None,
+            end: None,
+        };
+        save(&path, &cp).unwrap();
+        let loaded = load(&path).unwrap();
+        match loaded {
+            Checkpoint::Factorial { last_n, start, end } => {
+                assert_eq!(last_n, 10);
+                assert!(start.is_none());
+                assert!(end.is_none());
+            }
+            _ => panic!("Wrong type"),
+        }
+    }
+
+    #[test]
+    fn checkpoint_checksum_detects_tampering() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("cp.json");
+
+        save(
+            &path,
+            &Checkpoint::Factorial {
+                last_n: 42,
+                start: None,
+                end: None,
+            },
+        )
+        .unwrap();
+
+        // Tamper with the data field but keep the envelope valid JSON
+        let raw = fs::read_to_string(&path).unwrap();
+        let tampered = raw.replace("42", "99");
+        fs::write(&path, &tampered).unwrap();
+
+        // load_single should reject due to checksum mismatch
+        assert!(load_single(&path).is_none());
+    }
+
+    #[test]
     fn clear_removes_all() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("checkpoint.json");

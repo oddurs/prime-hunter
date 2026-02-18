@@ -517,3 +517,211 @@ impl Drop for SearchManager {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn all_variants() -> Vec<SearchParams> {
+        vec![
+            SearchParams::Factorial { start: 1, end: 100 },
+            SearchParams::Palindromic {
+                base: 10,
+                min_digits: 1,
+                max_digits: 9,
+            },
+            SearchParams::Kbn {
+                k: 3,
+                base: 2,
+                min_n: 1,
+                max_n: 1000,
+            },
+            SearchParams::Primorial { start: 2, end: 100 },
+            SearchParams::CullenWoodall {
+                min_n: 1,
+                max_n: 100,
+            },
+            SearchParams::Wagstaff {
+                min_exp: 3,
+                max_exp: 100,
+            },
+            SearchParams::CarolKynea {
+                min_n: 1,
+                max_n: 100,
+            },
+            SearchParams::Twin {
+                k: 3,
+                base: 2,
+                min_n: 1,
+                max_n: 1000,
+            },
+            SearchParams::SophieGermain {
+                k: 1,
+                base: 2,
+                min_n: 2,
+                max_n: 100,
+            },
+            SearchParams::Repunit {
+                base: 10,
+                min_n: 2,
+                max_n: 50,
+            },
+            SearchParams::GenFermat {
+                fermat_exp: 1,
+                min_base: 2,
+                max_base: 100,
+            },
+        ]
+    }
+
+    #[test]
+    fn search_params_serde_roundtrip_all_variants() {
+        for params in all_variants() {
+            let json = serde_json::to_string(&params).unwrap();
+            let parsed: SearchParams = serde_json::from_str(&json).unwrap();
+            let json2 = serde_json::to_string(&parsed).unwrap();
+            assert_eq!(json, json2, "Serde roundtrip failed for: {}", json);
+        }
+    }
+
+    #[test]
+    fn search_params_serde_roundtrip_factorial() {
+        let p = SearchParams::Factorial { start: 1, end: 100 };
+        let json = serde_json::to_string(&p).unwrap();
+        assert!(json.contains("\"search_type\":\"factorial\""));
+        assert!(json.contains("\"start\":1"));
+        assert!(json.contains("\"end\":100"));
+        let parsed: SearchParams = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.search_type_name(), "factorial");
+    }
+
+    #[test]
+    fn search_params_serde_roundtrip_kbn() {
+        let p = SearchParams::Kbn {
+            k: 7,
+            base: 3,
+            min_n: 10,
+            max_n: 500,
+        };
+        let json = serde_json::to_string(&p).unwrap();
+        assert!(json.contains("\"search_type\":\"kbn\""));
+        let parsed: SearchParams = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.search_type_name(), "kbn");
+    }
+
+    #[test]
+    fn search_type_name_matches_serde_tag() {
+        let expected_names = [
+            "factorial",
+            "palindromic",
+            "kbn",
+            "primorial",
+            "cullen_woodall",
+            "wagstaff",
+            "carol_kynea",
+            "twin",
+            "sophie_germain",
+            "repunit",
+            "gen_fermat",
+        ];
+        for (params, expected) in all_variants().iter().zip(expected_names.iter()) {
+            assert_eq!(
+                params.search_type_name(),
+                *expected,
+                "Mismatch for {:?}",
+                serde_json::to_string(params).unwrap()
+            );
+            // Also verify the serde tag matches
+            let json = serde_json::to_string(params).unwrap();
+            assert!(
+                json.contains(&format!("\"search_type\":\"{}\"", expected)),
+                "Serde tag doesn't match for {}",
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn to_args_produces_valid_cli_args() {
+        let cases: Vec<(SearchParams, Vec<&str>)> = vec![
+            (
+                SearchParams::Factorial { start: 1, end: 100 },
+                vec!["factorial", "--start", "1", "--end", "100"],
+            ),
+            (
+                SearchParams::Palindromic {
+                    base: 10,
+                    min_digits: 1,
+                    max_digits: 9,
+                },
+                vec!["palindromic", "--base", "10", "--min-digits", "1", "--max-digits", "9"],
+            ),
+            (
+                SearchParams::Kbn {
+                    k: 3,
+                    base: 2,
+                    min_n: 1,
+                    max_n: 1000,
+                },
+                vec!["kbn", "--k", "3", "--base", "2", "--min-n", "1", "--max-n", "1000"],
+            ),
+            (
+                SearchParams::CullenWoodall {
+                    min_n: 1,
+                    max_n: 30,
+                },
+                vec!["cullen-woodall", "--min-n", "1", "--max-n", "30"],
+            ),
+            (
+                SearchParams::Wagstaff {
+                    min_exp: 3,
+                    max_exp: 50,
+                },
+                vec!["wagstaff", "--min-exp", "3", "--max-exp", "50"],
+            ),
+            (
+                SearchParams::CarolKynea {
+                    min_n: 1,
+                    max_n: 30,
+                },
+                vec!["carol-kynea", "--min-n", "1", "--max-n", "30"],
+            ),
+            (
+                SearchParams::GenFermat {
+                    fermat_exp: 2,
+                    min_base: 2,
+                    max_base: 100,
+                },
+                vec!["gen-fermat", "--fermat-exp", "2", "--min-base", "2", "--max-base", "100"],
+            ),
+        ];
+        for (params, expected) in &cases {
+            let args = params.to_args();
+            let expected_strings: Vec<String> = expected.iter().map(|s| s.to_string()).collect();
+            assert_eq!(args, expected_strings, "to_args mismatch for {:?}", params.search_type_name());
+        }
+    }
+
+    #[test]
+    fn to_args_first_element_is_subcommand() {
+        for params in all_variants() {
+            let args = params.to_args();
+            assert!(!args.is_empty());
+            // First arg should be the subcommand name (not a flag)
+            assert!(!args[0].starts_with('-'), "First arg should be subcommand, got: {}", args[0]);
+        }
+    }
+
+    #[test]
+    fn search_status_serde() {
+        let running = serde_json::to_string(&SearchStatus::Running).unwrap();
+        assert!(running.contains("running"));
+
+        let failed = serde_json::to_string(&SearchStatus::Failed {
+            reason: "exit 1".into(),
+        })
+        .unwrap();
+        assert!(failed.contains("failed"));
+        assert!(failed.contains("exit 1"));
+    }
+}

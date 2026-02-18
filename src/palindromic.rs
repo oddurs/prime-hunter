@@ -374,3 +374,183 @@ pub fn search(
     checkpoint::clear(checkpoint_path);
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn mirror_to_palindrome_odd_length() {
+        // [1, 2, 3] with is_odd=true → [1, 2, 3, 2, 1] (5 digits)
+        let half = vec![1, 2, 3];
+        let full = mirror_to_palindrome(&half, true);
+        assert_eq!(full, vec![1, 2, 3, 2, 1]);
+    }
+
+    #[test]
+    fn mirror_to_palindrome_even_length() {
+        // [1, 2] with is_odd=false → [1, 2, 2, 1] (4 digits)
+        let half = vec![1, 2];
+        let full = mirror_to_palindrome(&half, false);
+        assert_eq!(full, vec![1, 2, 2, 1]);
+    }
+
+    #[test]
+    fn mirror_to_palindrome_single_digit() {
+        // [5] with is_odd=true → [5] (1 digit)
+        let half = vec![5];
+        let full = mirror_to_palindrome(&half, true);
+        assert_eq!(full, vec![5]);
+    }
+
+    #[test]
+    fn generated_palindromes_are_actually_palindromic() {
+        // Generate palindromes in base 10 and verify they read the same forwards and backwards
+        for num_digits in [3, 5, 7] {
+            let half_len = (num_digits + 1) / 2;
+            let mut half_digits = vec![0u32; half_len];
+            half_digits[0] = 1; // leading digit
+
+            for _ in 0..100 {
+                let full = mirror_to_palindrome(&half_digits, true);
+                assert_eq!(full.len(), num_digits);
+
+                // Verify palindrome property
+                let reversed: Vec<u32> = full.iter().rev().cloned().collect();
+                assert_eq!(full, reversed, "Not a palindrome: {:?}", full);
+
+                if increment_digits(&mut half_digits, 10) {
+                    break;
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn increment_digits_basic() {
+        let mut digits = vec![1, 2, 3];
+        let overflow = increment_digits(&mut digits, 10);
+        assert!(!overflow);
+        assert_eq!(digits, vec![1, 2, 4]);
+    }
+
+    #[test]
+    fn increment_digits_carry() {
+        let mut digits = vec![1, 2, 9];
+        let overflow = increment_digits(&mut digits, 10);
+        assert!(!overflow);
+        assert_eq!(digits, vec![1, 3, 0]);
+    }
+
+    #[test]
+    fn increment_digits_multi_carry() {
+        let mut digits = vec![1, 9, 9];
+        let overflow = increment_digits(&mut digits, 10);
+        assert!(!overflow);
+        assert_eq!(digits, vec![2, 0, 0]);
+    }
+
+    #[test]
+    fn increment_digits_overflow() {
+        let mut digits = vec![9, 9, 9];
+        let overflow = increment_digits(&mut digits, 10);
+        assert!(overflow);
+        assert_eq!(digits, vec![0, 0, 0]);
+    }
+
+    #[test]
+    fn increment_digits_base_3() {
+        let mut digits = vec![1, 2];
+        let overflow = increment_digits(&mut digits, 3);
+        assert!(!overflow);
+        assert_eq!(digits, vec![2, 0]); // 12 + 1 = 20 in base 3
+    }
+
+    #[test]
+    fn digits_to_integer_and_back() {
+        let digits = vec![1, 2, 3];
+        let n = digits_to_integer(&digits, 10);
+        assert_eq!(n, Integer::from(123));
+
+        let back = integer_to_digits(&n, 3, 10);
+        assert_eq!(back, digits);
+    }
+
+    #[test]
+    fn digits_to_integer_base_2() {
+        let digits = vec![1, 0, 1, 1]; // 1011 in base 2 = 11
+        let n = digits_to_integer(&digits, 2);
+        assert_eq!(n, Integer::from(11));
+    }
+
+    #[test]
+    fn integer_to_digits_with_padding() {
+        let n = Integer::from(42);
+        let digits = integer_to_digits(&n, 5, 10);
+        assert_eq!(digits, vec![0, 0, 0, 4, 2]); // zero-padded to 5
+    }
+
+    #[test]
+    fn digits_mod_correct() {
+        // 12321 mod 7 = 12321 % 7 = 1760*7 + 1 = 1
+        let digits = vec![1, 2, 3, 2, 1];
+        assert_eq!(digits_mod(&digits, 10, 7), 12321 % 7);
+
+        // 999 mod 37 = 999 % 37 = 27*37 = 999, so mod = 0
+        let digits2 = vec![9, 9, 9];
+        assert_eq!(digits_mod(&digits2, 10, 37), 999 % 37);
+    }
+
+    #[test]
+    fn is_filter_composite_catches_divisible() {
+        // 12321 = 3 * 4107 = 3 * 3 * 1369 = 9 * 1369
+        let digits = vec![1, 2, 3, 2, 1];
+        let primes = vec![3, 7, 11, 13];
+        assert!(is_filter_composite(&digits, 10, &primes, 5));
+    }
+
+    #[test]
+    fn is_filter_composite_passes_prime() {
+        // 10301 is prime
+        let digits = vec![1, 0, 3, 0, 1];
+        let primes: Vec<u64> = sieve::generate_primes(1000).into_iter().filter(|&p| p >= 3).collect();
+        assert!(!is_filter_composite(&digits, 10, &primes, 5));
+    }
+
+    #[test]
+    fn even_digit_palindromes_divisible_by_base_plus_one() {
+        // All even-digit palindromes in base 10 are divisible by 11
+        // e.g., 1221, 3443, 9009, etc.
+        for lead in 1..10u32 {
+            for inner in 0..10u32 {
+                let palindrome = lead * 1000 + inner * 100 + inner * 10 + lead;
+                assert_eq!(
+                    palindrome % 11,
+                    0,
+                    "4-digit palindrome {} should be divisible by 11",
+                    palindrome
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn palindrome_batch_count() {
+        // For 3-digit base-10 palindromes with leading digit 1:
+        // half goes from 10 to 19 (10 values), each generating 101..191
+        let mut half_digits = vec![1u32, 0];
+        let end_digits = vec![1u32, 9];
+        let mut count = 0;
+        loop {
+            count += 1;
+            let full = mirror_to_palindrome(&half_digits, true);
+            assert_eq!(full.len(), 3);
+            assert_eq!(full[0], full[2]); // palindrome check
+            if half_digits >= end_digits {
+                break;
+            }
+            increment_digits(&mut half_digits, 10);
+        }
+        assert_eq!(count, 10, "Should be 10 palindromes for leading digit 1");
+    }
+}

@@ -494,6 +494,195 @@ impl Database {
         Ok(row)
     }
 
+    // --- Agent management ---
+
+    pub async fn get_agent_tasks(
+        &self,
+        status_filter: Option<&str>,
+        limit: i64,
+    ) -> Result<Vec<AgentTaskRow>> {
+        let rows = if let Some(status) = status_filter {
+            sqlx::query_as::<_, AgentTaskRow>(
+                "SELECT id, title, description, status, priority, agent_model, assigned_agent,
+                        source, result, tokens_used, cost_usd::FLOAT8 AS cost_usd,
+                        created_at, started_at, completed_at, parent_task_id
+                 FROM agent_tasks WHERE status = $1
+                 ORDER BY created_at DESC LIMIT $2",
+            )
+            .bind(status)
+            .bind(limit)
+            .fetch_all(&self.pool)
+            .await?
+        } else {
+            sqlx::query_as::<_, AgentTaskRow>(
+                "SELECT id, title, description, status, priority, agent_model, assigned_agent,
+                        source, result, tokens_used, cost_usd::FLOAT8 AS cost_usd,
+                        created_at, started_at, completed_at, parent_task_id
+                 FROM agent_tasks
+                 ORDER BY created_at DESC LIMIT $1",
+            )
+            .bind(limit)
+            .fetch_all(&self.pool)
+            .await?
+        };
+        Ok(rows)
+    }
+
+    pub async fn get_agent_task(&self, id: i64) -> Result<Option<AgentTaskRow>> {
+        let row = sqlx::query_as::<_, AgentTaskRow>(
+            "SELECT id, title, description, status, priority, agent_model, assigned_agent,
+                    source, result, tokens_used, cost_usd::FLOAT8 AS cost_usd,
+                    created_at, started_at, completed_at, parent_task_id
+             FROM agent_tasks WHERE id = $1",
+        )
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row)
+    }
+
+    pub async fn create_agent_task(
+        &self,
+        title: &str,
+        description: &str,
+        priority: &str,
+        agent_model: Option<&str>,
+        source: &str,
+    ) -> Result<AgentTaskRow> {
+        let row = sqlx::query_as::<_, AgentTaskRow>(
+            "INSERT INTO agent_tasks (title, description, priority, agent_model, source)
+             VALUES ($1, $2, $3, $4, $5)
+             RETURNING id, title, description, status, priority, agent_model, assigned_agent,
+                       source, result, tokens_used, cost_usd::FLOAT8 AS cost_usd,
+                       created_at, started_at, completed_at, parent_task_id",
+        )
+        .bind(title)
+        .bind(description)
+        .bind(priority)
+        .bind(agent_model)
+        .bind(source)
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(row)
+    }
+
+    pub async fn update_agent_task_status(&self, id: i64, status: &str) -> Result<()> {
+        let now = chrono::Utc::now();
+        match status {
+            "in_progress" => {
+                sqlx::query(
+                    "UPDATE agent_tasks SET status = $1, started_at = COALESCE(started_at, $2) WHERE id = $3",
+                )
+                .bind(status)
+                .bind(now)
+                .bind(id)
+                .execute(&self.pool)
+                .await?;
+            }
+            "completed" | "failed" => {
+                sqlx::query(
+                    "UPDATE agent_tasks SET status = $1, completed_at = $2 WHERE id = $3",
+                )
+                .bind(status)
+                .bind(now)
+                .bind(id)
+                .execute(&self.pool)
+                .await?;
+            }
+            _ => {
+                sqlx::query("UPDATE agent_tasks SET status = $1 WHERE id = $2")
+                    .bind(status)
+                    .bind(id)
+                    .execute(&self.pool)
+                    .await?;
+            }
+        }
+        Ok(())
+    }
+
+    pub async fn cancel_agent_task(&self, id: i64) -> Result<()> {
+        sqlx::query(
+            "UPDATE agent_tasks SET status = 'cancelled', completed_at = NOW()
+             WHERE id = $1 AND status IN ('pending', 'in_progress')",
+        )
+        .bind(id)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn get_agent_events(
+        &self,
+        task_id: Option<i64>,
+        limit: i64,
+    ) -> Result<Vec<AgentEventRow>> {
+        let rows = if let Some(tid) = task_id {
+            sqlx::query_as::<_, AgentEventRow>(
+                "SELECT id, task_id, event_type, agent, summary, detail, created_at
+                 FROM agent_events WHERE task_id = $1
+                 ORDER BY created_at DESC LIMIT $2",
+            )
+            .bind(tid)
+            .bind(limit)
+            .fetch_all(&self.pool)
+            .await?
+        } else {
+            sqlx::query_as::<_, AgentEventRow>(
+                "SELECT id, task_id, event_type, agent, summary, detail, created_at
+                 FROM agent_events
+                 ORDER BY created_at DESC LIMIT $1",
+            )
+            .bind(limit)
+            .fetch_all(&self.pool)
+            .await?
+        };
+        Ok(rows)
+    }
+
+    pub async fn insert_agent_event(
+        &self,
+        task_id: Option<i64>,
+        event_type: &str,
+        agent: Option<&str>,
+        summary: &str,
+        detail: Option<&Value>,
+    ) -> Result<()> {
+        sqlx::query(
+            "INSERT INTO agent_events (task_id, event_type, agent, summary, detail)
+             VALUES ($1, $2, $3, $4, $5)",
+        )
+        .bind(task_id)
+        .bind(event_type)
+        .bind(agent)
+        .bind(summary)
+        .bind(detail)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn get_agent_budgets(&self) -> Result<Vec<AgentBudgetRow>> {
+        let rows = sqlx::query_as::<_, AgentBudgetRow>(
+            "SELECT id, period, budget_usd::FLOAT8 AS budget_usd, spent_usd::FLOAT8 AS spent_usd,
+                    tokens_used, period_start, updated_at
+             FROM agent_budgets ORDER BY id",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows)
+    }
+
+    pub async fn update_agent_budget(&self, id: i64, budget_usd: f64) -> Result<()> {
+        sqlx::query(
+            "UPDATE agent_budgets SET budget_usd = $1, updated_at = NOW() WHERE id = $2",
+        )
+        .bind(budget_usd)
+        .bind(id)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
     // --- Verification ---
 
     pub async fn get_unverified_primes(&self, limit: i64) -> Result<Vec<PrimeDetail>> {
@@ -677,4 +866,145 @@ pub struct JobBlockSummary {
     pub failed: i64,
     pub total_tested: i64,
     pub total_found: i64,
+}
+
+// --- Row types for agent management ---
+
+#[derive(Serialize, sqlx::FromRow)]
+pub struct AgentTaskRow {
+    pub id: i64,
+    pub title: String,
+    pub description: String,
+    pub status: String,
+    pub priority: String,
+    pub agent_model: Option<String>,
+    pub assigned_agent: Option<String>,
+    pub source: String,
+    pub result: Option<Value>,
+    pub tokens_used: i64,
+    pub cost_usd: f64,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub started_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub completed_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub parent_task_id: Option<i64>,
+}
+
+#[derive(Serialize, sqlx::FromRow)]
+pub struct AgentEventRow {
+    pub id: i64,
+    pub task_id: Option<i64>,
+    pub event_type: String,
+    pub agent: Option<String>,
+    pub summary: String,
+    pub detail: Option<Value>,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+}
+
+#[derive(Serialize, sqlx::FromRow)]
+pub struct AgentBudgetRow {
+    pub id: i64,
+    pub period: String,
+    pub budget_usd: f64,
+    pub spent_usd: f64,
+    pub tokens_used: i64,
+    pub period_start: chrono::DateTime<chrono::Utc>,
+    pub updated_at: chrono::DateTime<chrono::Utc>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn safe_sort_column_whitelists_known_columns() {
+        let cases = vec![
+            ("digits", "digits"),
+            ("form", "form"),
+            ("expression", "expression"),
+            ("found_at", "found_at"),
+        ];
+        for (input, expected) in cases {
+            let filter = PrimeFilter {
+                sort_by: Some(input.into()),
+                ..Default::default()
+            };
+            assert_eq!(filter.safe_sort_column(), expected);
+        }
+    }
+
+    #[test]
+    fn safe_sort_column_defaults_to_id_for_unknown() {
+        let unknown_inputs = vec![
+            "id",
+            "ID",
+            "unknown",
+            "'; DROP TABLE primes; --",
+            "",
+            "proof_method",
+            "search_params",
+        ];
+        for input in unknown_inputs {
+            let filter = PrimeFilter {
+                sort_by: Some(input.into()),
+                ..Default::default()
+            };
+            assert_eq!(
+                filter.safe_sort_column(),
+                "id",
+                "Unknown sort_by '{}' should default to 'id'",
+                input
+            );
+        }
+    }
+
+    #[test]
+    fn safe_sort_column_defaults_to_id_when_none() {
+        let filter = PrimeFilter::default();
+        assert_eq!(filter.safe_sort_column(), "id");
+    }
+
+    #[test]
+    fn safe_sort_dir_accepts_asc() {
+        for input in ["asc", "ASC"] {
+            let filter = PrimeFilter {
+                sort_dir: Some(input.into()),
+                ..Default::default()
+            };
+            assert_eq!(filter.safe_sort_dir(), "ASC");
+        }
+    }
+
+    #[test]
+    fn safe_sort_dir_defaults_to_desc() {
+        let unknown_inputs = vec!["desc", "DESC", "Asc", "random", "'; DROP TABLE--", ""];
+        for input in unknown_inputs {
+            let filter = PrimeFilter {
+                sort_dir: Some(input.into()),
+                ..Default::default()
+            };
+            assert_eq!(
+                filter.safe_sort_dir(),
+                "DESC",
+                "Unknown sort_dir '{}' should default to 'DESC'",
+                input
+            );
+        }
+    }
+
+    #[test]
+    fn safe_sort_dir_defaults_to_desc_when_none() {
+        let filter = PrimeFilter::default();
+        assert_eq!(filter.safe_sort_dir(), "DESC");
+    }
+
+    #[test]
+    fn prime_filter_default_is_empty() {
+        let filter = PrimeFilter::default();
+        assert!(filter.form.is_none());
+        assert!(filter.search.is_none());
+        assert!(filter.min_digits.is_none());
+        assert!(filter.max_digits.is_none());
+        assert!(filter.sort_by.is_none());
+        assert!(filter.sort_dir.is_none());
+    }
 }

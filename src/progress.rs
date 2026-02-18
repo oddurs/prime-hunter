@@ -56,3 +56,69 @@ impl Progress {
         self.shutdown.store(true, Ordering::Relaxed);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn counter_starts_at_zero() {
+        let p = Progress::new();
+        assert_eq!(p.tested.load(Ordering::Relaxed), 0);
+        assert_eq!(p.found.load(Ordering::Relaxed), 0);
+        assert_eq!(*p.current.lock().unwrap(), "");
+    }
+
+    #[test]
+    fn increment_updates_value() {
+        let p = Progress::new();
+        p.tested.fetch_add(10, Ordering::Relaxed);
+        p.found.fetch_add(3, Ordering::Relaxed);
+        assert_eq!(p.tested.load(Ordering::Relaxed), 10);
+        assert_eq!(p.found.load(Ordering::Relaxed), 3);
+    }
+
+    #[test]
+    fn current_string_updates() {
+        let p = Progress::new();
+        *p.current.lock().unwrap() = "42! (~51 digits)".to_string();
+        assert_eq!(*p.current.lock().unwrap(), "42! (~51 digits)");
+    }
+
+    #[test]
+    fn concurrent_increments_are_accurate() {
+        let p = Progress::new();
+        let threads: Vec<_> = (0..8)
+            .map(|_| {
+                let p = Arc::clone(&p);
+                thread::spawn(move || {
+                    for _ in 0..1000 {
+                        p.tested.fetch_add(1, Ordering::Relaxed);
+                    }
+                })
+            })
+            .collect();
+        for t in threads {
+            t.join().unwrap();
+        }
+        assert_eq!(p.tested.load(Ordering::Relaxed), 8000);
+    }
+
+    #[test]
+    fn stop_sets_shutdown_flag() {
+        let p = Progress::new();
+        assert!(!p.shutdown.load(Ordering::Relaxed));
+        p.stop();
+        assert!(p.shutdown.load(Ordering::Relaxed));
+    }
+
+    #[test]
+    fn print_status_does_not_panic() {
+        let p = Progress::new();
+        p.tested.fetch_add(100, Ordering::Relaxed);
+        p.found.fetch_add(5, Ordering::Relaxed);
+        *p.current.lock().unwrap() = "test".to_string();
+        // Just verify it doesn't panic — output goes to stderr
+        p.print_status();
+    }
+}

@@ -287,3 +287,198 @@ pub fn search(
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn factorial_sieve_advance_produces_correct_residues() {
+        // Test that advancing from 1! to n! gives correct n! mod p.
+        // Use small primes where we can verify manually.
+        let sieve_primes: Vec<u64> = vec![7, 11, 13];
+        let mut fsieve = FactorialSieve::new(&sieve_primes, 1);
+
+        // After new(primes, 1): residues are 1! mod p = 1 for all p > 1
+        for &(p, fm) in &fsieve.entries {
+            assert_eq!(fm, 1, "1! mod {} should be 1", p);
+        }
+
+        // Advance to 2! = 2
+        fsieve.advance(2);
+        for &(p, fm) in &fsieve.entries {
+            assert_eq!(fm, 2 % p, "2! mod {} should be {}", p, 2 % p);
+        }
+
+        // Advance to 3! = 6
+        fsieve.advance(3);
+        for &(p, fm) in &fsieve.entries {
+            assert_eq!(fm, 6 % p, "3! mod {} should be {}", p, 6 % p);
+        }
+
+        // Advance to 4! = 24
+        fsieve.advance(4);
+        for &(p, fm) in &fsieve.entries {
+            assert_eq!(fm, 24 % p, "4! mod {} should be {}", p, 24 % p);
+        }
+
+        // Advance to 5! = 120
+        fsieve.advance(5);
+        for &(p, fm) in &fsieve.entries {
+            assert_eq!(fm, 120 % p, "5! mod {} should be {}", p, 120 % p);
+        }
+
+        // Advance to 6! = 720
+        fsieve.advance(6);
+        for &(p, fm) in &fsieve.entries {
+            assert_eq!(fm, 720 % p, "6! mod {} should be {}", p, 720 % p);
+        }
+    }
+
+    #[test]
+    fn factorial_sieve_removes_primes_when_p_divides_n() {
+        // When n >= p, then p | n!, so the residue becomes 0 and the entry is removed
+        let sieve_primes: Vec<u64> = vec![3, 5, 7, 11];
+        let mut fsieve = FactorialSieve::new(&sieve_primes, 1);
+        assert_eq!(fsieve.entries.len(), 4);
+
+        // Advance to 3: p=3 divides 3!, so it should be removed
+        fsieve.advance(2);
+        fsieve.advance(3);
+        assert_eq!(
+            fsieve.entries.len(),
+            3,
+            "p=3 should be removed after advancing to n=3"
+        );
+
+        // Advance to 5: p=5 divides 5!
+        fsieve.advance(4);
+        fsieve.advance(5);
+        assert_eq!(fsieve.entries.len(), 2, "p=5 should be removed after n=5");
+    }
+
+    #[test]
+    fn factorial_sieve_check_composites_correct() {
+        // 4! = 24. 4!+1 = 25 = 5*5 (composite), 4!-1 = 23 (prime)
+        // For p=5: 24 mod 5 = 4 = p-1, so plus_composite = true
+        // For p=23: 24 mod 23 = 1, so minus_composite = true
+        let sieve_primes: Vec<u64> = vec![5, 23, 29];
+        let mut fsieve = FactorialSieve::new(&sieve_primes, 1);
+        for n in 2..=4 {
+            fsieve.advance(n);
+        }
+        let (plus, minus) = fsieve.check_composites();
+        assert!(plus, "4!+1=25 should be detected as composite (5|25)");
+        assert!(minus, "4!-1=23 should be detected as composite (23|23)");
+    }
+
+    #[test]
+    fn factorial_sieve_known_primes_survive() {
+        // Known factorial primes (n!+1): n = 1, 2, 3, 11, 27, 37, 41
+        // Known factorial primes (n!-1): n = 3, 4, 6, 7, 12, 14
+        // The sieve should NOT eliminate these candidates
+        let sieve_primes = sieve::generate_primes(10000);
+        let known_plus: Vec<u64> = vec![1, 2, 3, 11, 27, 37, 41];
+        let known_minus: Vec<u64> = vec![3, 4, 6, 7, 12, 14];
+
+        // For each known factorial prime, verify the sieve does not eliminate it
+        for &n in &known_plus {
+            let mut fsieve = FactorialSieve::new(&sieve_primes, 1);
+            for i in 2..=n {
+                fsieve.advance(i);
+            }
+            // Sieve is only safe when n! > sieve_limit
+            // For small n, n! may be smaller than sieve primes, so skip the sieve check
+            if n >= 14 {
+                let (plus_composite, _) = fsieve.check_composites();
+                assert!(
+                    !plus_composite,
+                    "{}!+1 is prime but sieve marked plus_composite",
+                    n
+                );
+            }
+        }
+
+        for &n in &known_minus {
+            let mut fsieve = FactorialSieve::new(&sieve_primes, 1);
+            for i in 2..=n {
+                fsieve.advance(i);
+            }
+            if n >= 14 {
+                let (_, minus_composite) = fsieve.check_composites();
+                assert!(
+                    !minus_composite,
+                    "{}!-1 is prime but sieve marked minus_composite",
+                    n
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn factorial_values_correct() {
+        // Verify incremental factorial computation matches GMP's factorial
+        let mut factorial = Integer::from(1u32);
+        for n in 2..=20u32 {
+            factorial *= n;
+            let expected = Integer::from(Integer::factorial(n));
+            assert_eq!(factorial, expected, "Incremental {}! doesn't match GMP", n);
+        }
+    }
+
+    #[test]
+    fn factorial_known_primes_pass_mr() {
+        // Verify that known factorial primes actually pass MR
+        let cases: Vec<(u32, &str)> = vec![
+            (1, "+"),  // 1!+1 = 2
+            (2, "+"),  // 2!+1 = 3
+            (3, "+"),  // 3!+1 = 7
+            (3, "-"),  // 3!-1 = 5
+            (4, "-"),  // 4!-1 = 23
+            (6, "-"),  // 6!-1 = 719
+            (7, "-"),  // 7!-1 = 5039
+            (11, "+"), // 11!+1 = 39916801
+            (12, "-"), // 12!-1 = 479001599
+        ];
+        for (n, sign) in cases {
+            let f = Integer::from(Integer::factorial(n));
+            let candidate = if sign == "+" {
+                Integer::from(&f + 1u32)
+            } else {
+                Integer::from(&f - 1u32)
+            };
+            let result = mr_screened_test(&candidate, 25);
+            assert_ne!(
+                result,
+                IsPrime::No,
+                "{}!{}1 = {} should be prime",
+                n,
+                sign,
+                candidate
+            );
+        }
+    }
+
+    #[test]
+    fn factorial_known_composites_fail_mr() {
+        // 4!+1 = 25 = 5^2, 5!+1 = 121 = 11^2
+        let composites: Vec<(u32, &str)> = vec![(4, "+"), (5, "+"), (5, "-"), (8, "+"), (8, "-")];
+        for (n, sign) in composites {
+            let f = Integer::from(Integer::factorial(n));
+            let candidate = if sign == "+" {
+                Integer::from(&f + 1u32)
+            } else {
+                Integer::from(&f - 1u32)
+            };
+            let result = mr_screened_test(&candidate, 25);
+            assert_eq!(
+                result,
+                IsPrime::No,
+                "{}!{}1 = {} should be composite",
+                n,
+                sign,
+                candidate
+            );
+        }
+    }
+}

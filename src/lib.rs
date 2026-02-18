@@ -85,3 +85,136 @@ pub fn estimate_digits(n: &Integer) -> u64 {
 pub fn exact_digits(n: &Integer) -> u64 {
     n.to_string_radix(10).len() as u64
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rug::integer::IsPrime;
+    use rug::ops::Pow;
+
+    #[test]
+    fn has_small_factor_returns_false_for_small_primes() {
+        // Each small prime in our table should NOT be flagged as composite
+        for &p in &SMALL_PRIMES {
+            let n = Integer::from(p);
+            assert!(
+                !has_small_factor(&n),
+                "has_small_factor incorrectly flagged prime {} as composite",
+                p
+            );
+        }
+    }
+
+    #[test]
+    fn has_small_factor_returns_true_for_composites() {
+        let composites: &[u32] = &[4, 6, 8, 9, 10, 12, 15, 21, 25, 35, 49, 100, 1000];
+        for &c in composites {
+            let n = Integer::from(c);
+            assert!(
+                has_small_factor(&n),
+                "has_small_factor missed composite {}",
+                c
+            );
+        }
+    }
+
+    #[test]
+    fn has_small_factor_false_for_primes_above_table() {
+        // Primes larger than 311 (our table max) that have no small factors
+        let large_primes: &[u32] = &[313, 317, 331, 337, 347, 349, 353, 359, 367, 373];
+        for &p in large_primes {
+            let n = Integer::from(p);
+            assert!(
+                !has_small_factor(&n),
+                "has_small_factor incorrectly flagged prime {} as composite",
+                p
+            );
+        }
+    }
+
+    #[test]
+    fn has_small_factor_composite_product_of_large_primes() {
+        // 313 * 317 = 99221 — both factors are outside our small primes table
+        let n = Integer::from(313u32 * 317);
+        assert!(
+            !has_small_factor(&n),
+            "has_small_factor should miss composites with only large factors"
+        );
+    }
+
+    #[test]
+    fn mr_screened_test_known_primes_pass() {
+        let primes: &[u32] = &[2, 3, 5, 7, 11, 13, 101, 1009, 10007];
+        for &p in primes {
+            let n = Integer::from(p);
+            let result = mr_screened_test(&n, 25);
+            assert_ne!(result, IsPrime::No, "MR rejected known prime {}", p);
+        }
+    }
+
+    #[test]
+    fn mr_screened_test_known_composites_fail() {
+        let composites: &[u32] = &[4, 6, 8, 9, 15, 21, 25, 100, 1001, 10000];
+        for &c in composites {
+            let n = Integer::from(c);
+            let result = mr_screened_test(&n, 25);
+            assert_eq!(result, IsPrime::No, "MR accepted composite {}", c);
+        }
+    }
+
+    #[test]
+    fn mr_screened_test_two_rounds_still_rejects_composites() {
+        // With mr_rounds <= 2, the pre-screen is skipped (goes straight to full test)
+        let composites: &[u32] = &[9, 15, 21, 25, 1001];
+        for &c in composites {
+            let n = Integer::from(c);
+            let result = mr_screened_test(&n, 2);
+            assert_eq!(result, IsPrime::No, "MR(2) accepted composite {}", c);
+        }
+    }
+
+    #[test]
+    fn estimate_digits_within_one_of_exact() {
+        // Test across a range of magnitudes
+        let values: Vec<Integer> = vec![
+            Integer::from(1u32),
+            Integer::from(9u32),
+            Integer::from(10u32),
+            Integer::from(99u32),
+            Integer::from(100u32),
+            Integer::from(999u32),
+            Integer::from(1000u32),
+            Integer::from(10u32).pow(50),
+            Integer::from(10u32).pow(100) - 1u32,
+            Integer::from(2u32).pow(1000),
+        ];
+        for v in &values {
+            let est = estimate_digits(v);
+            let exact = exact_digits(v);
+            assert!(
+                (est as i64 - exact as i64).abs() <= 1,
+                "estimate_digits({}) = {} but exact = {} (diff > 1)",
+                v,
+                est,
+                exact
+            );
+        }
+    }
+
+    #[test]
+    fn exact_digits_known_values() {
+        assert_eq!(exact_digits(&Integer::from(0u32)), 1);
+        assert_eq!(exact_digits(&Integer::from(1u32)), 1);
+        assert_eq!(exact_digits(&Integer::from(9u32)), 1);
+        assert_eq!(exact_digits(&Integer::from(10u32)), 2);
+        assert_eq!(exact_digits(&Integer::from(99u32)), 2);
+        assert_eq!(exact_digits(&Integer::from(100u32)), 3);
+        assert_eq!(exact_digits(&Integer::from(999u32)), 3);
+        assert_eq!(exact_digits(&Integer::from(1000u32)), 4);
+    }
+
+    #[test]
+    fn estimate_digits_zero() {
+        assert_eq!(estimate_digits(&Integer::from(0u32)), 1);
+    }
+}
