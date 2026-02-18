@@ -506,7 +506,7 @@ export default function Dashboard() {
         {/* Server nodes */}
         {(() => {
           const filteredNodes = hostNodes.filter(
-            (n) => n.workers.length > 0 || n.deployments.length > 0 || !n.isCoordinator
+            (n) => n.workers.length > 0 || n.deployments.length > 0 || (n.isCoordinator && n.metrics)
           );
           return filteredNodes.length === 0 ? (
             <Card className="py-8">
