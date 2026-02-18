@@ -504,8 +504,8 @@ impl Database {
                 COUNT(*) FILTER (WHERE status = 'claimed') AS claimed,
                 COUNT(*) FILTER (WHERE status = 'completed') AS completed,
                 COUNT(*) FILTER (WHERE status = 'failed') AS failed,
-                COALESCE(SUM(tested) FILTER (WHERE status = 'completed'), 0) AS total_tested,
-                COALESCE(SUM(found) FILTER (WHERE status = 'completed'), 0) AS total_found
+                COALESCE(SUM(tested) FILTER (WHERE status = 'completed'), 0)::BIGINT AS total_tested,
+                COALESCE(SUM(found) FILTER (WHERE status = 'completed'), 0)::BIGINT AS total_found
              FROM work_blocks WHERE search_job_id = $1",
         )
         .bind(job_id)
@@ -527,7 +527,7 @@ impl Database {
                         source, result, tokens_used, cost_usd::FLOAT8 AS cost_usd,
                         created_at, started_at, completed_at, parent_task_id,
                         max_cost_usd::FLOAT8 AS max_cost_usd, permission_level,
-                        template_name, on_child_failure
+                        template_name, on_child_failure, role_name
                  FROM agent_tasks WHERE status = $1
                  ORDER BY created_at DESC LIMIT $2",
             )
@@ -541,7 +541,7 @@ impl Database {
                         source, result, tokens_used, cost_usd::FLOAT8 AS cost_usd,
                         created_at, started_at, completed_at, parent_task_id,
                         max_cost_usd::FLOAT8 AS max_cost_usd, permission_level,
-                        template_name, on_child_failure
+                        template_name, on_child_failure, role_name
                  FROM agent_tasks
                  ORDER BY created_at DESC LIMIT $1",
             )
@@ -558,7 +558,7 @@ impl Database {
                     source, result, tokens_used, cost_usd::FLOAT8 AS cost_usd,
                     created_at, started_at, completed_at, parent_task_id,
                     max_cost_usd::FLOAT8 AS max_cost_usd, permission_level,
-                    template_name, on_child_failure
+                    template_name, on_child_failure, role_name
              FROM agent_tasks WHERE id = $1",
         )
         .bind(id)
@@ -576,15 +576,16 @@ impl Database {
         source: &str,
         max_cost_usd: Option<f64>,
         permission_level: i32,
+        role_name: Option<&str>,
     ) -> Result<AgentTaskRow> {
         let row = sqlx::query_as::<_, AgentTaskRow>(
-            "INSERT INTO agent_tasks (title, description, priority, agent_model, source, max_cost_usd, permission_level)
-             VALUES ($1, $2, $3, $4, $5, $6, $7)
+            "INSERT INTO agent_tasks (title, description, priority, agent_model, source, max_cost_usd, permission_level, role_name)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
              RETURNING id, title, description, status, priority, agent_model, assigned_agent,
                        source, result, tokens_used, cost_usd::FLOAT8 AS cost_usd,
                        created_at, started_at, completed_at, parent_task_id,
                        max_cost_usd::FLOAT8 AS max_cost_usd, permission_level,
-                       template_name, on_child_failure",
+                       template_name, on_child_failure, role_name",
         )
         .bind(title)
         .bind(description)
@@ -593,6 +594,7 @@ impl Database {
         .bind(source)
         .bind(max_cost_usd)
         .bind(permission_level)
+        .bind(role_name)
         .fetch_one(&self.pool)
         .await?;
         Ok(row)
@@ -765,7 +767,8 @@ impl Database {
                       agent_tasks.parent_task_id,
                       agent_tasks.max_cost_usd::FLOAT8 AS max_cost_usd,
                       agent_tasks.permission_level,
-                      agent_tasks.template_name, agent_tasks.on_child_failure",
+                      agent_tasks.template_name, agent_tasks.on_child_failure,
+                      agent_tasks.role_name",
         )
         .bind(assigned_agent)
         .fetch_optional(&self.pool)
@@ -874,7 +877,7 @@ impl Database {
     /// Retrieve all agent workflow templates, ordered by name.
     pub async fn get_all_templates(&self) -> Result<Vec<AgentTemplateRow>> {
         let rows = sqlx::query_as::<_, AgentTemplateRow>(
-            "SELECT id, name, description, steps, created_at
+            "SELECT id, name, description, steps, created_at, role_name
              FROM agent_templates ORDER BY name",
         )
         .fetch_all(&self.pool)
@@ -885,7 +888,7 @@ impl Database {
     /// Retrieve a single template by name.
     pub async fn get_template_by_name(&self, name: &str) -> Result<Option<AgentTemplateRow>> {
         let row = sqlx::query_as::<_, AgentTemplateRow>(
-            "SELECT id, name, description, steps, created_at
+            "SELECT id, name, description, steps, created_at, role_name
              FROM agent_templates WHERE name = $1",
         )
         .bind(name)
@@ -909,6 +912,7 @@ impl Database {
         priority: &str,
         max_cost_usd: Option<f64>,
         permission_level: i32,
+        role_name: Option<&str>,
     ) -> Result<i64> {
         let template = self
             .get_template_by_name(template_name)
@@ -925,8 +929,8 @@ impl Database {
         // Insert parent task
         let parent_id: i64 = sqlx::query_scalar(
             "INSERT INTO agent_tasks (title, description, priority, source, max_cost_usd,
-                                      permission_level, template_name, on_child_failure)
-             VALUES ($1, $2, $3, 'manual', $4, $5, $6, 'fail')
+                                      permission_level, template_name, on_child_failure, role_name)
+             VALUES ($1, $2, $3, 'manual', $4, $5, $6, 'fail', $7)
              RETURNING id",
         )
         .bind(parent_title)
@@ -935,6 +939,7 @@ impl Database {
         .bind(max_cost_usd)
         .bind(permission_level)
         .bind(template_name)
+        .bind(role_name)
         .fetch_one(&mut *tx)
         .await?;
 
@@ -962,8 +967,8 @@ impl Database {
 
             let child_id: i64 = sqlx::query_scalar(
                 "INSERT INTO agent_tasks (title, description, priority, source, parent_task_id,
-                                          permission_level, template_name)
-                 VALUES ($1, $2, $3, 'automated', $4, $5, $6)
+                                          permission_level, template_name, role_name)
+                 VALUES ($1, $2, $3, 'automated', $4, $5, $6, $7)
                  RETURNING id",
             )
             .bind(&child_title)
@@ -972,6 +977,7 @@ impl Database {
             .bind(parent_id)
             .bind(child_level)
             .bind(template_name)
+            .bind(role_name)
             .fetch_one(&mut *tx)
             .await?;
 
@@ -1066,7 +1072,7 @@ impl Database {
                     source, result, tokens_used, cost_usd::FLOAT8 AS cost_usd,
                     created_at, started_at, completed_at, parent_task_id,
                     max_cost_usd::FLOAT8 AS max_cost_usd, permission_level,
-                    template_name, on_child_failure
+                    template_name, on_child_failure, role_name
              FROM agent_tasks
              WHERE parent_task_id = $1
              ORDER BY id",
@@ -1304,7 +1310,7 @@ impl Database {
                     source, result, tokens_used, cost_usd::FLOAT8 AS cost_usd,
                     created_at, started_at, completed_at, parent_task_id,
                     max_cost_usd::FLOAT8 AS max_cost_usd, permission_level,
-                    template_name, on_child_failure
+                    template_name, on_child_failure, role_name
              FROM agent_tasks
              WHERE parent_task_id = $1 AND id != $2
              ORDER BY created_at DESC LIMIT 10",
@@ -1327,13 +1333,58 @@ impl Database {
                     source, result, tokens_used, cost_usd::FLOAT8 AS cost_usd,
                     created_at, started_at, completed_at, parent_task_id,
                     max_cost_usd::FLOAT8 AS max_cost_usd, permission_level,
-                    template_name, on_child_failure
+                    template_name, on_child_failure, role_name
              FROM agent_tasks
              WHERE title = $1 AND id != $2 AND status IN ('failed', 'cancelled')
              ORDER BY created_at DESC LIMIT 5",
         )
         .bind(title)
         .bind(exclude_id)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows)
+    }
+
+    // --- Agent roles ---
+
+    /// Retrieve all agent roles, ordered by name.
+    pub async fn get_all_roles(&self) -> Result<Vec<AgentRoleRow>> {
+        let rows = sqlx::query_as::<_, AgentRoleRow>(
+            "SELECT id, name, description, domains, default_permission_level, default_model,
+                    system_prompt, default_max_cost_usd::FLOAT8 AS default_max_cost_usd,
+                    created_at, updated_at
+             FROM agent_roles ORDER BY name",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows)
+    }
+
+    /// Retrieve a single role by name.
+    pub async fn get_role_by_name(&self, name: &str) -> Result<Option<AgentRoleRow>> {
+        let row = sqlx::query_as::<_, AgentRoleRow>(
+            "SELECT id, name, description, domains, default_permission_level, default_model,
+                    system_prompt, default_max_cost_usd::FLOAT8 AS default_max_cost_usd,
+                    created_at, updated_at
+             FROM agent_roles WHERE name = $1",
+        )
+        .bind(name)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row)
+    }
+
+    /// Get templates associated with a role via the junction table.
+    /// Returns templates linked through `agent_role_templates`.
+    pub async fn get_role_templates(&self, role_name: &str) -> Result<Vec<AgentTemplateRow>> {
+        let rows = sqlx::query_as::<_, AgentTemplateRow>(
+            "SELECT t.id, t.name, t.description, t.steps, t.created_at, t.role_name
+             FROM agent_templates t
+             JOIN agent_role_templates rt ON rt.template_name = t.name
+             WHERE rt.role_name = $1
+             ORDER BY t.name",
+        )
+        .bind(role_name)
         .fetch_all(&self.pool)
         .await?;
         Ok(rows)
@@ -1790,6 +1841,7 @@ pub struct AgentTaskRow {
     pub permission_level: i32,
     pub template_name: Option<String>,
     pub on_child_failure: String,
+    pub role_name: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, sqlx::FromRow)]
@@ -1799,6 +1851,7 @@ pub struct AgentTemplateRow {
     pub description: String,
     pub steps: Value,
     pub created_at: chrono::DateTime<chrono::Utc>,
+    pub role_name: Option<String>,
 }
 
 #[derive(Serialize, sqlx::FromRow)]
@@ -1836,6 +1889,23 @@ pub struct AgentMemoryRow {
     pub value: String,
     pub category: String,
     pub created_by_task: Option<i64>,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub updated_at: chrono::DateTime<chrono::Utc>,
+}
+
+/// A named agent role that bundles domain context, permissions, default model,
+/// and associated templates. Roles like "engine", "frontend", "ops", and "research"
+/// provide domain-specific defaults when creating agent tasks.
+#[derive(Serialize, sqlx::FromRow)]
+pub struct AgentRoleRow {
+    pub id: i64,
+    pub name: String,
+    pub description: String,
+    pub domains: Value,
+    pub default_permission_level: i32,
+    pub default_model: String,
+    pub system_prompt: Option<String>,
+    pub default_max_cost_usd: Option<f64>,
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub updated_at: chrono::DateTime<chrono::Utc>,
 }
