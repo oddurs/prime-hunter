@@ -44,11 +44,32 @@
   }
   .form-tag .count { color: #58a6ff; font-weight: 600; margin-left: 0.3rem; }
 
+  .filter-bar {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 0.75rem; margin-bottom: 1rem;
+  }
+  .filter-bar input, .filter-bar select {
+    background: #161b22; border: 1px solid #30363d; color: #c9d1d9;
+    border-radius: 6px; padding: 0.4rem 0.6rem; font-size: 0.8rem;
+  }
+  .filter-bar input { flex: 1; min-width: 180px; max-width: 280px; }
+  .filter-bar input::placeholder { color: #484f58; }
+  .filter-bar select { min-width: 140px; }
+  .filter-bar button {
+    background: #21262d; border: 1px solid #30363d; color: #c9d1d9; border-radius: 6px;
+    padding: 0.4rem 0.8rem; cursor: pointer; font-size: 0.8rem;
+  }
+  .filter-bar button:hover { background: #30363d; }
+  .filter-bar .clear-btn { border: none; background: none; color: #8b949e; cursor: pointer; font-size: 0.8rem; }
+  .filter-bar .clear-btn:hover { color: #c9d1d9; }
+
   table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
   thead th {
     text-align: left; padding: 0.5rem 0.75rem; border-bottom: 1px solid #21262d;
     color: #8b949e; font-weight: 500; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em;
+    cursor: pointer; user-select: none;
   }
+  thead th:hover { color: #c9d1d9; }
+  thead th .sort-indicator { font-size: 0.7rem; margin-left: 0.3rem; }
   tbody td { padding: 0.5rem 0.75rem; border-bottom: 1px solid #161b22; }
   tbody tr:hover { background: #161b22; }
   .expression { font-family: "SF Mono", SFMono-Regular, Consolas, "Liberation Mono", Menlo, monospace; color: #58a6ff; }
@@ -101,14 +122,21 @@
   </div>
 </div>
 
-<div class="section-title">Recent primes</div>
+<div class="filter-bar">
+  <input type="text" id="searchInput" placeholder="Search expressions...">
+  <select id="formSelect"><option value="">All forms</option></select>
+  <button onclick="exportCSV()">Export CSV</button>
+  <span class="clear-btn" id="clearBtn" style="display:none" onclick="clearFilters()">Clear filters</span>
+</div>
+
+<div class="section-title" id="sectionTitle">Recent primes</div>
 <table>
   <thead>
     <tr>
-      <th>Expression</th>
-      <th>Form</th>
-      <th>Digits</th>
-      <th>Found</th>
+      <th onclick="toggleSort('expression')">Expression<span class="sort-indicator" id="sort-expression"></span></th>
+      <th onclick="toggleSort('form')">Form<span class="sort-indicator" id="sort-form"></span></th>
+      <th onclick="toggleSort('digits')">Digits<span class="sort-indicator" id="sort-digits"></span></th>
+      <th onclick="toggleSort('found_at')">Found<span class="sort-indicator" id="sort-found_at"></span></th>
     </tr>
   </thead>
   <tbody id="primesBody">
@@ -122,11 +150,18 @@
 </div>
 
 <script>
-const LIMIT = 50;
-let offset = 0;
-let total = 0;
-let ws = null;
-let reconnectTimer = null;
+var LIMIT = 50;
+var offset = 0;
+var total = 0;
+var ws = null;
+var reconnectTimer = null;
+var sortBy = '';
+var sortDir = '';
+var filterForm = '';
+var filterSearch = '';
+var searchDebounceTimer = null;
+var hasActiveFilter = false;
+var knownForms = [];
 
 function formatTime(iso) {
   if (!iso) return '-';
@@ -138,10 +173,93 @@ function numberWithCommas(x) {
 }
 
 function escapeHtml(s) {
-  const d = document.createElement('div');
+  var d = document.createElement('div');
   d.textContent = s;
   return d.innerHTML;
 }
+
+function buildFilterMsg() {
+  var msg = { action: 'get_primes', offset: offset, limit: LIMIT };
+  if (filterForm) msg.form = filterForm;
+  if (filterSearch) msg.search = filterSearch;
+  if (sortBy) { msg.sort_by = sortBy; msg.sort_dir = sortDir || 'desc'; }
+  return msg;
+}
+
+function isFilterActive() {
+  return !!(filterForm || filterSearch || sortBy);
+}
+
+function updateFilterUI() {
+  hasActiveFilter = isFilterActive();
+  document.getElementById('clearBtn').style.display = hasActiveFilter ? 'inline' : 'none';
+  document.getElementById('sectionTitle').textContent = hasActiveFilter ? 'Filtered primes' : 'Recent primes';
+  // Update sort indicators
+  ['expression','form','digits','found_at'].forEach(function(col) {
+    var el = document.getElementById('sort-' + col);
+    if (sortBy === col) {
+      el.textContent = sortDir === 'asc' ? ' \u2191' : ' \u2193';
+    } else {
+      el.textContent = '';
+    }
+  });
+}
+
+function applyFilter() {
+  offset = 0;
+  updateFilterUI();
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify(buildFilterMsg()));
+  }
+}
+
+function toggleSort(col) {
+  if (sortBy === col) {
+    if (sortDir === 'asc') {
+      sortDir = 'desc';
+    } else {
+      sortBy = '';
+      sortDir = '';
+    }
+  } else {
+    sortBy = col;
+    sortDir = 'asc';
+  }
+  applyFilter();
+}
+
+function clearFilters() {
+  document.getElementById('searchInput').value = '';
+  document.getElementById('formSelect').value = '';
+  filterSearch = '';
+  filterForm = '';
+  sortBy = '';
+  sortDir = '';
+  applyFilter();
+}
+
+function exportCSV() {
+  var params = new URLSearchParams();
+  params.set('format', 'csv');
+  if (filterForm) params.set('form', filterForm);
+  if (filterSearch) params.set('search', filterSearch);
+  if (sortBy) { params.set('sort_by', sortBy); params.set('sort_dir', sortDir || 'desc'); }
+  window.open('/api/export?' + params.toString(), '_blank');
+}
+
+document.getElementById('searchInput').addEventListener('input', function() {
+  clearTimeout(searchDebounceTimer);
+  var val = this.value;
+  searchDebounceTimer = setTimeout(function() {
+    filterSearch = val;
+    applyFilter();
+  }, 300);
+});
+
+document.getElementById('formSelect').addEventListener('change', function() {
+  filterForm = this.value;
+  applyFilter();
+});
 
 function renderStats(stats) {
   document.getElementById('totalPrimes').textContent = numberWithCommas(stats.total);
@@ -152,42 +270,57 @@ function renderStats(stats) {
     document.getElementById('largestDigits').textContent = '-';
     document.getElementById('largestExpr').textContent = '';
   }
-  const tags = document.getElementById('formTags');
+  var tags = document.getElementById('formTags');
   if (stats.by_form.length === 0) {
     tags.textContent = '-';
   } else {
-    tags.innerHTML = stats.by_form.map(f =>
-      '<span class="form-tag">' + escapeHtml(f.form) + '<span class="count">' + f.count + '</span></span>'
-    ).join('');
+    tags.innerHTML = stats.by_form.map(function(f) {
+      return '<span class="form-tag">' + escapeHtml(f.form) + '<span class="count">' + f.count + '</span></span>';
+    }).join('');
+  }
+  // Populate form select if new forms appear
+  var newForms = stats.by_form.map(function(f) { return f.form; });
+  if (JSON.stringify(newForms) !== JSON.stringify(knownForms)) {
+    knownForms = newForms;
+    var sel = document.getElementById('formSelect');
+    var current = sel.value;
+    sel.innerHTML = '<option value="">All forms</option>';
+    knownForms.forEach(function(form) {
+      var opt = document.createElement('option');
+      opt.value = form;
+      opt.textContent = form;
+      sel.appendChild(opt);
+    });
+    sel.value = current;
   }
 }
 
 function renderPrimes(data) {
   total = data.total;
   offset = data.offset;
-  const tbody = document.getElementById('primesBody');
+  var tbody = document.getElementById('primesBody');
   if (data.primes.length === 0) {
     tbody.innerHTML = '<tr><td colspan="4" class="empty">No primes found yet</td></tr>';
   } else {
-    tbody.innerHTML = data.primes.map(p =>
-      '<tr>' +
+    tbody.innerHTML = data.primes.map(function(p) {
+      return '<tr>' +
       '<td class="expression">' + escapeHtml(p.expression) + '</td>' +
       '<td><span class="form-badge">' + escapeHtml(p.form) + '</span></td>' +
       '<td>' + numberWithCommas(p.digits) + '</td>' +
       '<td>' + formatTime(p.found_at) + '</td>' +
-      '</tr>'
-    ).join('');
+      '</tr>';
+    }).join('');
   }
   updatePagination();
 }
 
 function renderStatus(data) {
-  const dot = document.getElementById('statusDot');
-  const text = document.getElementById('statusText');
+  var dot = document.getElementById('statusDot');
+  var text = document.getElementById('statusText');
   if (data.active && data.checkpoint) {
     dot.className = 'status-dot active';
-    const cp = data.checkpoint;
-    let detail = '';
+    var cp = data.checkpoint;
+    var detail = '';
     if (cp.type === 'Factorial') detail = 'Factorial search at n=' + cp.last_n;
     else if (cp.type === 'Palindromic') detail = 'Palindromic search at ' + cp.digit_count + ' digits';
     else if (cp.type === 'Kbn') detail = 'k*b^n search at n=' + cp.last_n;
@@ -200,8 +333,8 @@ function renderStatus(data) {
 }
 
 function updatePagination() {
-  const start = total === 0 ? 0 : offset + 1;
-  const end = Math.min(offset + LIMIT, total);
+  var start = total === 0 ? 0 : offset + 1;
+  var end = Math.min(offset + LIMIT, total);
   document.getElementById('pageInfo').textContent = start + '-' + end + ' of ' + numberWithCommas(total);
   document.getElementById('prevBtn').disabled = offset === 0;
   document.getElementById('nextBtn').disabled = offset + LIMIT >= total;
@@ -210,7 +343,7 @@ function updatePagination() {
 function prevPage() {
   offset = Math.max(0, offset - LIMIT);
   if (ws && ws.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify({ action: 'get_primes', offset: offset, limit: LIMIT }));
+    ws.send(JSON.stringify(buildFilterMsg()));
   }
 }
 
@@ -218,7 +351,7 @@ function nextPage() {
   if (offset + LIMIT < total) {
     offset += LIMIT;
     if (ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({ action: 'get_primes', offset: offset, limit: LIMIT }));
+      ws.send(JSON.stringify(buildFilterMsg()));
     }
   }
 }
@@ -229,7 +362,7 @@ function setConnected(ok) {
 }
 
 function connect() {
-  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  var proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
   ws = new WebSocket(proto + '//' + location.host + '/ws');
 
   ws.onopen = function() { setConnected(true); };
@@ -246,8 +379,10 @@ function connect() {
     var data = JSON.parse(e.data);
     if (data.type === 'update') {
       renderStats(data.stats);
-      renderPrimes(data.primes);
       renderStatus(data.status);
+      if (!hasActiveFilter) {
+        renderPrimes(data.primes);
+      }
     } else if (data.type === 'primes') {
       renderPrimes(data);
     }

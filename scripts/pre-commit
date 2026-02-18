@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+# Pre-commit hook for primehunt
+# Install: ln -sf ../../scripts/pre-commit .git/hooks/pre-commit
+
+set -euo pipefail
+
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+NC='\033[0m'
+
+pass() { echo -e "${GREEN}PASS${NC} $1"; }
+fail() { echo -e "${RED}FAIL${NC} $1"; exit 1; }
+
+# 1. Check Rust formatting
+echo "Running cargo fmt --check..."
+if cargo fmt -- --check 2>/dev/null; then
+    pass "cargo fmt"
+else
+    fail "cargo fmt -- run 'cargo fmt' to fix"
+fi
+
+# 2. Run Rust tests
+echo "Running cargo test..."
+if cargo test --quiet 2>/dev/null; then
+    pass "cargo test"
+else
+    fail "cargo test"
+fi
+
+# 3. Check frontend types (only if frontend files are staged)
+FRONTEND_STAGED=$(git diff --cached --name-only -- 'frontend/' 2>/dev/null || true)
+if [ -n "$FRONTEND_STAGED" ]; then
+    echo "Running frontend type check..."
+    if (cd frontend && npx tsc --noEmit 2>/dev/null); then
+        pass "tsc --noEmit"
+    else
+        fail "tsc --noEmit"
+    fi
+else
+    echo "No frontend files staged, skipping tsc"
+fi
+
+echo -e "\n${GREEN}All checks passed${NC}"

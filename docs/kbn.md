@@ -6,37 +6,37 @@ This family of prime forms is parameterized by a multiplier k, a base b, and an 
 
 | Form | Name | Condition |
 |---|---|---|
-| k * 2^n + 1 | **Proth prime** | k odd, k < 2^n |
-| k * 2^n - 1 | **Riesel prime** | k odd, k < 2^n |
-| 1 * 2^n - 1 | **Mersenne prime** | n must be prime |
-| 1 * 2^(2^m) + 1 | **Fermat prime** | only 5 known: F0..F4 |
-| b^(2^m) + 1 | **Generalized Fermat** | b > 2, b even |
+| $k \cdot 2^n + 1$ | **Proth prime** | $k$ odd, $k < 2^n$ |
+| $k \cdot 2^n - 1$ | **Riesel prime** | $k$ odd, $k < 2^n$ |
+| $1 \cdot 2^n - 1$ | **Mersenne prime** | $n$ must be prime |
+| $1 \cdot 2^{2^m} + 1$ | **Fermat prime** | only 5 known: $F_0 \ldots F_4$ |
+| $b^{2^m} + 1$ | **Generalized Fermat** | $b > 2$, $b$ even |
 
 ## Why these primes are computationally tractable
 
 The vast majority of the largest known primes are of this form. The reason is that specialized primality tests exist that are dramatically faster than general-purpose methods.
 
-### Proth's theorem (for k * 2^n + 1)
+### Proth's theorem (for $k \cdot 2^n + 1$)
 
-**Statement**: Let N = k * 2^n + 1 where k is odd and 2^n > k. If there exists an integer a such that:
+**Statement**: Let $N = k \cdot 2^n + 1$ where $k$ is odd and $2^n > k$. If there exists an integer $a$ such that:
 
-    a^((N-1)/2) = -1 (mod N)
+$$a^{(N-1)/2} \equiv -1 \pmod{N}$$
 
-then N is **proven** prime. This is deterministic, not probabilistic.
+then $N$ is **proven** prime. This is deterministic, not probabilistic.
 
-The test requires a single modular exponentiation: O(n) squarings mod N. Each squaring of a d-digit number costs O(d * log(d)) with FFT multiplication. Compare this to general-purpose primality proving (ECPP) at O(d^4) or worse.
+The test requires a single modular exponentiation: $O(n)$ squarings mod $N$. Each squaring of a $d$-digit number costs $O(d \cdot \log d)$ with FFT multiplication. Compare this to general-purpose primality proving (ECPP) at $O(d^4)$ or worse.
 
-In practice, small witnesses a = 2, 3, 5, ... are tried and one almost always works quickly.
+In practice, small witnesses $a = 2, 3, 5, \ldots$ are tried and one almost always works quickly.
 
-### Lucas-Lehmer-Riesel test (for k * 2^n - 1)
+### Lucas-Lehmer-Riesel test (for $k \cdot 2^n - 1$)
 
-For N = k * 2^n - 1 (k odd, k < 2^n), define a Lucas sequence:
+For $N = k \cdot 2^n - 1$ ($k$ odd, $k < 2^n$), define a Lucas sequence:
 
-    u_0 = f(k), u_{i+1} = u_i^2 - 2 (mod N)
+$$u_0 = f(k), \quad u_{i+1} = u_i^2 - 2 \pmod{N}$$
 
-N is prime if and only if u_{n-2} = 0 (mod N). This requires n - 2 squarings mod N, same complexity class as Proth's test.
+$N$ is prime if and only if $u_{n-2} = 0 \pmod{N}$. This requires $n - 2$ squarings mod $N$, same complexity class as Proth's test.
 
-The standard **Lucas-Lehmer test** for Mersenne primes (k = 1) is the special case with u_0 = 4.
+The standard **Lucas-Lehmer test** for Mersenne primes ($k = 1$) is the special case with $u_0 = 4$.
 
 ### Software
 
@@ -91,7 +91,7 @@ Attempting to prove 509,203 is the smallest **Riesel number** (a k where k * 2^n
 
 `primehunt kbn` uses GMP's `is_probably_prime(25)` (Miller-Rabin) rather than Proth's theorem or LLR. This means:
 
-- Results are **probabilistic** for large numbers (probability of false positive: < 4^-25)
+- Results are **probabilistic** for large numbers (probability of false positive: $< 4^{-25}$)
 - It works for **any** k, b, n combination, not just b = 2
 - It does **not** provide the speed advantages of specialized tests
 

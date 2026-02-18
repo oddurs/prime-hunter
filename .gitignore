@@ -1,4 +1,31 @@
+# Build artifacts
 /target
 *.db
 *.checkpoint
 *.checkpoint.tmp
+
+# Environment
+.env
+.env.*
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor / IDE
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
+
+# Dev tools
+.dev/
+.claude/
+
+# Node
+frontend/node_modules/
+frontend/.next/
+
+# Logs
+*.log

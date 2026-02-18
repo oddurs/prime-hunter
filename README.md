@@ -30,6 +30,42 @@ cargo build --release
 
 The binary will be at `target/release/primehunt`.
 
+## Local Dev Stack
+
+Recommended (single command, clean shutdown):
+
+```bash
+./scripts/dev.sh
+```
+
+This starts both services, waits for health checks, and stops both on Ctrl+C.
+
+Use production dashboard data with local UI:
+
+```bash
+./scripts/dev.sh --remote https://your-prod-dashboard.example.com
+```
+
+This runs only local frontend on `:3000` and proxies `/api` + `/ws` to the remote dashboard.
+
+Optional detached process helpers:
+
+```bash
+./scripts/dev-up.sh      # start backend (:8080) + frontend (:3000)
+./scripts/dev-status.sh  # check process + HTTP health
+./scripts/dev-down.sh    # stop both
+```
+
+Logs and PID files are stored in `.dev/`.
+
+Standalone remote helper (equivalent to `dev.sh --remote`):
+
+```bash
+./scripts/dev-remote.sh https://your-prod-dashboard.example.com
+```
+
+This runs local Next.js on `:3000`, proxies `/api/*` to the remote host (avoids CORS), and connects WebSocket directly to remote `/ws`.
+
 ## Usage
 
 ### Factorial primes
