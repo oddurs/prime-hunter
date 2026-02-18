@@ -600,4 +600,154 @@ mod tests {
             );
         }
     }
+
+    // ---- Wilson's theorem tests ----
+
+    #[test]
+    fn wilson_theorem_eliminates_correctly() {
+        // Wilson's theorem: if n+1 is prime and n > 2, then (n+1) | (n!+1)
+        // n=4: 5 is prime, 4!+1 = 25 = 5*5 ✓
+        // n=6: 7 is prime, 6!+1 = 721 = 7*103 ✓
+        // n=10: 11 is prime, 10!+1 = 3628801 = 11*329891 ✓
+        for &n in &[4u64, 6, 10] {
+            let f = Integer::from(Integer::factorial(n as u32));
+            let plus = Integer::from(&f + 1u32);
+            let np1 = Integer::from(n + 1);
+            assert!(
+                plus.is_divisible(&np1),
+                "Wilson: ({}+1) should divide {}!+1", n, n
+            );
+        }
+    }
+
+    #[test]
+    fn wilson_theorem_does_not_eliminate_when_np1_composite() {
+        // When n+1 is composite, Wilson's theorem does NOT apply
+        // n=3: n+1=4 (composite), 3!+1=7 (prime) — not eliminated by 4
+        // n=7: n+1=8 (composite), 7!+1=5041 — not eliminated by 8
+        for &n in &[3u64, 7] {
+            let f = Integer::from(Integer::factorial(n as u32));
+            let plus = Integer::from(&f + 1u32);
+            let np1 = Integer::from(n + 1);
+            // n+1 is composite
+            assert_eq!(
+                np1.is_probably_prime(10),
+                IsPrime::No,
+                "n+1={} should be composite", n + 1
+            );
+            // Wilson doesn't apply, so (n+1) should NOT divide n!+1
+            assert!(
+                !plus.is_divisible(&np1),
+                "(n+1)={} should NOT divide {}!+1={} when n+1 is composite",
+                n + 1, n, plus
+            );
+        }
+    }
+
+    #[test]
+    fn factorial_sieve_new_with_initial_n_gt_1() {
+        // Initialize sieve at n=5 — residues should match 5! = 120 mod p
+        let sieve_primes: Vec<u64> = vec![7, 11, 13, 17];
+        let fsieve = FactorialSieve::new(&sieve_primes, 5);
+
+        for &(p, fm) in &fsieve.entries {
+            assert_eq!(
+                fm,
+                120 % p,
+                "5! mod {} should be {}, got {}",
+                p, 120 % p, fm
+            );
+        }
+    }
+
+    #[test]
+    fn factorial_sieve_check_composites_neither() {
+        // When no sieve prime divides n!±1, both should return false
+        // 3! = 6, 3!+1 = 7 (prime), 3!-1 = 5 (prime)
+        // Use sieve primes that don't divide 7 or 5
+        let sieve_primes: Vec<u64> = vec![11, 13, 17]; // all > 7
+        let mut fsieve = FactorialSieve::new(&sieve_primes, 1);
+        for n in 2..=3 {
+            fsieve.advance(n);
+        }
+        let (plus, minus) = fsieve.check_composites();
+        assert!(!plus, "3!+1=7 should not be sieved as composite by [11,13,17]");
+        assert!(!minus, "3!-1=5 should not be sieved as composite by [11,13,17]");
+    }
+
+    #[test]
+    fn factorial_sieve_advance_removes_exact_prime() {
+        // p=5 should be removed when we advance to n=5 (since 5|5!)
+        // p=7 should be removed when we advance to n=7
+        let sieve_primes: Vec<u64> = vec![5, 7, 11, 13];
+        let mut fsieve = FactorialSieve::new(&sieve_primes, 1);
+
+        // Advance to 4 — p=5 still present
+        for n in 2..=4 {
+            fsieve.advance(n);
+        }
+        assert!(
+            fsieve.entries.iter().any(|&(p, _)| p == 5),
+            "p=5 should still be present at n=4"
+        );
+
+        // Advance to 5 — p=5 removed
+        fsieve.advance(5);
+        assert!(
+            !fsieve.entries.iter().any(|&(p, _)| p == 5),
+            "p=5 should be removed at n=5"
+        );
+        assert!(
+            fsieve.entries.iter().any(|&(p, _)| p == 7),
+            "p=7 should still be present at n=5"
+        );
+
+        // Advance to 7 — p=7 removed
+        fsieve.advance(6);
+        fsieve.advance(7);
+        assert!(
+            !fsieve.entries.iter().any(|&(p, _)| p == 7),
+            "p=7 should be removed at n=7"
+        );
+    }
+
+    #[test]
+    fn factorial_start_equals_end() {
+        // Single-n search (n=11): 11!+1 = 39916801 should be prime
+        let f = Integer::from(Integer::factorial(11u32));
+        let plus = Integer::from(&f + 1u32);
+        assert_ne!(
+            plus.is_probably_prime(25),
+            IsPrime::No,
+            "11!+1 should be prime"
+        );
+        // 11!-1 = 39916799 should be composite
+        let minus = Integer::from(&f - 1u32);
+        assert_eq!(
+            minus.is_probably_prime(25),
+            IsPrime::No,
+            "11!-1 should be composite"
+        );
+    }
+
+    #[test]
+    fn factorial_n_equals_1_and_2() {
+        // 1!+1=2 (prime), 1!-1=0 (not prime)
+        assert_eq!(Integer::from(Integer::factorial(1u32)) + 1u32, 2);
+        assert_ne!(
+            Integer::from(2u32).is_probably_prime(25),
+            IsPrime::No,
+            "1!+1=2 should be prime"
+        );
+        assert_eq!(Integer::from(Integer::factorial(1u32)) - 1u32, 0);
+
+        // 2!+1=3 (prime), 2!-1=1 (not prime by convention)
+        assert_eq!(Integer::from(Integer::factorial(2u32)) + 1u32, 3);
+        assert_ne!(
+            Integer::from(3u32).is_probably_prime(25),
+            IsPrime::No,
+            "2!+1=3 should be prime"
+        );
+        assert_eq!(Integer::from(Integer::factorial(2u32)) - 1u32, 1);
+    }
 }

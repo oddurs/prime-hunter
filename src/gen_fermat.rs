@@ -503,4 +503,54 @@ mod tests {
         assert_eq!(gf(6, 1), 37); // 6^2 + 1
         assert_eq!(gf(10, 1), 101); // 10^2 + 1
     }
+
+    // ---- Additional gen_fermat tests ----
+
+    #[test]
+    fn is_pepin_provable_odd_base_returns_false() {
+        // Odd bases: b^(2^n) + 1 is always even > 2, can't be prime
+        // is_pepin_provable should return false for odd b and b=0
+        assert!(!is_pepin_provable(0), "b=0 should not be Pépin-provable");
+        assert!(!is_pepin_provable(3), "b=3 (odd) should not be Pépin-provable");
+        assert!(!is_pepin_provable(5), "b=5 (odd) should not be Pépin-provable");
+        assert!(!is_pepin_provable(7), "b=7 (odd) should not be Pépin-provable");
+    }
+
+    #[test]
+    fn is_pepin_provable_large_even_bases() {
+        // b=24: 24 = 2^3 * 3, t=3, m=3, 8 > 3 ✓
+        assert!(is_pepin_provable(24), "b=24 should be Pépin-provable");
+        // b=18: 18 = 2^1 * 9, t=1, m=9, 2 > 9 ✗
+        assert!(!is_pepin_provable(18), "b=18 should NOT be Pépin-provable");
+        // b=48: 48 = 2^4 * 3, t=4, m=3, 16 > 3 ✓
+        assert!(is_pepin_provable(48), "b=48 should be Pépin-provable");
+        // b=20: 20 = 2^2 * 5, t=2, m=5, 4 > 5 ✗
+        assert!(!is_pepin_provable(20), "b=20 should NOT be Pépin-provable");
+    }
+
+    #[test]
+    fn sieve_gf_even_bases_only() {
+        // sieve_gf with min_b=2, max_b=10 should produce 5 entries (2,4,6,8,10)
+        let sieve_primes = sieve::generate_primes(100);
+        let survives = sieve_gf(2, 10, 1, &sieve_primes, 2);
+        assert_eq!(
+            survives.len(), 5,
+            "Even bases 2,4,6,8,10 should give 5 sieve entries"
+        );
+    }
+
+    #[test]
+    fn gf_non_power_of_2_exponent_factors() {
+        // 2^6 + 1 = 65 = 5*13 — demonstrates that b^m+1 is composite when
+        // m is not a power of 2 (6 = 2*3, so x^3+1 = (x+1)(x^2-x+1) applies)
+        let val = Integer::from(2u32).pow(6) + 1u32;
+        assert_eq!(val, 65);
+        assert!(val.is_divisible_u(5), "65 should be divisible by 5");
+        assert!(val.is_divisible_u(13), "65 should be divisible by 13");
+        assert_eq!(
+            val.is_probably_prime(25),
+            IsPrime::No,
+            "2^6+1 = 65 should be composite"
+        );
+    }
 }

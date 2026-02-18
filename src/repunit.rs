@@ -439,4 +439,97 @@ mod tests {
         assert_eq!(repunit(2, 3), 7); // 2^3-1 = 7
         assert_eq!(repunit(3, 3), 13); // (27-1)/2 = 13
     }
+
+    // ---- Additional repunit tests ----
+
+    #[test]
+    fn repunit_base5_known_primes() {
+        // R(5,3) = (125-1)/4 = 31 (prime)
+        // R(5,7) = (5^7-1)/4 = 19531 (prime)
+        let r3 = repunit(5, 3);
+        assert_eq!(r3, 31);
+        assert_ne!(r3.is_probably_prime(25), IsPrime::No, "R(5,3) = 31 should be prime");
+
+        let r7 = repunit(5, 7);
+        assert_eq!(r7, 19531);
+        assert_ne!(r7.is_probably_prime(25), IsPrime::No, "R(5,7) = 19531 should be prime");
+    }
+
+    #[test]
+    fn repunit_base2_composites() {
+        // R(2,11) = 2^11-1 = 2047 = 23*89 (composite)
+        let r11 = repunit(2, 11);
+        assert_eq!(r11, 2047);
+        assert_eq!(r11.is_probably_prime(25), IsPrime::No, "R(2,11) = 2047 = 23*89");
+
+        // R(2,23) = 2^23-1 = 8388607 = 47*178481 (composite)
+        let r23 = repunit(2, 23);
+        assert_eq!(r23, 8388607);
+        assert_eq!(r23.is_probably_prime(25), IsPrime::No, "R(2,23) composite");
+    }
+
+    #[test]
+    fn sieve_repunit_divisibility_by_order() {
+        // ord_41(10) = 5 (since 10^5 ≡ 1 mod 41), so 41 | R(10,5) = 11111
+        let r5 = repunit(10, 5);
+        assert_eq!(r5, 11111);
+        assert!(
+            r5.is_divisible_u(41),
+            "41 should divide R(10,5) = 11111 since ord_41(10) = 5"
+        );
+        // Verify the order
+        assert_eq!(sieve::multiplicative_order(10, 41), 5);
+    }
+
+    #[test]
+    fn sieve_repunit_b_minus_1_case() {
+        // 3 | (10-1) = 9, so R(10,n) ≡ n (mod 3)
+        // Therefore 3 | R(10,3) = 111 (since 3 ≡ 0 mod 3)
+        let r3 = repunit(10, 3);
+        assert_eq!(r3, 111);
+        assert!(
+            r3.is_divisible_u(3),
+            "3 should divide R(10,3) = 111 since 3 | (10-1)"
+        );
+
+        // R(10,2) = 11 ≡ 2 (mod 3), so 3 does NOT divide R(10,2)
+        let r2 = repunit(10, 2);
+        assert!(!r2.is_divisible_u(3), "3 should NOT divide R(10,2) = 11");
+    }
+
+    #[test]
+    fn repunit_composite_exponents_factor() {
+        // R(10,6) should be divisible by R(10,2) = 11 and R(10,3) = 111
+        // Since 6 = 2*3, algebraic factoring gives R(b,ab) = R(b,a) * something
+        let r6 = repunit(10, 6);
+        let r2 = repunit(10, 2);
+        let r3 = repunit(10, 3);
+        assert!(
+            r6.is_divisible(&r2),
+            "R(10,6) should be divisible by R(10,2) = 11"
+        );
+        assert!(
+            r6.is_divisible(&r3),
+            "R(10,6) should be divisible by R(10,3) = 111"
+        );
+    }
+
+    #[test]
+    fn sieve_repunit_preserves_known_primes() {
+        // Known repunit prime indices in base 10: 2, 19, 23
+        // These should survive the sieve
+        let sieve_primes = sieve::generate_primes(10_000);
+        let exponents: Vec<u64> = vec![2, 3, 5, 7, 11, 13, 17, 19, 23];
+        let sieve_min_n = 5u64;
+
+        let survives = sieve_repunit(&exponents, 10, &sieve_primes, sieve_min_n);
+
+        for &n in &[2u64, 19, 23] {
+            let idx = exponents.iter().position(|&e| e == n).unwrap();
+            assert!(
+                survives[idx],
+                "Known repunit prime R(10,{}) should survive sieve", n
+            );
+        }
+    }
 }

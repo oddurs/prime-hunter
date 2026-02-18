@@ -383,4 +383,108 @@ mod tests {
         assert!(twin_count <= plus_count);
         assert!(twin_count <= minus_count);
     }
+
+    // ---- Additional twin prime tests ----
+
+    #[test]
+    fn known_twin_pairs_base3() {
+        // k=1, base=3: n=1 → (4, 2) — 4 composite, n=2 → (10, 8) — both composite
+        // k=2, base=3: n=1 → (7, 5) — both prime! Twin pair.
+        let plus = kb_plus(2, 3, 1);  // 2*3+1 = 7
+        let minus = kb_minus(2, 3, 1); // 2*3-1 = 5
+        assert_ne!(plus.is_probably_prime(25), IsPrime::No, "7 should be prime");
+        assert_ne!(minus.is_probably_prime(25), IsPrime::No, "5 should be prime");
+    }
+
+    #[test]
+    fn known_twin_pairs_k1_base2() {
+        // k=1, base=2, n=2: 1*4+1=5, 1*4-1=3 — both prime, twin pair
+        let plus = kb_plus(1, 2, 2);
+        let minus = kb_minus(1, 2, 2);
+        assert_eq!(plus, 5);
+        assert_eq!(minus, 3);
+        assert_ne!(plus.is_probably_prime(25), IsPrime::No, "5 is prime");
+        assert_ne!(minus.is_probably_prime(25), IsPrime::No, "3 is prime");
+    }
+
+    #[test]
+    fn twin_pair_both_must_be_prime() {
+        // k=3, b=2, n=3: 3*8+1=25 (composite), 3*8-1=23 (prime) — NOT twin
+        // k=3, b=2, n=5: 3*32+1=97 (prime), 3*32-1=95=5*19 (composite) — NOT twin
+        let plus_3 = kb_plus(3, 2, 3);
+        let minus_3 = kb_minus(3, 2, 3);
+        assert_eq!(plus_3.is_probably_prime(25), IsPrime::No, "25 composite");
+        assert_ne!(minus_3.is_probably_prime(25), IsPrime::No, "23 prime");
+
+        let plus_5 = kb_plus(3, 2, 5);
+        let minus_5 = kb_minus(3, 2, 5);
+        assert_ne!(plus_5.is_probably_prime(25), IsPrime::No, "97 prime");
+        assert_eq!(minus_5.is_probably_prime(25), IsPrime::No, "95 composite");
+    }
+
+    #[test]
+    fn twin_kb_minus_nonpositive_rejected() {
+        // k=1, b=2, n=0: k*b^n-1 = 1*1-1 = 0, not prime
+        let minus = kb_minus(1, 2, 0);
+        assert_eq!(minus, 0, "1*2^0-1 should be 0");
+    }
+
+    #[test]
+    fn twin_deterministic_proof_both_sides() {
+        // k=3, base=2, n=1: (7, 5) — both should get deterministic proofs
+        let plus = kb_plus(3, 2, 1);
+        let minus = kb_minus(3, 2, 1);
+
+        let (r_plus, cert_plus) = kbn::test_prime(&plus, 3, 2, 1, true, 25);
+        assert_ne!(r_plus, IsPrime::No, "3*2^1+1=7 should be prime");
+
+        let (r_minus, cert_minus) = kbn::test_prime(&minus, 3, 2, 1, false, 25);
+        assert_ne!(r_minus, IsPrime::No, "3*2^1-1=5 should be prime");
+
+        // Both should be deterministic (small numbers get GMP exact proof)
+        assert_eq!(cert_plus, "deterministic");
+        assert_eq!(cert_minus, "deterministic");
+    }
+
+    #[test]
+    fn twin_sieve_survivors_superset_of_primes() {
+        // Known twin pairs at k=3,b=2: n=1,2,6 — verify these survive both sieves
+        let sieve_primes = sieve::generate_primes(10_000);
+        let sieve_min_n = 14u64;
+
+        let (plus_surv, minus_surv) = kbn::bsgs_sieve(1, 200, 3, 2, &sieve_primes, sieve_min_n);
+
+        // For n < sieve_min_n, all candidates survive (sieve not applied)
+        for &n in &[1u64, 2, 6] {
+            let idx = (n - 1) as usize;
+            assert!(
+                plus_surv[idx],
+                "Known twin n={}: +1 should survive sieve", n
+            );
+            assert!(
+                minus_surv[idx],
+                "Known twin n={}: -1 should survive sieve", n
+            );
+        }
+    }
+
+    #[test]
+    fn twin_large_k_base2() {
+        // k=105, base=2: verify computation doesn't crash for small n
+        for n in 1..=10u64 {
+            let plus = kb_plus(105, 2, n);
+            let minus = kb_minus(105, 2, n);
+            // Just verify we can compute and test without panicking
+            let _ = plus.is_probably_prime(10);
+            let _ = minus.is_probably_prime(10);
+        }
+    }
+
+    #[test]
+    fn twin_pair_digit_count_matches() {
+        // k=3, b=2, n=6: both sides ≈ 193, 191 — 3 digits
+        let plus = kb_plus(3, 2, 6);
+        let digits = crate::exact_digits(&plus);
+        assert_eq!(digits, 3, "3*2^6+1=193 should have 3 digits");
+    }
 }

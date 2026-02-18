@@ -328,4 +328,80 @@ mod tests {
     fn checked_u32_overflow_panics() {
         checked_u32(u32::MAX as u64 + 1);
     }
+
+    // ---- block_size_for_n tests ----
+
+    #[test]
+    fn block_size_for_n_boundary_values() {
+        // Exact values at each match-arm boundary
+        assert_eq!(block_size_for_n(0), 10_000);
+        assert_eq!(block_size_for_n(1_000), 10_000);
+        assert_eq!(block_size_for_n(1_001), 10_000);
+        assert_eq!(block_size_for_n(10_000), 10_000);
+        assert_eq!(block_size_for_n(10_001), 2_000);
+        assert_eq!(block_size_for_n(50_000), 2_000);
+        assert_eq!(block_size_for_n(50_001), 500);
+        assert_eq!(block_size_for_n(200_000), 500);
+        assert_eq!(block_size_for_n(200_001), 100);
+    }
+
+    #[test]
+    fn block_size_for_n_monotonically_nonincreasing() {
+        let test_points = [0u64, 500, 1_000, 1_001, 5_000, 10_000, 10_001,
+            25_000, 50_000, 50_001, 100_000, 200_000, 200_001, 1_000_000];
+        for w in test_points.windows(2) {
+            assert!(
+                block_size_for_n(w[1]) <= block_size_for_n(w[0]),
+                "block_size_for_n({}) = {} > block_size_for_n({}) = {}",
+                w[1], block_size_for_n(w[1]), w[0], block_size_for_n(w[0])
+            );
+        }
+    }
+
+    #[test]
+    fn block_size_for_n_heavy_boundary_values() {
+        assert_eq!(block_size_for_n_heavy(0), 10_000);
+        assert_eq!(block_size_for_n_heavy(1_000), 10_000);
+        assert_eq!(block_size_for_n_heavy(1_001), 5_000);
+        assert_eq!(block_size_for_n_heavy(10_000), 5_000);
+        assert_eq!(block_size_for_n_heavy(10_001), 1_000);
+        assert_eq!(block_size_for_n_heavy(50_000), 1_000);
+        assert_eq!(block_size_for_n_heavy(50_001), 200);
+        assert_eq!(block_size_for_n_heavy(200_000), 200);
+        assert_eq!(block_size_for_n_heavy(200_001), 50);
+    }
+
+    #[test]
+    fn block_size_for_n_heavy_monotonically_nonincreasing() {
+        let test_points = [0u64, 500, 1_000, 1_001, 5_000, 10_000, 10_001,
+            25_000, 50_000, 50_001, 100_000, 200_000, 200_001, 1_000_000];
+        for w in test_points.windows(2) {
+            assert!(
+                block_size_for_n_heavy(w[1]) <= block_size_for_n_heavy(w[0]),
+                "block_size_for_n_heavy({}) = {} > block_size_for_n_heavy({}) = {}",
+                w[1], block_size_for_n_heavy(w[1]), w[0], block_size_for_n_heavy(w[0])
+            );
+        }
+    }
+
+    #[test]
+    fn block_size_for_n_heavy_always_leq_normal() {
+        let test_points = [0u64, 500, 1_000, 1_001, 5_000, 10_000, 10_001,
+            25_000, 50_000, 50_001, 100_000, 200_000, 200_001, 1_000_000, u64::MAX];
+        for &n in &test_points {
+            assert!(
+                block_size_for_n_heavy(n) <= block_size_for_n(n),
+                "heavy({}) = {} > normal({}) = {}",
+                n, block_size_for_n_heavy(n), n, block_size_for_n(n)
+            );
+        }
+    }
+
+    #[test]
+    fn block_size_for_n_returns_positive() {
+        for &n in &[0u64, 1, 500, 10_000, 100_000, u64::MAX / 2, u64::MAX] {
+            assert!(block_size_for_n(n) > 0, "block_size_for_n({}) must be > 0", n);
+            assert!(block_size_for_n_heavy(n) > 0, "block_size_for_n_heavy({}) must be > 0", n);
+        }
+    }
 }

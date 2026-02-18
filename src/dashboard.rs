@@ -227,6 +227,13 @@ pub fn build_router(state: Arc<AppState>, static_dir: Option<&Path>) -> Router {
             "/api/agents/memory/{key}",
             axum::routing::delete(handler_api_agent_memory_delete),
         )
+        // Agent Roles
+        .route("/api/agents/roles", get(handler_api_agent_roles))
+        .route("/api/agents/roles/{name}", get(handler_api_agent_role_get))
+        .route(
+            "/api/agents/roles/{name}/templates",
+            get(handler_api_agent_role_templates),
+        )
         // Project Management
         .route(
             "/api/projects",
@@ -560,8 +567,13 @@ pub async fn run(
                 )
                 .await;
 
-            // 5. Assemble context prompts (project files, memory, task history)
-            let context_prompts = agent::assemble_context(&task, &agent_state.db).await;
+            // 5. Fetch role (if assigned) and assemble context prompts
+            let role = if let Some(ref rn) = task.role_name {
+                agent_state.db.get_role_by_name(rn).await.ok().flatten()
+            } else {
+                None
+            };
+            let context_prompts = agent::assemble_context(&task, &agent_state.db, role.as_ref()).await;
 
             // 6. Spawn the agent (scope the lock so it drops before any await)
             let db_clone = agent_state.db.clone();
@@ -2014,6 +2026,7 @@ struct CreateAgentTaskPayload {
     max_cost_usd: Option<f64>,
     #[serde(default = "default_permission_level")]
     permission_level: i32,
+    role_name: Option<String>,
 }
 
 fn default_permission_level() -> i32 {
@@ -2032,16 +2045,38 @@ async fn handler_api_agent_task_create(
     State(state): State<Arc<AppState>>,
     Json(payload): Json<CreateAgentTaskPayload>,
 ) -> impl IntoResponse {
+    // If a role is specified, look it up and apply defaults for unset fields
+    let mut agent_model = payload.agent_model.clone();
+    let mut max_cost_usd = payload.max_cost_usd;
+    let mut permission_level = payload.permission_level;
+
+    if let Some(ref role_name) = payload.role_name {
+        if let Ok(Some(role)) = state.db.get_role_by_name(role_name).await {
+            // Apply role defaults only when the payload uses the default values
+            if agent_model.is_none() {
+                agent_model = Some(role.default_model.clone());
+            }
+            if max_cost_usd.is_none() {
+                max_cost_usd = role.default_max_cost_usd;
+            }
+            if permission_level == 1 {
+                // 1 is the default — override with role default
+                permission_level = role.default_permission_level;
+            }
+        }
+    }
+
     match state
         .db
         .create_agent_task(
             &payload.title,
             &payload.description,
             &payload.priority,
-            payload.agent_model.as_deref(),
+            agent_model.as_deref(),
             &payload.source,
-            payload.max_cost_usd,
-            payload.permission_level,
+            max_cost_usd,
+            permission_level,
+            payload.role_name.as_deref(),
         )
         .await
     {
@@ -2314,6 +2349,57 @@ async fn handler_api_agent_memory_delete(
     }
 }
 
+// --- Agent role endpoints ---
+
+/// GET /api/agents/roles — List all agent roles.
+async fn handler_api_agent_roles(
+    State(state): State<Arc<AppState>>,
+) -> impl IntoResponse {
+    match state.db.get_all_roles().await {
+        Ok(roles) => Json(serde_json::json!(roles)).into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": e.to_string()})),
+        )
+            .into_response(),
+    }
+}
+
+/// GET /api/agents/roles/{name} — Get a single role by name.
+async fn handler_api_agent_role_get(
+    State(state): State<Arc<AppState>>,
+    AxumPath(name): AxumPath<String>,
+) -> impl IntoResponse {
+    match state.db.get_role_by_name(&name).await {
+        Ok(Some(role)) => Json(serde_json::json!(role)).into_response(),
+        Ok(None) => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({"error": format!("Role '{}' not found", name)})),
+        )
+            .into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": e.to_string()})),
+        )
+            .into_response(),
+    }
+}
+
+/// GET /api/agents/roles/{name}/templates — Get templates associated with a role.
+async fn handler_api_agent_role_templates(
+    State(state): State<Arc<AppState>>,
+    AxumPath(name): AxumPath<String>,
+) -> impl IntoResponse {
+    match state.db.get_role_templates(&name).await {
+        Ok(templates) => Json(serde_json::json!(templates)).into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": e.to_string()})),
+        )
+            .into_response(),
+    }
+}
+
 // --- Agent template & decomposition endpoints ---
 
 /// GET /api/agents/templates — List all workflow templates.
@@ -2355,10 +2441,13 @@ async fn handler_api_agent_template_expand(
         .get("permission_level")
         .and_then(|l| l.as_i64())
         .unwrap_or(1) as i32;
+    let role_name = body
+        .get("role_name")
+        .and_then(|r| r.as_str());
 
     match state
         .db
-        .expand_template(&name, title, description, priority, max_cost_usd, permission_level)
+        .expand_template(&name, title, description, priority, max_cost_usd, permission_level, role_name)
         .await
     {
         Ok(parent_id) => {

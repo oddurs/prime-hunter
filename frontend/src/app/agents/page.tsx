@@ -39,6 +39,7 @@ import {
   useAgentBudgets,
   useAgentMemory,
   useAgentTemplates,
+  useAgentRoles,
   createTask,
   cancelTask,
   expandTemplate,
@@ -48,6 +49,7 @@ import {
   MEMORY_CATEGORIES,
   type AgentTask,
   type AgentEvent,
+  type AgentRole,
   type AgentMemory,
   type MemoryCategory,
   type TaskTreeNode,
@@ -73,6 +75,10 @@ import {
   ChevronRight,
   GitBranch,
   LayoutTemplate,
+  Cog,
+  Layout,
+  Server,
+  BookOpen,
 } from "lucide-react";
 
 // --- Status badge ---
@@ -143,6 +149,31 @@ const MODEL_RATES: Record<string, { perMin: number; label: string }> = {
   haiku: { perMin: 0.06, label: "Haiku" },
 };
 
+/** Role display configuration: icon, color, and label. */
+const ROLE_CONFIG: Record<string, { icon: typeof Cog; color: string; label: string }> = {
+  engine: { icon: Cog, color: "amber", label: "Engine" },
+  frontend: { icon: Layout, color: "blue", label: "Frontend" },
+  ops: { icon: Server, color: "green", label: "Ops" },
+  research: { icon: BookOpen, color: "purple", label: "Research" },
+};
+
+function roleBadge(roleName: string | null) {
+  if (!roleName) return null;
+  const cfg = ROLE_CONFIG[roleName];
+  if (!cfg) return <Badge variant="outline" className="text-[10px] px-1.5 py-0">{roleName}</Badge>;
+  const colorMap: Record<string, string> = {
+    amber: "border-amber-400 text-amber-600 dark:text-amber-400",
+    blue: "border-blue-400 text-blue-600 dark:text-blue-400",
+    green: "border-green-400 text-green-600 dark:text-green-400",
+    purple: "border-purple-400 text-purple-600 dark:text-purple-400",
+  };
+  return (
+    <Badge variant="outline" className={`text-[10px] px-1.5 py-0 ${colorMap[cfg.color] || ""}`}>
+      {cfg.label}
+    </Badge>
+  );
+}
+
 function estimateCostRange(model: string, descriptionLength: number) {
   const rate = MODEL_RATES[model] || MODEL_RATES.sonnet;
   // Heuristic: short tasks ~2min, long tasks ~10min
@@ -163,7 +194,9 @@ function NewTaskDialog({
 }) {
   const { budgets } = useAgentBudgets();
   const { templates } = useAgentTemplates();
-  const [mode, setMode] = useState<"template" | "custom">("template");
+  const { roles } = useAgentRoles();
+  const [mode, setMode] = useState<"role" | "template" | "custom">("role");
+  const [selectedRole, setSelectedRole] = useState<string | null>(null);
   const [selectedTemplate, setSelectedTemplate] = useState<string | null>(null);
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
@@ -173,15 +206,28 @@ function NewTaskDialog({
   const [permissionLevel, setPermissionLevel] = useState(1);
   const [submitting, setSubmitting] = useState(false);
 
+  // When a role is selected, apply its defaults
+  const activeRole = roles.find((r) => r.name === selectedRole);
+
+  const effectiveModel = model || activeRole?.default_model || "sonnet";
   const costEstimate = useMemo(() => {
-    const m = model || "sonnet";
-    return estimateCostRange(m, description.length);
-  }, [model, description.length]);
+    return estimateCostRange(effectiveModel, description.length);
+  }, [effectiveModel, description.length]);
 
   const dailyBudget = budgets.find((b) => b.period === "daily");
   const remaining = dailyBudget ? dailyBudget.budget_usd - dailyBudget.spent_usd : null;
   const highEstimateWarning =
     remaining !== null && costEstimate.high > remaining && remaining > 0;
+
+  // Show role-filtered templates when a role is selected, otherwise show all
+  const filteredTemplates = useMemo(() => {
+    if (mode === "role" && selectedRole) {
+      return templates.filter(
+        (t) => t.role_name === selectedRole || t.role_name === null
+      );
+    }
+    return templates;
+  }, [templates, mode, selectedRole]);
 
   const activeTemplate = templates.find((t) => t.name === selectedTemplate);
 
@@ -193,6 +239,20 @@ function NewTaskDialog({
     setMaxCost("");
     setPermissionLevel(1);
     setSelectedTemplate(null);
+    setSelectedRole(null);
+  }
+
+  function handleRoleSelect(roleName: string) {
+    setSelectedRole(roleName);
+    const role = roles.find((r) => r.name === roleName);
+    if (role) {
+      setPermissionLevel(role.default_permission_level);
+      setModel(role.default_model);
+      if (role.default_max_cost_usd != null) {
+        setMaxCost(role.default_max_cost_usd.toString());
+      }
+    }
+    setSelectedTemplate(null);
   }
 
   async function handleSubmit() {
@@ -200,15 +260,17 @@ function NewTaskDialog({
     setSubmitting(true);
     try {
       const parsedMaxCost = maxCost ? parseFloat(maxCost) : undefined;
+      const roleName = (mode === "role" && selectedRole) ? selectedRole : undefined;
 
-      if (mode === "template" && selectedTemplate) {
+      if ((mode === "template" || mode === "role") && selectedTemplate) {
         await expandTemplate(
           selectedTemplate,
           title.trim(),
           description.trim(),
           priority,
           parsedMaxCost && !isNaN(parsedMaxCost) ? parsedMaxCost : undefined,
-          permissionLevel
+          permissionLevel,
+          roleName
         );
         toast.success(`Template "${selectedTemplate}" expanded`);
       } else {
@@ -218,7 +280,8 @@ function NewTaskDialog({
           priority,
           model || undefined,
           parsedMaxCost && !isNaN(parsedMaxCost) ? parsedMaxCost : undefined,
-          permissionLevel
+          permissionLevel,
+          roleName
         );
         toast.success("Task created");
       }
@@ -238,8 +301,25 @@ function NewTaskDialog({
           <DialogTitle>New Agent Task</DialogTitle>
         </DialogHeader>
         <div className="space-y-3">
-          {/* Mode toggle */}
-          <div className="grid grid-cols-2 gap-2">
+          {/* 3-mode toggle */}
+          <div className="grid grid-cols-3 gap-2">
+            <button
+              type="button"
+              onClick={() => setMode("role")}
+              className={`rounded-md border px-3 py-2 text-sm text-left transition-colors ${
+                mode === "role"
+                  ? "border-primary bg-primary/10 text-primary"
+                  : "border-border text-muted-foreground hover:border-foreground/30"
+              }`}
+            >
+              <div className="flex items-center gap-2">
+                <Cog className="size-4" />
+                <div>
+                  <div className="font-medium">Role</div>
+                  <div className="text-[10px] opacity-70">Domain preset</div>
+                </div>
+              </div>
+            </button>
             <button
               type="button"
               onClick={() => setMode("template")}
@@ -253,7 +333,7 @@ function NewTaskDialog({
                 <LayoutTemplate className="size-4" />
                 <div>
                   <div className="font-medium">Template</div>
-                  <div className="text-[10px] opacity-70">Multi-step workflow</div>
+                  <div className="text-[10px] opacity-70">Multi-step</div>
                 </div>
               </div>
             </button>
@@ -276,12 +356,59 @@ function NewTaskDialog({
             </button>
           </div>
 
-          {/* Template selector */}
-          {mode === "template" && (
+          {/* Role selector */}
+          {mode === "role" && (
             <div className="space-y-2">
-              <label className="text-xs font-medium text-muted-foreground">Workflow Template</label>
+              <label className="text-xs font-medium text-muted-foreground">Select Role</label>
+              <div className="grid grid-cols-2 gap-2">
+                {roles.map((role) => {
+                  const cfg = ROLE_CONFIG[role.name] || { icon: Bot, color: "gray", label: role.name };
+                  const Icon = cfg.icon;
+                  const colorClasses: Record<string, string> = {
+                    amber: "border-amber-500 bg-amber-500/10 text-amber-700 dark:text-amber-400",
+                    blue: "border-blue-500 bg-blue-500/10 text-blue-700 dark:text-blue-400",
+                    green: "border-green-500 bg-green-500/10 text-green-700 dark:text-green-400",
+                    purple: "border-purple-500 bg-purple-500/10 text-purple-700 dark:text-purple-400",
+                  };
+                  const isActive = selectedRole === role.name;
+                  return (
+                    <button
+                      key={role.name}
+                      type="button"
+                      onClick={() => handleRoleSelect(role.name)}
+                      className={`rounded-md border px-3 py-2 text-left transition-colors ${
+                        isActive
+                          ? colorClasses[cfg.color] || "border-primary bg-primary/10"
+                          : "border-border text-muted-foreground hover:border-foreground/30"
+                      }`}
+                    >
+                      <div className="flex items-center gap-2">
+                        <Icon className="size-4 shrink-0" />
+                        <div className="min-w-0">
+                          <div className="font-medium text-sm capitalize">{cfg.label}</div>
+                          <div className="text-[10px] opacity-70 truncate">{role.description}</div>
+                        </div>
+                      </div>
+                      <div className="flex gap-2 mt-1 text-[10px] opacity-60">
+                        <span>L{role.default_permission_level}</span>
+                        <span>{role.default_model}</span>
+                        {role.default_max_cost_usd != null && <span>${role.default_max_cost_usd}</span>}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Template selector (in role mode: filtered by role; in template mode: all) */}
+          {(mode === "template" || (mode === "role" && selectedRole)) && (
+            <div className="space-y-2">
+              <label className="text-xs font-medium text-muted-foreground">
+                {mode === "role" ? "Role Templates" : "Workflow Template"}
+              </label>
               <div className="grid gap-1.5">
-                {templates.map((t) => (
+                {filteredTemplates.map((t) => (
                   <button
                     key={t.name}
                     type="button"
@@ -292,7 +419,10 @@ function NewTaskDialog({
                         : "border-border hover:border-foreground/30"
                     }`}
                   >
-                    <div className="text-sm font-medium">{t.name}</div>
+                    <div className="flex items-center gap-2">
+                      <div className="text-sm font-medium">{t.name}</div>
+                      {t.role_name && roleBadge(t.role_name)}
+                    </div>
                     <div className="text-xs text-muted-foreground">{t.description}</div>
                     <div className="text-[10px] text-muted-foreground/60 mt-1">
                       {t.steps.length} steps
@@ -324,7 +454,13 @@ function NewTaskDialog({
             <Input
               value={title}
               onChange={(e) => setTitle(e.target.value)}
-              placeholder={mode === "template" ? "e.g. Fix login bug" : "Task title..."}
+              placeholder={
+                mode === "role" && selectedRole
+                  ? `e.g. ${selectedRole === "engine" ? "Optimize factorial sieve" : selectedRole === "frontend" ? "Add search results page" : selectedRole === "ops" ? "Deploy v2.1 to fleet" : "Research Wagstaff primes"}`
+                  : mode === "template"
+                    ? "e.g. Fix login bug"
+                    : "Task title..."
+              }
             />
           </div>
           <div>
@@ -413,7 +549,7 @@ function NewTaskDialog({
             <div>
               Estimated: ${costEstimate.low.toFixed(2)} &ndash; ${costEstimate.high.toFixed(2)}
               <span className="ml-1 text-muted-foreground/70">
-                ({MODEL_RATES[model || "sonnet"]?.label || "Sonnet"} rate)
+                ({MODEL_RATES[effectiveModel]?.label || "Sonnet"} rate)
               </span>
             </div>
             {highEstimateWarning && (
@@ -434,7 +570,7 @@ function NewTaskDialog({
           >
             {submitting
               ? "Creating..."
-              : mode === "template"
+              : (mode === "template" || (mode === "role" && selectedTemplate))
                 ? "Expand Template"
                 : "Create Task"}
           </Button>
@@ -579,6 +715,7 @@ function TaskCard({ task, children }: { task: AgentTask; children: AgentTask[] }
             <span className="text-sm font-medium text-foreground truncate">
               {task.title}
             </span>
+            {task.role_name && roleBadge(task.role_name)}
             {task.template_name && (
               <Badge variant="outline" className="text-[10px] px-1.5 py-0 shrink-0">
                 {task.template_name}
@@ -1015,8 +1152,10 @@ function MemoryTab() {
 export default function AgentsPage() {
   const { tasks } = useAgentTasks();
   const { budgets } = useAgentBudgets();
+  const { roles } = useAgentRoles();
   const [newTaskOpen, setNewTaskOpen] = useState(false);
   const [filter, setFilter] = useState("all");
+  const [roleFilter, setRoleFilter] = useState<string | null>(null);
 
   const taskTree = useMemo(() => buildTaskTree(tasks), [tasks]);
 
@@ -1037,14 +1176,23 @@ export default function AgentsPage() {
   const todayLimit = dailyBudget?.budget_usd ?? 0;
 
   const filteredTree = useMemo(() => {
-    if (filter === "all") return taskTree;
-    return taskTree.filter((node) => {
-      // Show parent if it matches, or if any child matches
-      if (node.task.status === filter) return true;
-      if (node.children.some((c) => c.status === filter)) return true;
-      return false;
-    });
-  }, [taskTree, filter]);
+    let result = taskTree;
+    if (filter !== "all") {
+      result = result.filter((node) => {
+        if (node.task.status === filter) return true;
+        if (node.children.some((c) => c.status === filter)) return true;
+        return false;
+      });
+    }
+    if (roleFilter) {
+      result = result.filter((node) => {
+        if (node.task.role_name === roleFilter) return true;
+        if (node.children.some((c) => c.role_name === roleFilter)) return true;
+        return false;
+      });
+    }
+    return result;
+  }, [taskTree, filter, roleFilter]);
 
   return (
     <>
@@ -1134,6 +1282,31 @@ export default function AgentsPage() {
                     : f.charAt(0).toUpperCase() + f.slice(1)}
               </Button>
             ))}
+            {roles.length > 0 && (
+              <>
+                <span className="text-xs text-muted-foreground mx-1">|</span>
+                <Button
+                  variant={roleFilter === null ? "default" : "outline"}
+                  size="xs"
+                  onClick={() => setRoleFilter(null)}
+                >
+                  Any Role
+                </Button>
+                {roles.map((r) => {
+                  const cfg = ROLE_CONFIG[r.name];
+                  return (
+                    <Button
+                      key={r.name}
+                      variant={roleFilter === r.name ? "default" : "outline"}
+                      size="xs"
+                      onClick={() => setRoleFilter(r.name)}
+                    >
+                      {cfg?.label || r.name}
+                    </Button>
+                  );
+                })}
+              </>
+            )}
           </div>
 
           {filteredTree.length === 0 ? (

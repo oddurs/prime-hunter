@@ -27,7 +27,7 @@
 //! Agent stdout is streamed line-by-line into the `output` column for
 //! real-time display on the dashboard.
 
-use crate::db::{AgentTaskRow, Database};
+use crate::db::{AgentRoleRow, AgentTaskRow, Database};
 use chrono::Utc;
 use serde::Serialize;
 use std::collections::HashMap;
@@ -114,14 +114,52 @@ pub fn detect_domains(title: &str, description: &str) -> Vec<&'static str> {
     domains
 }
 
+/// Resolve domains for a task, using the role's domain list if available,
+/// otherwise falling back to keyword-based `detect_domains()`.
+pub fn resolve_domains(task: &AgentTaskRow, role: Option<&AgentRoleRow>) -> Vec<&'static str> {
+    if let Some(role) = role {
+        if let Some(arr) = role.domains.as_array() {
+            let role_domains: Vec<&'static str> = arr
+                .iter()
+                .filter_map(|v| v.as_str())
+                .filter_map(|s| match s {
+                    "engine" => Some("engine"),
+                    "frontend" => Some("frontend"),
+                    "deploy" => Some("deploy"),
+                    "docs" => Some("docs"),
+                    "server" => Some("server"),
+                    _ => None,
+                })
+                .collect();
+            if !role_domains.is_empty() {
+                return role_domains;
+            }
+        }
+    }
+    detect_domains(&task.title, &task.description)
+}
+
 /// Assemble context prompt sections for a spawning agent.
 ///
 /// Returns a `Vec<String>` where each element becomes a separate `--append-system-prompt`
-/// argument. Sections include: project CLAUDE.md files, relevant roadmaps, recent git
-/// history, accumulated agent memory, and task history (siblings + previous failures).
-pub async fn assemble_context(task: &AgentTaskRow, db: &Database) -> Vec<String> {
+/// argument. Sections include: role system prompt, project CLAUDE.md files, relevant
+/// roadmaps, recent git history, accumulated agent memory, and task history (siblings +
+/// previous failures).
+pub async fn assemble_context(
+    task: &AgentTaskRow,
+    db: &Database,
+    role: Option<&AgentRoleRow>,
+) -> Vec<String> {
     let mut sections = Vec::new();
-    let domains = detect_domains(&task.title, &task.description);
+    let domains = resolve_domains(task, role);
+
+    // 0. Role system prompt (prepended as first section if available)
+    if let Some(role) = role {
+        if let Some(ref prompt) = role.system_prompt {
+            sections.push(format!("# Role: {}\n\n{}", role.name, prompt));
+            eprintln!("  Context: included role '{}' system prompt", role.name);
+        }
+    }
 
     // 1. Project context files (root CLAUDE.md always; domain files if matched)
     let mut included_paths = Vec::new();

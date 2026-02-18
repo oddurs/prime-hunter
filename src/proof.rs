@@ -555,4 +555,93 @@ mod tests {
             "BLS should prove 191 with cofactor factoring"
         );
     }
+
+    // ---- lucas_v_big edge cases ----
+
+    #[test]
+    fn lucas_v_big_k_zero_returns_two() {
+        // V_0(P, 1) = 2 for any P and any modulus
+        for p_val in [3u32, 4, 5, 7, 11, 100] {
+            for modulus in [7u32, 13, 101, 1000003] {
+                let k = Integer::from(0u32);
+                let n = Integer::from(modulus);
+                let result = lucas_v_big(&k, p_val, &n);
+                assert_eq!(result, 2, "V_0({}, 1) mod {} should be 2", p_val, modulus);
+            }
+        }
+    }
+
+    #[test]
+    fn lucas_v_big_k_one_returns_p_mod_n() {
+        // V_1(P, 1) = P mod N
+        for p_val in [3u32, 4, 5, 7, 200] {
+            for modulus in [7u32, 13, 101] {
+                let k = Integer::from(1u32);
+                let n = Integer::from(modulus);
+                let result = lucas_v_big(&k, p_val, &n);
+                let expected = p_val % modulus;
+                assert_eq!(
+                    result, expected,
+                    "V_1({}, 1) mod {} should be {}",
+                    p_val, modulus, expected
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn lucas_v_big_large_k_cross_check() {
+        // Cross-check binary chain against iterative reference for larger k
+        let modulus = Integer::from(1000003u32);
+        for &k_val in &[1000u64, 10_000] {
+            for &p in &[4u32, 7] {
+                let k_big = Integer::from(k_val);
+                let result_big = lucas_v_big(&k_big, p, &modulus);
+                let result_ref = lucas_v_ref(k_val, p, &modulus);
+                assert_eq!(
+                    result_big, result_ref,
+                    "lucas_v_big({}, {}, {}) mismatch with reference",
+                    k_val, p, modulus
+                );
+            }
+        }
+    }
+
+    // ---- Pocklington edge cases ----
+
+    #[test]
+    fn pocklington_n_exceeds_sieve_limit_returns_false() {
+        // Sieve to 1000, but n=2000 — can't factor n! completely
+        let sieve_primes = sieve::generate_primes(1000);
+        let candidate = Integer::from(Integer::factorial(2000)) + 1u32;
+        assert!(
+            !pocklington_factorial_proof(2000, &candidate, &sieve_primes),
+            "Pocklington should return false when n exceeds sieve limit"
+        );
+    }
+
+    #[test]
+    fn pocklington_n1_candidate_2() {
+        // Edge: n=1, candidate=2 (1!+1=2), factors empty → special case returns true
+        let sieve_primes = sieve::generate_primes(1000);
+        let candidate = Integer::from(2u32);
+        assert!(
+            pocklington_factorial_proof(1, &candidate, &sieve_primes),
+            "Pocklington should prove 1!+1 = 2 prime"
+        );
+    }
+
+    #[test]
+    fn bls_threshold_boundary() {
+        // Test that BLS fails when factored bits < total/3.
+        // Use a crafted case: k=1, d=1, m=0: N = 999 - 2*1 = 979 = 11*89 (composite)
+        // But even if it were prime, k-m=1-0=1, so 10^1 contributes ~3.3 bits
+        // out of ~10 total bits → 3.3/10 = 33% ≈ 1/3 — borderline.
+        // Use an empty sieve so no cofactor factoring helps.
+        let candidate = Integer::from(979u32);
+        assert!(
+            !bls_near_repdigit_proof(1, 1, 0, &candidate, &[]),
+            "BLS should fail with no sieve primes for cofactor factoring"
+        );
+    }
 }

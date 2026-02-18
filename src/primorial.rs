@@ -568,4 +568,121 @@ mod tests {
             "Morrison should prove 89#-1 prime"
         );
     }
+
+    // ---- Sieve advance + residue tests ----
+
+    #[test]
+    fn primorial_sieve_advance_correct_residues() {
+        // Step-by-step primorial residues: 2# = 2, 3# = 6, 5# = 30, 7# = 210
+        let sieve_primes = sieve::generate_primes(100);
+        let all_primes = sieve::generate_primes(50);
+
+        let mut psieve = PrimorialSieve::new(&sieve_primes, &all_primes, 0);
+
+        // Advance to 2# = 2
+        psieve.advance(2);
+        for &(q, pm) in &psieve.entries {
+            assert_eq!(pm, 2 % q, "2# mod {} should be {}", q, 2 % q);
+        }
+
+        // Advance to 3# = 6
+        psieve.advance(3);
+        for &(q, pm) in &psieve.entries {
+            assert_eq!(pm, 6 % q, "3# mod {} should be {}", q, 6 % q);
+        }
+
+        // Advance to 5# = 30
+        psieve.advance(5);
+        for &(q, pm) in &psieve.entries {
+            assert_eq!(pm, 30 % q, "5# mod {} should be {}", q, 30 % q);
+        }
+
+        // Advance to 7# = 210
+        psieve.advance(7);
+        for &(q, pm) in &psieve.entries {
+            assert_eq!(pm, 210 % q, "7# mod {} should be {}", q, 210 % q);
+        }
+    }
+
+    #[test]
+    fn primorial_sieve_removes_primes_correctly() {
+        // Advancing past prime q should remove q from entries (since q | q#)
+        let sieve_primes: Vec<u64> = vec![3, 5, 7, 11, 13];
+        let all_primes: Vec<u64> = vec![2, 3, 5, 7, 11, 13];
+
+        let mut psieve = PrimorialSieve::new(&sieve_primes, &all_primes, 0);
+        assert_eq!(psieve.entries.len(), 5);
+
+        // Advance to 3: 3 | 3# = 6, so q=3 removed
+        psieve.advance(2);
+        psieve.advance(3);
+        assert!(
+            !psieve.entries.iter().any(|&(q, _)| q == 3),
+            "q=3 should be removed after advancing past prime 3"
+        );
+
+        // Advance to 5: 5 | 5# = 30
+        psieve.advance(5);
+        assert!(
+            !psieve.entries.iter().any(|&(q, _)| q == 5),
+            "q=5 should be removed after advancing past prime 5"
+        );
+    }
+
+    #[test]
+    fn primorial_values_match_gmp() {
+        // Verify incremental primorial matches GMP's Integer::primorial()
+        let all_primes = sieve::generate_primes(100);
+        let mut incremental = Integer::from(1u32);
+        for &p in &all_primes {
+            incremental *= p;
+            let expected = Integer::from(Integer::primorial(p as u32));
+            assert_eq!(
+                incremental, expected,
+                "Incremental {}# doesn't match GMP primorial",
+                p
+            );
+        }
+    }
+
+    #[test]
+    fn primorial_sieve_check_composites_detects_known() {
+        // 13#+1 = 30031 = 59*509 — should be detected as composite
+        // We need 59 in the sieve
+        let sieve_primes: Vec<u64> = vec![59, 509, 997];
+        let all_primes = sieve::generate_primes(13);
+
+        let mut psieve = PrimorialSieve::new(&sieve_primes, &all_primes, 0);
+        for &p in &all_primes {
+            psieve.advance(p);
+        }
+        let (plus_composite, _) = psieve.check_composites();
+        assert!(
+            plus_composite,
+            "13#+1 = 30031 = 59*509 should be detected as composite"
+        );
+    }
+
+    #[test]
+    fn primorial_prime_p2_smallest() {
+        // 2# + 1 = 3 (prime), 2# - 1 = 1 (not prime)
+        let prim = primorial(2);
+        assert_eq!(prim, 2);
+        let plus = Integer::from(&prim + 1u32);
+        assert_ne!(
+            plus.is_probably_prime(25),
+            IsPrime::No,
+            "2#+1 = 3 should be prime"
+        );
+        let minus = Integer::from(&prim - 1u32);
+        assert_eq!(minus, 1);
+    }
+
+    #[test]
+    fn primorial_no_primes_in_range() {
+        // Range [4, 4] has no primes — the search should find 0 primes to iterate
+        let all_primes = sieve::generate_primes(4);
+        let count = all_primes.iter().filter(|&&p| p >= 4 && p <= 4).count();
+        assert_eq!(count, 0, "Range [4,4] should contain no primes");
+    }
 }

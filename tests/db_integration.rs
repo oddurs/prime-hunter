@@ -453,7 +453,7 @@ async fn agent_task_lifecycle() {
 
     // Create a task
     let task = db
-        .create_agent_task("Test task", "Do something", "normal", Some("opus"), "manual", None, 1)
+        .create_agent_task("Test task", "Do something", "normal", Some("opus"), "manual", None, 1, None)
         .await
         .unwrap();
     assert_eq!(task.title, "Test task");
@@ -491,7 +491,7 @@ async fn template_expand_creates_parent_and_children() {
     let db = setup().await;
 
     let parent_id = db
-        .expand_template("fix-bug", "Fix login bug", "Users can't log in", "high", Some(5.0), 1)
+        .expand_template("fix-bug", "Fix login bug", "Users can't log in", "high", Some(5.0), 1, None)
         .await
         .unwrap();
 
@@ -522,7 +522,7 @@ async fn template_expand_creates_dependencies() {
     let db = setup().await;
 
     let parent_id = db
-        .expand_template("fix-bug", "Test deps", "test", "normal", None, 2)
+        .expand_template("fix-bug", "Test deps", "test", "normal", None, 2, None)
         .await
         .unwrap();
 
@@ -548,7 +548,7 @@ async fn claim_skips_tasks_with_unmet_deps() {
     let db = setup().await;
 
     let parent_id = db
-        .expand_template("fix-bug", "Dep test", "test", "normal", None, 1)
+        .expand_template("fix-bug", "Dep test", "test", "normal", None, 1, None)
         .await
         .unwrap();
 
@@ -571,11 +571,11 @@ async fn claim_skips_parent_tasks() {
     let db = setup().await;
 
     // Create a standalone task and a template task
-    db.create_agent_task("Standalone", "solo task", "normal", None, "manual", None, 1)
+    db.create_agent_task("Standalone", "solo task", "normal", None, "manual", None, 1, None)
         .await
         .unwrap();
     let _parent_id = db
-        .expand_template("fix-bug", "Parent", "test", "urgent", None, 1)
+        .expand_template("fix-bug", "Parent", "test", "urgent", None, 1, None)
         .await
         .unwrap();
 
@@ -593,7 +593,7 @@ async fn try_complete_parent_succeeds() {
     let db = setup().await;
 
     let parent_id = db
-        .expand_template("fix-bug", "Complete test", "test", "normal", None, 1)
+        .expand_template("fix-bug", "Complete test", "test", "normal", None, 1, None)
         .await
         .unwrap();
 
@@ -619,7 +619,7 @@ async fn try_complete_parent_fails_on_child_failure() {
     let db = setup().await;
 
     let parent_id = db
-        .expand_template("fix-bug", "Fail test", "test", "normal", None, 1)
+        .expand_template("fix-bug", "Fail test", "test", "normal", None, 1, None)
         .await
         .unwrap();
 
@@ -648,7 +648,7 @@ async fn permission_inheritance() {
 
     // Parent has permission_level 1, template steps request 0 and 1
     let parent_id = db
-        .expand_template("fix-bug", "Perm test", "test", "normal", None, 1)
+        .expand_template("fix-bug", "Perm test", "test", "normal", None, 1, None)
         .await
         .unwrap();
 
@@ -662,7 +662,7 @@ async fn permission_inheritance() {
 
     // Now test with a more restrictive parent (level 0)
     let parent_id_0 = db
-        .expand_template("fix-bug", "Perm test 0", "test", "normal", None, 0)
+        .expand_template("fix-bug", "Perm test 0", "test", "normal", None, 0, None)
         .await
         .unwrap();
 
@@ -737,4 +737,139 @@ async fn agent_memory_delete() {
 
     let all = db.get_all_agent_memory().await.unwrap();
     assert!(all.is_empty());
+}
+
+// --- Agent roles ---
+
+#[tokio::test]
+async fn role_crud_lifecycle() {
+    require_db!();
+    let db = setup().await;
+
+    // get_all_roles returns the 4 seeded roles
+    let roles = db.get_all_roles().await.unwrap();
+    assert_eq!(roles.len(), 4, "Should have 4 seeded roles");
+
+    let names: Vec<&str> = roles.iter().map(|r| r.name.as_str()).collect();
+    assert!(names.contains(&"engine"));
+    assert!(names.contains(&"frontend"));
+    assert!(names.contains(&"ops"));
+    assert!(names.contains(&"research"));
+
+    // Verify engine role fields
+    let engine = roles.iter().find(|r| r.name == "engine").unwrap();
+    assert_eq!(engine.default_permission_level, 2);
+    assert_eq!(engine.default_model, "sonnet");
+    assert!(engine.system_prompt.is_some());
+    assert_eq!(engine.default_max_cost_usd, Some(5.0));
+
+    // Verify research role defaults
+    let research = roles.iter().find(|r| r.name == "research").unwrap();
+    assert_eq!(research.default_permission_level, 0);
+    assert_eq!(research.default_model, "haiku");
+    assert_eq!(research.default_max_cost_usd, Some(1.0));
+}
+
+#[tokio::test]
+async fn role_get_by_name() {
+    require_db!();
+    let db = setup().await;
+
+    let role = db.get_role_by_name("ops").await.unwrap();
+    assert!(role.is_some());
+    let role = role.unwrap();
+    assert_eq!(role.name, "ops");
+    assert_eq!(role.default_permission_level, 3);
+
+    // Non-existent role
+    let missing = db.get_role_by_name("nonexistent").await.unwrap();
+    assert!(missing.is_none());
+}
+
+#[tokio::test]
+async fn role_templates_association() {
+    require_db!();
+    let db = setup().await;
+
+    // Engine role should have fix-bug template (seeded in test helper)
+    let templates = db.get_role_templates("engine").await.unwrap();
+    let names: Vec<&str> = templates.iter().map(|t| t.name.as_str()).collect();
+    assert!(names.contains(&"fix-bug"), "Engine role should have fix-bug template");
+
+    // Frontend role should also have fix-bug
+    let frontend_templates = db.get_role_templates("frontend").await.unwrap();
+    let frontend_names: Vec<&str> = frontend_templates.iter().map(|t| t.name.as_str()).collect();
+    assert!(frontend_names.contains(&"fix-bug"), "Frontend role should have fix-bug template");
+
+    // Research role has no templates seeded in test helper
+    let research_templates = db.get_role_templates("research").await.unwrap();
+    assert!(research_templates.is_empty(), "Research role has no templates in test seed");
+}
+
+#[tokio::test]
+async fn task_with_role_stores_role_name() {
+    require_db!();
+    let db = setup().await;
+
+    // Create task with engine role
+    let task = db
+        .create_agent_task(
+            "Optimize sieve",
+            "Improve Montgomery multiplication performance",
+            "normal",
+            None,
+            "manual",
+            None,
+            2,
+            Some("engine"),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(task.role_name.as_deref(), Some("engine"));
+
+    // Retrieve and verify
+    let fetched = db.get_agent_task(task.id).await.unwrap().unwrap();
+    assert_eq!(fetched.role_name.as_deref(), Some("engine"));
+
+    // Create task without role
+    let task2 = db
+        .create_agent_task("Generic task", "test", "normal", None, "manual", None, 1, None)
+        .await
+        .unwrap();
+    assert!(task2.role_name.is_none());
+}
+
+#[tokio::test]
+async fn expand_template_with_role() {
+    require_db!();
+    let db = setup().await;
+
+    let parent_id = db
+        .expand_template(
+            "fix-bug",
+            "Fix engine bug",
+            "Sieve returns wrong results",
+            "high",
+            Some(5.0),
+            2,
+            Some("engine"),
+        )
+        .await
+        .unwrap();
+
+    // Parent should have role_name set
+    let parent = db.get_agent_task(parent_id).await.unwrap().unwrap();
+    assert_eq!(parent.role_name.as_deref(), Some("engine"));
+
+    // Children should also have role_name set
+    let children = db.get_child_tasks(parent_id).await.unwrap();
+    assert_eq!(children.len(), 3);
+    for child in &children {
+        assert_eq!(
+            child.role_name.as_deref(),
+            Some("engine"),
+            "Child task should inherit role_name"
+        );
+    }
 }

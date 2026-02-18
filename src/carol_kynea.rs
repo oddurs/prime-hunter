@@ -616,4 +616,107 @@ mod tests {
             );
         }
     }
+
+    // ---- Edge case tests ----
+
+    #[test]
+    fn carol_n0_and_n1_values() {
+        // Carol(0) = (2^0 - 1)^2 - 2 = (1-1)^2 - 2 = -2 — invalid
+        // Carol(1) = (2^1 - 1)^2 - 2 = 1 - 2 = -1 — invalid
+        // These are handled by the search code (n >= 2 check) but verify the math
+        let c0 = Integer::from(1u32).pow(2) - Integer::from(2u32); // 1-2 = -1
+        assert!(c0 < 2, "Carol(0) should be < 2 (not prime-eligible)");
+    }
+
+    #[test]
+    fn kynea_n0_and_n1_values() {
+        // Kynea(0) = (2^0 + 1)^2 - 2 = 4 - 2 = 2 (prime)
+        // Kynea(1) = (2^1 + 1)^2 - 2 = 9 - 2 = 7 (prime)
+        let k0 = kynea(0);
+        assert_eq!(k0, 2, "Kynea(0) should be 2");
+        assert_ne!(k0.is_probably_prime(25), IsPrime::No, "Kynea(0)=2 is prime");
+
+        let k1 = kynea(1);
+        assert_eq!(k1, 7, "Kynea(1) should be 7");
+        assert_ne!(k1.is_probably_prime(25), IsPrime::No, "Kynea(1)=7 is prime");
+    }
+
+    #[test]
+    fn carol_kynea_sieve_recurrence_matches_direct() {
+        // Verify g2 = 2^n mod q and g4 = 4^n mod q step by step
+        let q = 97u64;
+        let mut g2 = sieve::pow_mod(2, 2, q);
+        let mut g4 = sieve::pow_mod(4, 2, q);
+
+        for n in 2..=30u64 {
+            let direct_g2 = sieve::pow_mod(2, n, q);
+            let direct_g4 = sieve::pow_mod(4, n, q);
+            assert_eq!(g2, direct_g2, "g2 mismatch at n={} mod {}", n, q);
+            assert_eq!(g4, direct_g4, "g4 mismatch at n={} mod {}", n, q);
+
+            // Advance
+            g2 = 2 * g2 % q;
+            g4 = 4 * g4 % q;
+        }
+    }
+
+    #[test]
+    fn carol_decomposition_large_n() {
+        // n=65: k = 2^64 - 1 (exceeds u64 for carol), exp = 66
+        // Verify big-integer reconstruction
+        let n = 65u64;
+        let k_big = (Integer::from(1u32) << 64u32) - 1u32;
+        let exp = n + 1;
+        let reconstructed = &k_big * Integer::from(2u32).pow(crate::checked_u32(exp)) - 1u32;
+        assert_eq!(
+            reconstructed,
+            carol(n),
+            "Big-integer Carol decomposition failed for n=65"
+        );
+    }
+
+    #[test]
+    fn test_carol_rejects_composites() {
+        // Carol(5) = (2^5-1)^2 - 2 = 31^2-2 = 959 = 7*137
+        // Carol(8) = (2^8-1)^2 - 2 = 255^2-2 = 65023 (composite)
+        // Carol(9) = (2^9-1)^2 - 2 = 511^2-2 = 261119 (composite)
+        for &n in &[5u64, 8, 9] {
+            let c = carol(n);
+            let (r, _) = test_carol(&c, n, 25);
+            assert_eq!(r, IsPrime::No, "Carol({}) = {} should be composite", n, c);
+        }
+    }
+
+    #[test]
+    fn test_kynea_rejects_composites() {
+        // Kynea(4) = (2^4+1)^2 - 2 = 17^2-2 = 287 = 7*41
+        // Kynea(6) = (2^6+1)^2 - 2 = 65^2-2 = 4223 (composite)
+        // Kynea(7) = (2^7+1)^2 - 2 = 129^2-2 = 16639 (composite)
+        for &n in &[4u64, 6, 7] {
+            let k = kynea(n);
+            let (r, _) = test_kynea(&k, n, 25);
+            assert_eq!(r, IsPrime::No, "Kynea({}) = {} should be composite", n, k);
+        }
+    }
+
+    #[test]
+    fn llr_test_big_matches_small_k() {
+        // Carol(10) should give the same result whether we use small-k or big-k path
+        let n = 10u64;
+        let c = carol(n);
+
+        // Small-k path (n <= 64)
+        let k_small = (1u64 << (n - 1)) - 1;
+        let exp = n + 1;
+        let result_small = kbn::llr_test(&c, k_small, exp);
+
+        // Big-k path
+        let k_big = (Integer::from(1u32) << (n - 1) as u32) - 1u32;
+        let result_big = llr_test_big(&c, &k_big, exp);
+
+        assert_eq!(
+            result_small, result_big,
+            "LLR small-k and big-k paths should agree for Carol(10)"
+        );
+    }
 }

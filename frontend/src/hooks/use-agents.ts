@@ -7,7 +7,8 @@
  *
  * Provides CRUD operations on the `agent_tasks` table: create tasks,
  * poll for status updates, cancel running agents, expand templates,
- * and build task trees for multi-step workflows.
+ * and build task trees for multi-step workflows. Also provides role
+ * management for domain-specific agent configurations.
  *
  * @see {@link src/agent.rs} — Rust-side agent subprocess manager
  */
@@ -35,6 +36,7 @@ export interface AgentTask {
   permission_level: number;
   template_name: string | null;
   on_child_failure: string;
+  role_name: string | null;
 }
 
 export interface AgentEvent {
@@ -63,6 +65,7 @@ export interface AgentTemplate {
   description: string;
   steps: TemplateStep[];
   created_at: string;
+  role_name: string | null;
 }
 
 export interface TemplateStep {
@@ -76,6 +79,20 @@ export interface TemplateStep {
 export interface TaskTreeNode {
   task: AgentTask;
   children: AgentTask[];
+}
+
+/** An agent role that bundles domain context, permissions, and defaults. */
+export interface AgentRole {
+  id: number;
+  name: string;
+  description: string;
+  domains: string[];
+  default_permission_level: number;
+  default_model: string;
+  system_prompt: string | null;
+  default_max_cost_usd: number | null;
+  created_at: string;
+  updated_at: string;
 }
 
 export function useAgentTasks(statusFilter?: string) {
@@ -236,13 +253,56 @@ export function useAgentTemplates() {
   return { templates, loading, refetch: fetchTemplates };
 }
 
+/** Fetch all agent roles with Supabase realtime subscription. */
+export function useAgentRoles() {
+  const [roles, setRoles] = useState<AgentRole[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const fetchRoles = useCallback(async () => {
+    const { data, error } = await supabase
+      .from("agent_roles")
+      .select("*")
+      .order("name");
+
+    if (!error && data) {
+      setRoles(data as AgentRole[]);
+    }
+    setLoading(false);
+  }, []);
+
+  useEffect(() => {
+    fetchRoles();
+  }, [fetchRoles]);
+
+  // Realtime subscription
+  useEffect(() => {
+    const channel = supabase
+      .channel("agent_roles_changes")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "agent_roles" },
+        () => {
+          fetchRoles();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [fetchRoles]);
+
+  return { roles, loading, refetch: fetchRoles };
+}
+
 export async function createTask(
   title: string,
   description: string,
   priority: string,
   agentModel?: string,
   maxCostUsd?: number,
-  permissionLevel: number = 1
+  permissionLevel: number = 1,
+  roleName?: string
 ) {
   const { data, error } = await supabase
     .from("agent_tasks")
@@ -254,6 +314,7 @@ export async function createTask(
       source: "manual",
       max_cost_usd: maxCostUsd ?? null,
       permission_level: permissionLevel,
+      role_name: roleName ?? null,
     })
     .select()
     .single();
@@ -269,7 +330,8 @@ export async function expandTemplate(
   description: string,
   priority: string,
   maxCostUsd?: number,
-  permissionLevel: number = 1
+  permissionLevel: number = 1,
+  roleName?: string
 ) {
   const resp = await fetch(`/api/agents/templates/${encodeURIComponent(name)}/expand`, {
     method: "POST",
@@ -280,6 +342,7 @@ export async function expandTemplate(
       priority,
       max_cost_usd: maxCostUsd ?? null,
       permission_level: permissionLevel,
+      role_name: roleName ?? null,
     }),
   });
   const body = await resp.json();

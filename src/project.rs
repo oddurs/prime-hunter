@@ -252,6 +252,73 @@ fn validate_config(config: &ProjectConfig) -> Result<()> {
         anyhow::bail!("Survey objective requires target.range_start/range_end or strategy.phases");
     }
 
+    // Validate phase dependency graph (skip for auto_strategy — phases generated later)
+    if !config.strategy.phases.is_empty() {
+        validate_phase_graph(&config.strategy.phases)?;
+    }
+
+    Ok(())
+}
+
+/// Validate the phase dependency graph: all `depends_on` references must
+/// point to phases in the same project, and the graph must be acyclic
+/// (no circular dependencies).
+fn validate_phase_graph(phases: &[PhaseConfig]) -> Result<()> {
+    use std::collections::{HashMap, HashSet};
+
+    let names: HashSet<&str> = phases.iter().map(|p| p.name.as_str()).collect();
+
+    // Check all depends_on references exist
+    for phase in phases {
+        for dep in phase.depends_on.as_deref().unwrap_or_default() {
+            if !names.contains(dep.as_str()) {
+                anyhow::bail!(
+                    "Phase '{}' depends on unknown phase '{}'. Known phases: {}",
+                    phase.name,
+                    dep,
+                    names.into_iter().collect::<Vec<_>>().join(", ")
+                );
+            }
+        }
+    }
+
+    // Detect circular dependencies via topological sort (Kahn's algorithm)
+    let mut in_degree: HashMap<&str, usize> = HashMap::new();
+    let mut successors: HashMap<&str, Vec<&str>> = HashMap::new();
+    for phase in phases {
+        in_degree.entry(phase.name.as_str()).or_insert(0);
+        successors.entry(phase.name.as_str()).or_default();
+        for dep in phase.depends_on.as_deref().unwrap_or_default() {
+            *in_degree.entry(phase.name.as_str()).or_insert(0) += 1;
+            successors.entry(dep.as_str()).or_default().push(phase.name.as_str());
+        }
+    }
+
+    let mut queue: Vec<&str> = in_degree
+        .iter()
+        .filter(|(_, &deg)| deg == 0)
+        .map(|(&name, _)| name)
+        .collect();
+    let mut visited = 0usize;
+
+    while let Some(node) = queue.pop() {
+        visited += 1;
+        for &succ in successors.get(node).unwrap_or(&vec![]) {
+            let deg = in_degree.get_mut(succ).unwrap();
+            *deg -= 1;
+            if *deg == 0 {
+                queue.push(succ);
+            }
+        }
+    }
+
+    if visited != phases.len() {
+        anyhow::bail!(
+            "Circular dependency detected among phases. {} phases could not be ordered.",
+            phases.len() - visited
+        );
+    }
+
     Ok(())
 }
 
@@ -656,6 +723,30 @@ async fn orchestrate_project(db: &Database, project: &ProjectRow) -> Result<()> 
     db.update_project_progress(project.id, total_tested, total_found)
         .await?;
 
+    // 3b. Compute actual cost from work block durations
+    let cloud_rate = project
+        .budget
+        .get("cloud_rate_usd_per_core_hour")
+        .and_then(serde_json::Value::as_f64)
+        .unwrap_or(0.04);
+    let mut total_core_hours = 0.0f64;
+    for phase in phases.iter().filter(|p| p.search_job_id.is_some()) {
+        let job_id = phase.search_job_id.unwrap();
+        let hours = db.get_job_core_hours(job_id).await.unwrap_or(0.0);
+        total_core_hours += hours;
+    }
+    let total_cost_usd = total_core_hours * cloud_rate;
+    db.update_project_cost(project.id, total_core_hours, total_cost_usd)
+        .await?;
+
+    // 3c. Link best prime found for this form to the project
+    if let Ok(Some(best)) = db.get_best_prime_for_form(&project.form).await {
+        if best.digits > project.best_digits {
+            db.update_project_best_prime(project.id, Some(best.id), best.digits)
+                .await?;
+        }
+    }
+
     // 4. Check if all phases are terminal (completed/skipped/failed)
     let all_terminal = phases
         .iter()
@@ -680,37 +771,37 @@ async fn orchestrate_project(db: &Database, project: &ProjectRow) -> Result<()> 
         );
     }
 
-    // 5. Check budget alerts
+    // 5. Check budget alerts (use freshly computed cost, not stale project row)
     if let Some(max_cost) = project.budget.get("max_cost_usd").and_then(serde_json::Value::as_f64)
     {
-        if project.total_cost_usd >= max_cost {
+        if total_cost_usd >= max_cost {
             db.update_project_status(project.id, "paused").await?;
             db.insert_project_event(
                 project.id,
                 "budget_exceeded",
                 &format!(
                     "Budget exceeded: ${:.2} >= ${:.2} — project paused",
-                    project.total_cost_usd, max_cost
+                    total_cost_usd, max_cost
                 ),
                 None,
             )
             .await?;
             eprintln!(
                 "Project '{}' paused: budget exceeded (${:.2} >= ${:.2})",
-                project.slug, project.total_cost_usd, max_cost
+                project.slug, total_cost_usd, max_cost
             );
         } else if let Some(alert) = project
             .budget
             .get("cost_alert_threshold_usd")
             .and_then(serde_json::Value::as_f64)
         {
-            if project.total_cost_usd >= alert {
+            if total_cost_usd >= alert {
                 db.insert_project_event(
                     project.id,
                     "budget_alert",
                     &format!(
                         "Cost alert: ${:.2} >= ${:.2} threshold",
-                        project.total_cost_usd, alert
+                        total_cost_usd, alert
                     ),
                     None,
                 )
@@ -1438,6 +1529,80 @@ range_end = 20000000
         assert_eq!(record.expression, "208003! - 1");
         assert_eq!(record.digits, 1015843);
         assert_eq!(record.holder, "Fujii");
+    }
+
+    #[test]
+    fn validate_phase_graph_valid() {
+        let phases = vec![
+            PhaseConfig {
+                name: "sweep".into(),
+                description: "First phase".into(),
+                search_params: serde_json::json!({"search_type": "factorial", "start": 1, "end": 1000}),
+                block_size: Some(100),
+                depends_on: None,
+                activation_condition: None,
+                completion: "all_blocks_done".into(),
+            },
+            PhaseConfig {
+                name: "extend".into(),
+                description: "Second phase".into(),
+                search_params: serde_json::json!({"search_type": "factorial", "start": 1000, "end": 2000}),
+                block_size: Some(100),
+                depends_on: Some(vec!["sweep".into()]),
+                activation_condition: Some("previous_phase_found_zero".into()),
+                completion: "all_blocks_done".into(),
+            },
+        ];
+        assert!(validate_phase_graph(&phases).is_ok());
+    }
+
+    #[test]
+    fn validate_phase_graph_unknown_dep() {
+        let phases = vec![PhaseConfig {
+            name: "sweep".into(),
+            description: String::new(),
+            search_params: serde_json::json!({"search_type": "factorial"}),
+            block_size: None,
+            depends_on: Some(vec!["nonexistent".into()]),
+            activation_condition: None,
+            completion: "all_blocks_done".into(),
+        }];
+        let err = validate_phase_graph(&phases).unwrap_err();
+        assert!(
+            err.to_string().contains("unknown phase"),
+            "Expected unknown phase error, got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn validate_phase_graph_circular() {
+        let phases = vec![
+            PhaseConfig {
+                name: "a".into(),
+                description: String::new(),
+                search_params: serde_json::json!({}),
+                block_size: None,
+                depends_on: Some(vec!["b".into()]),
+                activation_condition: None,
+                completion: "all_blocks_done".into(),
+            },
+            PhaseConfig {
+                name: "b".into(),
+                description: String::new(),
+                search_params: serde_json::json!({}),
+                block_size: None,
+                depends_on: Some(vec!["a".into()]),
+                activation_condition: None,
+                completion: "all_blocks_done".into(),
+            },
+        ];
+        let err = validate_phase_graph(&phases).unwrap_err();
+        assert!(
+            err.to_string().contains("Circular dependency"),
+            "Expected circular dep error, got: {}",
+            err
+        );
     }
 
     #[test]

@@ -470,14 +470,25 @@ impl Database {
     }
 
     pub async fn complete_work_block(&self, block_id: i64, tested: i64, found: i64) -> Result<()> {
-        sqlx::query(
-            "UPDATE work_blocks SET status = 'completed', completed_at = NOW(), tested = $1, found = $2 WHERE id = $3",
-        )
-        .bind(tested)
-        .bind(found)
-        .bind(block_id)
-        .execute(&self.pool)
-        .await?;
+        self.complete_work_block_with_cores(block_id, tested, found, 1)
+            .await
+    }
+
+    /// Complete a work block, recording duration (from claimed_at) and cores used.
+    pub async fn complete_work_block_with_cores(
+        &self,
+        block_id: i64,
+        tested: i64,
+        found: i64,
+        cores_used: i32,
+    ) -> Result<()> {
+        sqlx::query("SELECT complete_work_block_with_duration($1, $2, $3, $4)")
+            .bind(block_id)
+            .bind(tested)
+            .bind(found)
+            .bind(cores_used)
+            .execute(&self.pool)
+            .await?;
         Ok(())
     }
 
@@ -1763,6 +1774,55 @@ impl Database {
         .fetch_optional(&self.pool)
         .await?;
         Ok(row)
+    }
+
+    /// Update a project's cost and core-hour totals.
+    /// Called from the orchestration tick after computing actual cost from work blocks.
+    pub async fn update_project_cost(
+        &self,
+        project_id: i64,
+        total_core_hours: f64,
+        total_cost_usd: f64,
+    ) -> Result<()> {
+        sqlx::query(
+            "UPDATE projects SET total_core_hours = $1, total_cost_usd = $2, updated_at = NOW()
+             WHERE id = $3",
+        )
+        .bind(total_core_hours)
+        .bind(total_cost_usd)
+        .bind(project_id)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Update a project's best prime reference.
+    /// Called from the orchestration tick when a new largest prime is found.
+    pub async fn update_project_best_prime(
+        &self,
+        project_id: i64,
+        best_prime_id: Option<i64>,
+        best_digits: i64,
+    ) -> Result<()> {
+        sqlx::query(
+            "UPDATE projects SET best_prime_id = $1, best_digits = $2, updated_at = NOW()
+             WHERE id = $3",
+        )
+        .bind(best_prime_id)
+        .bind(best_digits)
+        .bind(project_id)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Get total core-hours for all completed work blocks of a search job.
+    pub async fn get_job_core_hours(&self, job_id: i64) -> Result<f64> {
+        let hours: f64 = sqlx::query_scalar("SELECT get_job_core_hours($1)")
+            .bind(job_id)
+            .fetch_one(&self.pool)
+            .await?;
+        Ok(hours)
     }
 }
 

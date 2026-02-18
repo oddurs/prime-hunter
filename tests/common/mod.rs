@@ -56,10 +56,22 @@ pub async fn build_test_app() -> axum::Router {
 /// Truncate all tables to ensure test isolation.
 pub async fn truncate_all_tables(pool: &sqlx::PgPool) {
     sqlx::raw_sql(
-        "TRUNCATE TABLE agent_task_deps, agent_memory, agent_events, agent_tasks,
-                       agent_budgets, agent_templates, work_blocks, search_jobs,
-                       workers, primes
+        "TRUNCATE TABLE agent_role_templates, agent_task_deps, agent_memory,
+                       agent_events, agent_tasks, agent_budgets, agent_templates,
+                       agent_roles, work_blocks, search_jobs, workers, primes
          CASCADE",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+
+    // Re-seed roles
+    sqlx::raw_sql(
+        "INSERT INTO agent_roles (name, description, domains, default_permission_level, default_model, system_prompt, default_max_cost_usd) VALUES
+          ('engine', 'Engine specialist', '[\"engine\"]', 2, 'sonnet', 'Engine role prompt', 5.00),
+          ('frontend', 'Frontend specialist', '[\"frontend\"]', 2, 'sonnet', 'Frontend role prompt', 3.00),
+          ('ops', 'Ops specialist', '[\"deploy\",\"server\"]', 3, 'sonnet', 'Ops role prompt', 10.00),
+          ('research', 'Research analyst', '[\"docs\"]', 0, 'haiku', 'Research role prompt', 1.00)",
     )
     .execute(pool)
     .await
@@ -71,6 +83,17 @@ pub async fn truncate_all_tables(pool: &sqlx::PgPool) {
           ('fix-bug', 'Bug fix workflow: investigate, fix, verify',
            '[{\"title\":\"Investigate\",\"description\":\"Find root cause\",\"permission_level\":0},{\"title\":\"Fix\",\"description\":\"Implement fix\",\"permission_level\":1,\"depends_on_step\":0},{\"title\":\"Verify\",\"description\":\"Run tests\",\"permission_level\":1,\"depends_on_step\":1}]'::jsonb)
          ON CONFLICT (name) DO NOTHING",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+
+    // Re-seed role-template associations
+    sqlx::raw_sql(
+        "INSERT INTO agent_role_templates (role_name, template_name) VALUES
+          ('engine', 'fix-bug'),
+          ('frontend', 'fix-bug')
+         ON CONFLICT DO NOTHING",
     )
     .execute(pool)
     .await
@@ -98,6 +121,7 @@ async fn run_migrations(pool: &sqlx::PgPool) {
         "supabase/migrations/008_agent_permissions.sql",
         "supabase/migrations/009_agent_memory.sql",
         "supabase/migrations/010_task_decomposition.sql",
+        "supabase/migrations/013_agent_roles.sql",
     ];
 
     for file in &migration_files {

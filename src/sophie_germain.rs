@@ -423,4 +423,105 @@ mod tests {
         assert!(sg_count <= k_count);
         assert!(sg_count <= k2_count);
     }
+
+    // ---- Additional Sophie Germain tests ----
+
+    #[test]
+    fn known_sg_small_primes_oeis() {
+        // OEIS A005384: first 10 Sophie Germain primes: 2, 3, 5, 11, 23, 29, 41, 53, 83, 89
+        let sg_primes = [2u32, 3, 5, 11, 23, 29, 41, 53, 83, 89];
+        for &p in &sg_primes {
+            let p_int = Integer::from(p);
+            assert_ne!(
+                p_int.is_probably_prime(25),
+                IsPrime::No,
+                "SG prime {} should be prime", p
+            );
+            let safe = Integer::from(2 * p + 1);
+            assert_ne!(
+                safe.is_probably_prime(25),
+                IsPrime::No,
+                "Safe prime 2*{}+1={} should be prime", p, 2 * p + 1
+            );
+        }
+    }
+
+    #[test]
+    fn sg_k1_base2_n2_is_germain_pair() {
+        // k=1, b=2, n=2: p = 1*4-1 = 3, 2p+1 = 7 — both prime
+        let p = kb_minus(1, 2, 2);
+        assert_eq!(p, 3);
+        assert_ne!(p.is_probably_prime(25), IsPrime::No);
+        let safe = kb_minus(2, 2, 2); // 2*4-1 = 7
+        assert_eq!(safe, 7);
+        assert_ne!(safe.is_probably_prime(25), IsPrime::No);
+    }
+
+    #[test]
+    fn sg_not_germain_safe_composite() {
+        // p=7 is prime, but 2*7+1=15=3*5 is composite — NOT a SG pair
+        let p = Integer::from(7u32);
+        assert_ne!(p.is_probably_prime(25), IsPrime::No, "7 is prime");
+        let safe = Integer::from(15u32);
+        assert_eq!(safe.is_probably_prime(25), IsPrime::No, "15 is composite");
+    }
+
+    #[test]
+    fn sg_k_overflow_detection() {
+        // (u64::MAX/2 + 1).checked_mul(2) should return None (overflow)
+        let big_k = u64::MAX / 2 + 1;
+        assert!(
+            big_k.checked_mul(2).is_none(),
+            "2 * (u64::MAX/2 + 1) should overflow"
+        );
+    }
+
+    #[test]
+    fn sg_base3_known_pairs() {
+        // k=2, base=3: p = 2*3^n - 1
+        // n=1: p=5, 2p+1=11 — both prime (SG pair)
+        let p = kb_minus(2, 3, 1);
+        assert_eq!(p, 5);
+        let safe = kb_minus(4, 3, 1); // 4*3-1 = 11
+        assert_eq!(safe, 11);
+        assert_ne!(p.is_probably_prime(25), IsPrime::No, "5 is prime");
+        assert_ne!(safe.is_probably_prime(25), IsPrime::No, "11 is prime");
+    }
+
+    #[test]
+    fn sg_sieve_intersection_smaller_than_either() {
+        // The intersection of two independent sieves should be <= min of both
+        let sieve_primes = sieve::generate_primes(10_000);
+        let sieve_min_n = 14u64;
+
+        let (_p_k, minus_k) = kbn::bsgs_sieve(1, 100, 3, 2, &sieve_primes, sieve_min_n);
+        let (_p_k2, minus_k2) = kbn::bsgs_sieve(1, 100, 6, 2, &sieve_primes, sieve_min_n);
+
+        let k_survivors = minus_k.iter().filter(|&&b| b).count();
+        let k2_survivors = minus_k2.iter().filter(|&&b| b).count();
+        let intersection = minus_k.iter().zip(minus_k2.iter()).filter(|(&a, &b)| a && b).count();
+
+        assert!(
+            intersection <= k_survivors.min(k2_survivors),
+            "Intersection {} should be <= min({}, {})",
+            intersection, k_survivors, k2_survivors
+        );
+    }
+
+    #[test]
+    fn sg_deterministic_both_sides() {
+        // k=3, b=2, n=3: p = 3*8-1 = 23, 2p+1 = 6*8-1 = 47 — both prime
+        let p = kb_minus(3, 2, 3);
+        let safe = kb_minus(6, 2, 3);
+        assert_eq!(p, 23);
+        assert_eq!(safe, 47);
+
+        let (r_p, cert_p) = kbn::test_prime(&p, 3, 2, 3, false, 25);
+        assert_eq!(r_p, IsPrime::Yes, "23 should be prime");
+        assert_eq!(cert_p, "deterministic");
+
+        let (r_safe, cert_safe) = kbn::test_prime(&safe, 6, 2, 3, false, 25);
+        assert_eq!(r_safe, IsPrime::Yes, "47 should be prime");
+        assert_eq!(cert_safe, "deterministic");
+    }
 }

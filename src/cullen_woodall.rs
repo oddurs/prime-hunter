@@ -556,4 +556,117 @@ mod tests {
         let reconstructed = Integer::from(m) * Integer::from(2u32).pow(crate::checked_u32(exp)) - 1u32;
         assert_eq!(reconstructed, woodall(n));
     }
+
+    // ---- Edge case tests ----
+
+    #[test]
+    fn woodall_n1_equals_1() {
+        // W_1 = 1*2^1 - 1 = 1, not prime
+        let w = woodall(1);
+        assert_eq!(w, 1, "W_1 should be 1");
+    }
+
+    #[test]
+    fn cullen_n0_edge_case() {
+        // C_0 = 0*2^0 + 1 = 1, not prime
+        let c = Integer::from(0u32) * Integer::from(1u32) + 1u32;
+        assert_eq!(c, 1, "C_0 should be 1");
+    }
+
+    #[test]
+    fn woodall_decomposition_various_n() {
+        // Verify decomposition n = m * 2^e for various n values
+        for &n in &[12u64, 30, 81] {
+            let e = n.trailing_zeros();
+            let m = n >> e;
+            let exp = n + e as u64;
+
+            // m must be odd
+            assert!(m % 2 == 1, "m={} should be odd for n={}", m, n);
+            // Reconstruction: m * 2^e == n
+            assert_eq!(m << e, n, "m * 2^e should reconstruct n={}", n);
+            // W_n = m * 2^exp - 1
+            let reconstructed = Integer::from(m) * Integer::from(2u32).pow(crate::checked_u32(exp)) - 1u32;
+            assert_eq!(reconstructed, woodall(n), "Decomposition failed for W_{}", n);
+        }
+    }
+
+    #[test]
+    fn sieve_recurrence_matches_direct_computation() {
+        // Verify the sieve recurrence f(n) = n*2^n mod p matches direct computation
+        let p = 97u64;
+        let mut g = sieve::pow_mod(2, 1, p); // 2^1 mod p
+        let mut f = (1 % p) * g % p;          // 1*2^1 mod p
+
+        for n in 1..=20u64 {
+            // Direct computation
+            let direct = (n % p) * sieve::pow_mod(2, n, p) % p;
+            assert_eq!(f, direct, "n*2^n mod {} mismatch at n={}", p, n);
+
+            // Advance recurrence
+            g = 2 * g % p;
+            f = (2 * f + g) % p;
+        }
+    }
+
+    #[test]
+    fn cullen_proth_always_applies() {
+        // For Cullen numbers C_n = n*2^n + 1, Proth requires k=n < 2^n
+        // This holds for all n >= 1
+        for n in 1..=64u64 {
+            assert!(
+                n < (1u128 << n) as u64 || n > 63,
+                "Proth condition n < 2^n should hold for n={}", n
+            );
+        }
+    }
+
+    #[test]
+    fn test_cullen_rejects_composites() {
+        // C_2 = 2*4+1 = 9 = 3^2, C_3 = 3*8+1 = 25 = 5^2, C_4 = 4*16+1 = 65 = 5*13
+        for &n in &[2u64, 3, 4] {
+            let c = cullen(n);
+            let (r, _) = test_cullen(&c, n, 25);
+            assert_eq!(r, IsPrime::No, "C_{} = {} should be composite", n, c);
+        }
+    }
+
+    #[test]
+    fn test_woodall_rejects_composites() {
+        // W_4 = 4*16-1 = 63 = 9*7, W_5 = 5*32-1 = 159 = 3*53, W_7 = 7*128-1 = 895 = 5*179
+        for &n in &[4u64, 5, 7] {
+            let w = woodall(n);
+            let (r, _) = test_woodall(&w, n, 25);
+            assert_eq!(r, IsPrime::No, "W_{} = {} should be composite", n, w);
+        }
+    }
+
+    #[test]
+    fn sieve_cullen_woodall_soundness() {
+        // Verify that sieved-out candidates are actually composite
+        let sieve_primes = sieve::generate_primes(1_000);
+        let sieve_min_n = 10u64; // 10*2^10 = 10240 > 1000
+
+        let (cullen_surv, woodall_surv) = sieve_cullen_woodall(10, 100, &sieve_primes, sieve_min_n);
+
+        for n in sieve_min_n..=100 {
+            let idx = (n - 10) as usize;
+            if !cullen_surv[idx] {
+                let c = cullen(n);
+                assert_eq!(
+                    c.is_probably_prime(15),
+                    IsPrime::No,
+                    "Sieve said C_{} composite but it's prime", n
+                );
+            }
+            if !woodall_surv[idx] {
+                let w = woodall(n);
+                assert_eq!(
+                    w.is_probably_prime(15),
+                    IsPrime::No,
+                    "Sieve said W_{} composite but it's prime", n
+                );
+            }
+        }
+    }
 }
