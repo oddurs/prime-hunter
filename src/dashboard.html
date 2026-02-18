@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>primehunt dashboard</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background: #0d1117; color: #c9d1d9; line-height: 1.5;
+    padding: 1.5rem; max-width: 1100px; margin: 0 auto;
+  }
+  header { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 1.5rem; border-bottom: 1px solid #21262d; padding-bottom: 1rem; }
+  header h1 { font-size: 1.4rem; color: #58a6ff; font-weight: 600; }
+  header .conn { font-size: 0.8rem; display: flex; align-items: center; gap: 0.4rem; }
+  .conn-dot { width: 8px; height: 8px; border-radius: 50%; }
+  .conn-dot.ok { background: #3fb950; }
+  .conn-dot.off { background: #f85149; }
+  .conn-label { color: #8b949e; }
+
+  .status-bar {
+    background: #161b22; border: 1px solid #21262d; border-radius: 6px;
+    padding: 0.75rem 1rem; margin-bottom: 1.5rem; display: flex; align-items: center; gap: 0.75rem;
+  }
+  .status-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+  .status-dot.active { background: #3fb950; box-shadow: 0 0 6px #3fb950; }
+  .status-dot.idle { background: #8b949e; }
+  .status-text { font-size: 0.85rem; }
+  .status-text strong { color: #e6edf3; }
+
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; margin-bottom: 1.5rem; }
+  .card {
+    background: #161b22; border: 1px solid #21262d; border-radius: 6px; padding: 1rem;
+  }
+  .card .label { font-size: 0.75rem; color: #8b949e; text-transform: uppercase; letter-spacing: 0.05em; }
+  .card .value { font-size: 1.6rem; font-weight: 600; color: #e6edf3; margin-top: 0.25rem; }
+  .card .sub { font-size: 0.8rem; color: #8b949e; margin-top: 0.25rem; word-break: break-all; }
+
+  .form-tags { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.5rem; }
+  .form-tag {
+    background: #21262d; border-radius: 12px; padding: 0.2rem 0.6rem;
+    font-size: 0.75rem; color: #c9d1d9;
+  }
+  .form-tag .count { color: #58a6ff; font-weight: 600; margin-left: 0.3rem; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+  thead th {
+    text-align: left; padding: 0.5rem 0.75rem; border-bottom: 1px solid #21262d;
+    color: #8b949e; font-weight: 500; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em;
+  }
+  tbody td { padding: 0.5rem 0.75rem; border-bottom: 1px solid #161b22; }
+  tbody tr:hover { background: #161b22; }
+  .expression { font-family: "SF Mono", SFMono-Regular, Consolas, "Liberation Mono", Menlo, monospace; color: #58a6ff; }
+  .form-badge {
+    display: inline-block; background: #21262d; border-radius: 4px;
+    padding: 0.1rem 0.4rem; font-size: 0.75rem;
+  }
+
+  .pagination { display: flex; justify-content: center; align-items: center; gap: 1rem; margin-top: 1rem; }
+  .pagination button {
+    background: #21262d; border: 1px solid #30363d; color: #c9d1d9; border-radius: 6px;
+    padding: 0.4rem 0.8rem; cursor: pointer; font-size: 0.8rem;
+  }
+  .pagination button:hover:not(:disabled) { background: #30363d; }
+  .pagination button:disabled { opacity: 0.4; cursor: default; }
+  .pagination .info { font-size: 0.8rem; color: #8b949e; }
+
+  .section-title { font-size: 1rem; font-weight: 600; color: #e6edf3; margin-bottom: 0.75rem; }
+  .empty { text-align: center; padding: 2rem; color: #8b949e; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>primehunt dashboard</h1>
+  <span class="conn">
+    <span class="conn-dot off" id="connDot"></span>
+    <span class="conn-label" id="connLabel">Connecting...</span>
+  </span>
+</header>
+
+<div class="status-bar" id="statusBar">
+  <div class="status-dot idle" id="statusDot"></div>
+  <span class="status-text" id="statusText">Waiting for data...</span>
+</div>
+
+<div class="cards">
+  <div class="card">
+    <div class="label">Total primes found</div>
+    <div class="value" id="totalPrimes">-</div>
+  </div>
+  <div class="card">
+    <div class="label">Largest prime</div>
+    <div class="value" id="largestDigits">-</div>
+    <div class="sub" id="largestExpr"></div>
+  </div>
+  <div class="card">
+    <div class="label">By form</div>
+    <div class="form-tags" id="formTags">-</div>
+  </div>
+</div>
+
+<div class="section-title">Recent primes</div>
+<table>
+  <thead>
+    <tr>
+      <th>Expression</th>
+      <th>Form</th>
+      <th>Digits</th>
+      <th>Found</th>
+    </tr>
+  </thead>
+  <tbody id="primesBody">
+    <tr><td colspan="4" class="empty">Waiting for data...</td></tr>
+  </tbody>
+</table>
+<div class="pagination">
+  <button id="prevBtn" disabled onclick="prevPage()">Previous</button>
+  <span class="info" id="pageInfo"></span>
+  <button id="nextBtn" disabled onclick="nextPage()">Next</button>
+</div>
+
+<script>
+const LIMIT = 50;
+let offset = 0;
+let total = 0;
+let ws = null;
+let reconnectTimer = null;
+
+function formatTime(iso) {
+  if (!iso) return '-';
+  return new Date(iso).toLocaleString();
+}
+
+function numberWithCommas(x) {
+  return x.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+}
+
+function escapeHtml(s) {
+  const d = document.createElement('div');
+  d.textContent = s;
+  return d.innerHTML;
+}
+
+function renderStats(stats) {
+  document.getElementById('totalPrimes').textContent = numberWithCommas(stats.total);
+  if (stats.largest_expression) {
+    document.getElementById('largestDigits').textContent = numberWithCommas(stats.largest_digits) + ' digits';
+    document.getElementById('largestExpr').textContent = stats.largest_expression;
+  } else {
+    document.getElementById('largestDigits').textContent = '-';
+    document.getElementById('largestExpr').textContent = '';
+  }
+  const tags = document.getElementById('formTags');
+  if (stats.by_form.length === 0) {
+    tags.textContent = '-';
+  } else {
+    tags.innerHTML = stats.by_form.map(f =>
+      '<span class="form-tag">' + escapeHtml(f.form) + '<span class="count">' + f.count + '</span></span>'
+    ).join('');
+  }
+}
+
+function renderPrimes(data) {
+  total = data.total;
+  offset = data.offset;
+  const tbody = document.getElementById('primesBody');
+  if (data.primes.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="4" class="empty">No primes found yet</td></tr>';
+  } else {
+    tbody.innerHTML = data.primes.map(p =>
+      '<tr>' +
+      '<td class="expression">' + escapeHtml(p.expression) + '</td>' +
+      '<td><span class="form-badge">' + escapeHtml(p.form) + '</span></td>' +
+      '<td>' + numberWithCommas(p.digits) + '</td>' +
+      '<td>' + formatTime(p.found_at) + '</td>' +
+      '</tr>'
+    ).join('');
+  }
+  updatePagination();
+}
+
+function renderStatus(data) {
+  const dot = document.getElementById('statusDot');
+  const text = document.getElementById('statusText');
+  if (data.active && data.checkpoint) {
+    dot.className = 'status-dot active';
+    const cp = data.checkpoint;
+    let detail = '';
+    if (cp.type === 'Factorial') detail = 'Factorial search at n=' + cp.last_n;
+    else if (cp.type === 'Palindromic') detail = 'Palindromic search at ' + cp.digit_count + ' digits';
+    else if (cp.type === 'Kbn') detail = 'k*b^n search at n=' + cp.last_n;
+    else detail = 'Search in progress';
+    text.innerHTML = '<strong>Active:</strong> ' + detail;
+  } else {
+    dot.className = 'status-dot idle';
+    text.innerHTML = '<strong>Idle</strong> — no active search';
+  }
+}
+
+function updatePagination() {
+  const start = total === 0 ? 0 : offset + 1;
+  const end = Math.min(offset + LIMIT, total);
+  document.getElementById('pageInfo').textContent = start + '-' + end + ' of ' + numberWithCommas(total);
+  document.getElementById('prevBtn').disabled = offset === 0;
+  document.getElementById('nextBtn').disabled = offset + LIMIT >= total;
+}
+
+function prevPage() {
+  offset = Math.max(0, offset - LIMIT);
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ action: 'get_primes', offset: offset, limit: LIMIT }));
+  }
+}
+
+function nextPage() {
+  if (offset + LIMIT < total) {
+    offset += LIMIT;
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ action: 'get_primes', offset: offset, limit: LIMIT }));
+    }
+  }
+}
+
+function setConnected(ok) {
+  document.getElementById('connDot').className = 'conn-dot ' + (ok ? 'ok' : 'off');
+  document.getElementById('connLabel').textContent = ok ? 'Connected' : 'Reconnecting...';
+}
+
+function connect() {
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  ws = new WebSocket(proto + '//' + location.host + '/ws');
+
+  ws.onopen = function() { setConnected(true); };
+
+  ws.onclose = function() {
+    setConnected(false);
+    ws = null;
+    reconnectTimer = setTimeout(connect, 3000);
+  };
+
+  ws.onerror = function() { ws.close(); };
+
+  ws.onmessage = function(e) {
+    var data = JSON.parse(e.data);
+    if (data.type === 'update') {
+      renderStats(data.stats);
+      renderPrimes(data.primes);
+      renderStatus(data.status);
+    } else if (data.type === 'primes') {
+      renderPrimes(data);
+    }
+  };
+}
+
+connect();
+</script>
+</body>
+</html>

@@ -57,10 +57,28 @@ enum Commands {
         #[arg(long)]
         max_n: u64,
     },
+    /// Launch web dashboard to browse results and monitor searches
+    Dashboard {
+        /// Port to listen on
+        #[arg(long, default_value_t = 8080)]
+        port: u16,
+        /// Directory to serve static files from (e.g. Next.js export)
+        #[arg(long)]
+        static_dir: Option<PathBuf>,
+    },
 }
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
+
+    if let Commands::Dashboard { port, static_dir } = &cli.command {
+        return primehunt::dashboard::run(
+            *port,
+            &cli.db,
+            &cli.checkpoint,
+            static_dir.as_deref(),
+        );
+    }
 
     let num_cores = rayon::current_num_threads();
     eprintln!("primehunt starting with {} CPU cores", num_cores);
@@ -99,6 +117,7 @@ fn main() -> Result<()> {
             "max_n": max_n
         })
         .to_string(),
+        Commands::Dashboard { .. } => unreachable!(),
     };
 
     let result = match cli.command {
@@ -133,6 +152,7 @@ fn main() -> Result<()> {
             &cli.checkpoint,
             &search_params,
         ),
+        Commands::Dashboard { .. } => unreachable!(),
     };
 
     progress.stop();
