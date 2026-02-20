@@ -46,8 +46,8 @@ export default function AboutPage() {
   return (
     <>
       <Section>
-        <h1 className="text-4xl font-bold text-text mb-6">About darkreach</h1>
-        <div className="max-w-3xl space-y-4 text-text-muted">
+        <h1 className="text-4xl font-bold text-foreground mb-6">About darkreach</h1>
+        <div className="max-w-3xl space-y-4 text-muted-foreground">
           <p>
             darkreach is an AI-driven distributed computing platform for
             scientific discovery. It combines autonomous AI agents with
@@ -70,19 +70,19 @@ export default function AboutPage() {
       </Section>
 
       <Section secondary>
-        <h2 className="text-2xl font-bold text-text mb-8">Project Timeline</h2>
+        <h2 className="text-2xl font-bold text-foreground mb-8">Project Timeline</h2>
         <div className="max-w-2xl">
           <Timeline />
         </div>
       </Section>
 
       <Section>
-        <h2 className="text-2xl font-bold text-text mb-8">Tech Stack</h2>
+        <h2 className="text-2xl font-bold text-foreground mb-8">Tech Stack</h2>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {techStack.map((tech) => (
             <Card key={tech.name}>
-              <h3 className="text-text font-semibold mb-2">{tech.name}</h3>
-              <p className="text-sm text-text-muted">{tech.description}</p>
+              <h3 className="text-foreground font-semibold mb-2">{tech.name}</h3>
+              <p className="text-sm text-muted-foreground">{tech.description}</p>
             </Card>
           ))}
         </div>
@@ -90,8 +90,8 @@ export default function AboutPage() {
 
       <Section secondary>
         <div className="text-center max-w-2xl mx-auto">
-          <h2 className="text-2xl font-bold text-text mb-4">Open Source</h2>
-          <p className="text-text-muted mb-6">
+          <h2 className="text-2xl font-bold text-foreground mb-4">Open Source</h2>
+          <p className="text-muted-foreground mb-6">
             darkreach is licensed under MIT. Every line of engine code, every
             proof algorithm, and every orchestration strategy is open for
             inspection, modification, and contribution.
@@ -100,7 +100,7 @@ export default function AboutPage() {
             href="https://github.com/darkreach/darkreach"
             target="_blank"
             rel="noopener noreferrer"
-            className="inline-flex items-center gap-2 px-6 py-3 rounded-md border border-border text-text hover:border-text-muted transition-colors"
+            className="inline-flex items-center gap-2 px-6 py-3 rounded-md border border-border text-foreground hover:border-text-muted transition-colors"
           >
             <Github size={20} />
             View on GitHub

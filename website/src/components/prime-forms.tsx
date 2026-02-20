@@ -6,10 +6,10 @@ import Link from "next/link";
 export function PrimeForms() {
   return (
     <Section id="forms">
-      <h2 className="text-3xl font-bold text-text mb-4 text-center">
+      <h2 className="text-3xl font-bold text-foreground mb-4 text-center">
         12 Prime Forms
       </h2>
-      <p className="text-text-muted text-center max-w-2xl mx-auto mb-12">
+      <p className="text-muted-foreground text-center max-w-2xl mx-auto mb-12">
         From classical factorial primes to exotic generalized Fermats — darkreach
         searches them all with form-specific sieves, tests, and proofs.
       </p>
@@ -18,16 +18,16 @@ export function PrimeForms() {
         {primeForms.map((form) => (
           <div
             key={form.name}
-            className="card-glow rounded-lg border border-border bg-bg-secondary p-5"
+            className="card-glow rounded-lg border border-border bg-card p-5"
           >
             <div className="flex items-start justify-between mb-3">
-              <h3 className="text-text font-semibold">{form.name}</h3>
+              <h3 className="text-foreground font-semibold">{form.name}</h3>
               <Badge>{form.algorithm}</Badge>
             </div>
             <div className="font-mono text-accent-purple text-lg mb-3">
               {form.formula}
             </div>
-            <p className="text-sm text-text-muted leading-relaxed mb-3">
+            <p className="text-sm text-muted-foreground leading-relaxed mb-3">
               {form.description}
             </p>
             <Link

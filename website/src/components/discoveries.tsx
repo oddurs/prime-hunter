@@ -77,7 +77,7 @@ export function Discoveries() {
   return (
     <Section id="discoveries">
       <div className="flex items-center justify-between mb-4">
-        <h2 className="text-3xl font-bold text-text">Recent Discoveries</h2>
+        <h2 className="text-3xl font-bold text-foreground">Recent Discoveries</h2>
         <a
           href="https://app.darkreach.ai/browse"
           className="text-sm text-primary hover:underline hidden sm:block"
@@ -85,14 +85,14 @@ export function Discoveries() {
           View all →
         </a>
       </div>
-      <p className="text-text-muted mb-12">
+      <p className="text-muted-foreground mb-12">
         A sample of primes found by the darkreach network.
       </p>
 
       <div className="overflow-x-auto rounded-lg border border-border">
         <table className="w-full text-sm">
           <thead>
-            <tr className="bg-bg-secondary text-text-muted text-left">
+            <tr className="bg-card text-muted-foreground text-left">
               <th className="px-4 py-3 font-medium">Form</th>
               <th className="px-4 py-3 font-medium">Expression</th>
               <th className="px-4 py-3 font-medium text-right">Digits</th>
@@ -104,17 +104,17 @@ export function Discoveries() {
             {discoveries.map((d, i) => (
               <tr
                 key={i}
-                className="border-t border-border hover:bg-bg-secondary/50 transition-colors"
+                className="border-t border-border hover:bg-card/50 transition-colors"
               >
-                <td className="px-4 py-3 text-text">{d.form}</td>
+                <td className="px-4 py-3 text-foreground">{d.form}</td>
                 <td className="px-4 py-3 font-mono text-accent-purple">
                   {d.expression}
                 </td>
-                <td className="px-4 py-3 font-mono text-text text-right">
+                <td className="px-4 py-3 font-mono text-foreground text-right">
                   {d.digits}
                 </td>
-                <td className="px-4 py-3 text-text-muted">{d.proof}</td>
-                <td className="px-4 py-3 text-text-muted">{d.date}</td>
+                <td className="px-4 py-3 text-muted-foreground">{d.proof}</td>
+                <td className="px-4 py-3 text-muted-foreground">{d.date}</td>
               </tr>
             ))}
           </tbody>

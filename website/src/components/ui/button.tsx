@@ -5,9 +5,9 @@ const variants = {
   primary:
     "bg-accent-purple text-white hover:opacity-90",
   outline:
-    "border border-border text-text-muted hover:text-text hover:border-text-muted",
+    "border border-border text-muted-foreground hover:text-foreground hover:border-text-muted",
   ghost:
-    "text-text-muted hover:text-text hover:bg-bg-secondary",
+    "text-muted-foreground hover:text-foreground hover:bg-card",
 } as const;
 
 const sizes = {

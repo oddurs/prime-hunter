@@ -18,11 +18,11 @@ export function Hero() {
           <DarkReachLogo size={120} glow />
         </div>
 
-        <h1 className="text-5xl sm:text-6xl font-bold tracking-tight text-text mb-6">
+        <h1 className="text-5xl sm:text-6xl font-bold tracking-tight text-foreground mb-6">
           AI-driven distributed computing.
         </h1>
 
-        <p className="text-lg sm:text-xl text-text-muted max-w-2xl mx-auto mb-10">
+        <p className="text-lg sm:text-xl text-muted-foreground max-w-2xl mx-auto mb-10">
           darkreach autonomously researches, optimizes, and orchestrates
           scientific discoveries across a fleet of servers. Currently hunting
           primes.
@@ -37,7 +37,7 @@ export function Hero() {
           </Link>
           <a
             href="https://app.darkreach.ai"
-            className="inline-flex items-center px-6 py-3 rounded-md border border-border text-text-muted font-medium hover:text-text hover:border-text-muted transition-colors"
+            className="inline-flex items-center px-6 py-3 rounded-md border border-border text-muted-foreground font-medium hover:text-foreground hover:border-text-muted transition-colors"
           >
             Open Dashboard
           </a>

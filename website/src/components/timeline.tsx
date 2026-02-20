@@ -55,11 +55,11 @@ export function Timeline() {
             )}
           </div>
           <div className="pb-8">
-            <span className="text-xs font-mono text-text-muted">
+            <span className="text-xs font-mono text-muted-foreground">
               {event.date}
             </span>
-            <h3 className="text-text font-semibold mt-1">{event.title}</h3>
-            <p className="text-sm text-text-muted mt-1">{event.description}</p>
+            <h3 className="text-foreground font-semibold mt-1">{event.title}</h3>
+            <p className="text-sm text-muted-foreground mt-1">{event.description}</p>
           </div>
         </div>
       ))}

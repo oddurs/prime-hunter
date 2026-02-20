@@ -33,7 +33,7 @@ interface OSTabsProps {
 
 export function OSTabs({ selected, onChange }: OSTabsProps) {
   return (
-    <div className="flex gap-1 p-1 bg-bg-secondary border border-border rounded-md w-fit">
+    <div className="flex gap-1 p-1 bg-card border border-border rounded-md w-fit">
       {(Object.keys(osLabels) as OS[]).map((os) => (
         <button
           key={os}
@@ -41,7 +41,7 @@ export function OSTabs({ selected, onChange }: OSTabsProps) {
           className={`px-4 py-1.5 text-sm rounded transition-colors ${
             selected === os
               ? "bg-accent-purple text-white"
-              : "text-text-muted hover:text-text"
+              : "text-muted-foreground hover:text-foreground"
           }`}
         >
           {osLabels[os]}

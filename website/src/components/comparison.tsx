@@ -48,17 +48,17 @@ const features = [
 export function Comparison() {
   return (
     <Section secondary>
-      <h2 className="text-3xl font-bold text-text mb-4 text-center">
+      <h2 className="text-3xl font-bold text-foreground mb-4 text-center">
         Why darkreach
       </h2>
-      <p className="text-text-muted text-center max-w-2xl mx-auto mb-12">
+      <p className="text-muted-foreground text-center max-w-2xl mx-auto mb-12">
         How darkreach compares to existing distributed prime search platforms.
       </p>
 
       <div className="overflow-x-auto rounded-lg border border-border">
         <table className="w-full text-sm">
           <thead>
-            <tr className="bg-bg text-text-muted text-left">
+            <tr className="bg-background text-muted-foreground text-left">
               <th className="px-4 py-3 font-medium">Feature</th>
               <th className="px-4 py-3 font-medium">
                 <span className="text-accent-purple">darkreach</span>
@@ -70,14 +70,14 @@ export function Comparison() {
           <tbody>
             {features.map((row) => (
               <tr key={row.feature} className="border-t border-border">
-                <td className="px-4 py-3 text-text font-medium">
+                <td className="px-4 py-3 text-foreground font-medium">
                   {row.feature}
                 </td>
                 <td className="px-4 py-3 text-accent-green">
                   {row.darkreach}
                 </td>
-                <td className="px-4 py-3 text-text-muted">{row.gimps}</td>
-                <td className="px-4 py-3 text-text-muted">{row.primegrid}</td>
+                <td className="px-4 py-3 text-muted-foreground">{row.gimps}</td>
+                <td className="px-4 py-3 text-muted-foreground">{row.primegrid}</td>
               </tr>
             ))}
           </tbody>

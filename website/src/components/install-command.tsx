@@ -25,7 +25,7 @@ export function InstallCommand() {
             className={`px-3 py-1 text-sm rounded-md border transition-colors ${
               i === methodIndex
                 ? "border-accent-purple text-accent-purple"
-                : "border-border text-text-muted hover:text-text"
+                : "border-border text-muted-foreground hover:text-foreground"
             }`}
           >
             {method.label}

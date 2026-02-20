@@ -58,15 +58,15 @@ export function MobileNav({ open, onClose }: MobileNavProps) {
     <div className="fixed inset-0 z-50 md:hidden">
       <div className="absolute inset-0 bg-black/60" onClick={onClose} />
 
-      <div className="absolute inset-y-0 right-0 w-full max-w-sm bg-bg border-l border-border overflow-y-auto">
+      <div className="absolute inset-y-0 right-0 w-full max-w-sm bg-background border-l border-border overflow-y-auto">
         <div className="flex items-center justify-between px-6 h-16 border-b border-border">
           <div className="flex items-center gap-2">
             <DarkReachLogo size={24} />
-            <span className="text-text font-semibold">darkreach</span>
+            <span className="text-foreground font-semibold">darkreach</span>
           </div>
           <button
             onClick={onClose}
-            className="text-text-muted hover:text-text transition-colors"
+            className="text-muted-foreground hover:text-foreground transition-colors"
             aria-label="Close menu"
           >
             <X size={24} />
@@ -76,7 +76,7 @@ export function MobileNav({ open, onClose }: MobileNavProps) {
         <div className="px-6 py-6 space-y-8">
           {navSections.map((section) => (
             <div key={section.title}>
-              <h3 className="text-xs font-medium text-text-muted uppercase tracking-wider mb-3">
+              <h3 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-3">
                 {section.title}
               </h3>
               <div className="space-y-1">
@@ -85,7 +85,7 @@ export function MobileNav({ open, onClose }: MobileNavProps) {
                     key={link.href}
                     href={link.href}
                     onClick={onClose}
-                    className="block py-2 text-sm text-text hover:text-accent-purple transition-colors"
+                    className="block py-2 text-sm text-foreground hover:text-accent-purple transition-colors"
                   >
                     {link.label}
                   </Link>
@@ -99,7 +99,7 @@ export function MobileNav({ open, onClose }: MobileNavProps) {
               href="https://github.com/darkreach/darkreach"
               target="_blank"
               rel="noopener noreferrer"
-              className="flex items-center gap-2 py-2 text-sm text-text-muted hover:text-text transition-colors"
+              className="flex items-center gap-2 py-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
             >
               <Github size={16} />
               GitHub

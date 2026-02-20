@@ -144,13 +144,13 @@ export default function ApiPage() {
         {restEndpoints.map((ep) => (
           <div
             key={`${ep.method}-${ep.path}`}
-            className="border border-border rounded-lg p-4 bg-bg-secondary"
+            className="border border-border rounded-lg p-4 bg-card"
           >
             <div className="flex items-center gap-3 mb-2">
               <MethodBadge method={ep.method} />
               <code className="text-sm text-accent-purple">{ep.path}</code>
             </div>
-            <p className="text-sm text-text-muted m-0">{ep.description}</p>
+            <p className="text-sm text-muted-foreground m-0">{ep.description}</p>
             {ep.response && (
               <div className="mt-3">
                 <CodeBlock language="json">{ep.response}</CodeBlock>
@@ -170,7 +170,7 @@ export default function ApiPage() {
         {wsEvents.map((ev) => (
           <div
             key={ev.event}
-            className="border border-border rounded-lg p-4 bg-bg-secondary"
+            className="border border-border rounded-lg p-4 bg-card"
           >
             <div className="flex items-center gap-3 mb-2">
               <Badge variant={ev.direction.startsWith("server") ? "green" : "purple"}>
@@ -178,7 +178,7 @@ export default function ApiPage() {
               </Badge>
               <code className="text-sm text-accent-purple">{ev.event}</code>
             </div>
-            <p className="text-sm text-text-muted m-0 mb-3">
+            <p className="text-sm text-muted-foreground m-0 mb-3">
               {ev.description}
             </p>
             <CodeBlock language="json">{ev.payload}</CodeBlock>

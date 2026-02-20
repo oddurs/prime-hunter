@@ -1,7 +1,7 @@
 import { cn } from "@/lib/cn";
 
 const variants = {
-  default: "bg-bg border border-border text-text-muted",
+  default: "bg-background border border-border text-muted-foreground",
   green: "bg-accent-green/10 border border-accent-green/30 text-accent-green",
   orange: "bg-accent-orange/10 border border-accent-orange/30 text-accent-orange",
   red: "bg-destructive/10 border border-destructive/30 text-destructive",

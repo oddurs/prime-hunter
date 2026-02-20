@@ -20,46 +20,46 @@ function RankBadge({ rank }: { rank: number }) {
   if (rank === 1) return <Badge variant="purple">1st</Badge>;
   if (rank === 2) return <Badge variant="green">2nd</Badge>;
   if (rank === 3) return <Badge variant="orange">3rd</Badge>;
-  return <span className="text-text-muted font-mono text-sm">#{rank}</span>;
+  return <span className="text-muted-foreground font-mono text-sm">#{rank}</span>;
 }
 
 export default function LeaderboardPage() {
   return (
     <>
       <Section>
-        <h1 className="text-4xl font-bold text-text mb-4">Leaderboard</h1>
-        <p className="text-text-muted mb-10">
+        <h1 className="text-4xl font-bold text-foreground mb-4">Leaderboard</h1>
+        <p className="text-muted-foreground mb-10">
           Public contributor rankings for the darkreach network.
         </p>
 
         <div className="grid grid-cols-3 gap-6 mb-12">
-          <div className="text-center p-6 rounded-md border border-border bg-bg-secondary">
-            <div className="text-3xl font-bold font-mono text-text">
+          <div className="text-center p-6 rounded-md border border-border bg-card">
+            <div className="text-3xl font-bold font-mono text-foreground">
               {formatNumber(leaderboardStats.totalVolunteers)}
             </div>
-            <div className="text-sm text-text-muted">Total Volunteers</div>
+            <div className="text-sm text-muted-foreground">Total Volunteers</div>
           </div>
-          <div className="text-center p-6 rounded-md border border-border bg-bg-secondary">
+          <div className="text-center p-6 rounded-md border border-border bg-card">
             <div className="text-3xl font-bold font-mono text-accent-purple">
               {formatNumber(leaderboardStats.totalPrimes)}
             </div>
-            <div className="text-sm text-text-muted">Total Primes Found</div>
+            <div className="text-sm text-muted-foreground">Total Primes Found</div>
           </div>
-          <div className="text-center p-6 rounded-md border border-border bg-bg-secondary">
-            <div className="text-3xl font-bold font-mono text-text">
+          <div className="text-center p-6 rounded-md border border-border bg-card">
+            <div className="text-3xl font-bold font-mono text-foreground">
               {formatNumber(leaderboardStats.totalComputeHours)}h
             </div>
-            <div className="text-sm text-text-muted">Compute Time</div>
+            <div className="text-sm text-muted-foreground">Compute Time</div>
           </div>
         </div>
 
-        <h2 className="text-2xl font-bold text-text mb-4">
+        <h2 className="text-2xl font-bold text-foreground mb-4">
           Individual Rankings
         </h2>
         <div className="overflow-x-auto rounded-lg border border-border">
           <table className="w-full text-sm">
             <thead>
-              <tr className="bg-bg-secondary text-text-muted text-left">
+              <tr className="bg-card text-muted-foreground text-left">
                 <th className="px-4 py-3 font-medium w-16">Rank</th>
                 <th className="px-4 py-3 font-medium">Username</th>
                 <th className="px-4 py-3 font-medium">Team</th>
@@ -72,22 +72,22 @@ export default function LeaderboardPage() {
               {contributors.map((c) => (
                 <tr
                   key={c.username}
-                  className="border-t border-border hover:bg-bg-secondary/50 transition-colors"
+                  className="border-t border-border hover:bg-card/50 transition-colors"
                 >
                   <td className="px-4 py-3">
                     <RankBadge rank={c.rank} />
                   </td>
-                  <td className="px-4 py-3 font-mono text-text">
+                  <td className="px-4 py-3 font-mono text-foreground">
                     {c.username}
                   </td>
-                  <td className="px-4 py-3 text-text-muted">{c.team}</td>
-                  <td className="px-4 py-3 font-mono text-text text-right">
+                  <td className="px-4 py-3 text-muted-foreground">{c.team}</td>
+                  <td className="px-4 py-3 font-mono text-foreground text-right">
                     {formatNumber(c.credit)}
                   </td>
                   <td className="px-4 py-3 font-mono text-accent-purple text-right">
                     {formatNumber(c.primesFound)}
                   </td>
-                  <td className="px-4 py-3 font-mono text-text-muted text-right">
+                  <td className="px-4 py-3 font-mono text-muted-foreground text-right">
                     {formatNumber(c.computeHours)}
                   </td>
                 </tr>
@@ -98,11 +98,11 @@ export default function LeaderboardPage() {
       </Section>
 
       <Section secondary>
-        <h2 className="text-2xl font-bold text-text mb-4">Team Standings</h2>
+        <h2 className="text-2xl font-bold text-foreground mb-4">Team Standings</h2>
         <div className="overflow-x-auto rounded-lg border border-border">
           <table className="w-full text-sm">
             <thead>
-              <tr className="bg-bg text-text-muted text-left">
+              <tr className="bg-background text-muted-foreground text-left">
                 <th className="px-4 py-3 font-medium w-16">Rank</th>
                 <th className="px-4 py-3 font-medium">Team</th>
                 <th className="px-4 py-3 font-medium text-right">Members</th>
@@ -120,13 +120,13 @@ export default function LeaderboardPage() {
                   <td className="px-4 py-3">
                     <RankBadge rank={team.rank} />
                   </td>
-                  <td className="px-4 py-3 font-semibold text-text">
+                  <td className="px-4 py-3 font-semibold text-foreground">
                     {team.name}
                   </td>
-                  <td className="px-4 py-3 text-text-muted text-right">
+                  <td className="px-4 py-3 text-muted-foreground text-right">
                     {team.members}
                   </td>
-                  <td className="px-4 py-3 font-mono text-text text-right">
+                  <td className="px-4 py-3 font-mono text-foreground text-right">
                     {formatNumber(team.totalCredit)}
                   </td>
                   <td className="px-4 py-3 font-mono text-accent-purple text-right">

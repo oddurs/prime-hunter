@@ -11,8 +11,8 @@ export const metadata: Metadata = {
 export default function BlogPage() {
   return (
     <Section>
-      <h1 className="text-4xl font-bold text-text mb-4">Blog</h1>
-      <p className="text-text-muted mb-10">
+      <h1 className="text-4xl font-bold text-foreground mb-4">Blog</h1>
+      <p className="text-muted-foreground mb-10">
         News, updates, and deep dives from the darkreach team.
       </p>
 

@@ -13,7 +13,7 @@ export function Section({ id, className, children, secondary = false }: SectionP
       id={id}
       className={cn(
         "py-24 px-6 sm:px-8 lg:px-12",
-        secondary && "bg-bg-secondary",
+        secondary && "bg-card",
         className
       )}
     >

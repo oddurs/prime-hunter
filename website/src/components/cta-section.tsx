@@ -22,22 +22,22 @@ export DATABASE_URL="postgres://..."
 export function CtaSection() {
   return (
     <Section>
-      <h2 className="text-3xl font-bold text-text mb-4 text-center">
+      <h2 className="text-3xl font-bold text-foreground mb-4 text-center">
         Start Contributing
       </h2>
-      <p className="text-text-muted text-center max-w-2xl mx-auto mb-12">
+      <p className="text-muted-foreground text-center max-w-2xl mx-auto mb-12">
         Join the search as a volunteer worker, or deploy your own coordinator.
       </p>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-        <div className="rounded-lg border border-border bg-bg-secondary p-6">
+        <div className="rounded-lg border border-border bg-card p-6">
           <div className="flex items-center gap-3 mb-4">
             <div className="w-10 h-10 rounded-lg bg-accent-green/10 border border-accent-green/30 flex items-center justify-center text-accent-green">
               <Monitor size={20} />
             </div>
             <div>
-              <h3 className="text-lg font-semibold text-text">Run a Worker</h3>
-              <p className="text-sm text-text-muted">
+              <h3 className="text-lg font-semibold text-foreground">Run a Worker</h3>
+              <p className="text-sm text-muted-foreground">
                 Contribute compute to the network
               </p>
             </div>
@@ -51,14 +51,14 @@ export function CtaSection() {
           </Link>
         </div>
 
-        <div className="rounded-lg border border-border bg-bg-secondary p-6">
+        <div className="rounded-lg border border-border bg-card p-6">
           <div className="flex items-center gap-3 mb-4">
             <div className="w-10 h-10 rounded-lg bg-accent-purple/10 border border-accent-purple/30 flex items-center justify-center text-accent-purple">
               <Server size={20} />
             </div>
             <div>
-              <h3 className="text-lg font-semibold text-text">Self-Host</h3>
-              <p className="text-sm text-text-muted">
+              <h3 className="text-lg font-semibold text-foreground">Self-Host</h3>
+              <p className="text-sm text-muted-foreground">
                 Deploy your own coordinator
               </p>
             </div>

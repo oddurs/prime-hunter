@@ -8,7 +8,7 @@ const stats = [
 
 export function StatsBar() {
   return (
-    <section className="border-y border-border bg-bg-secondary">
+    <section className="border-y border-border bg-card">
       <div className="mx-auto max-w-7xl px-6 sm:px-8 lg:px-12 py-8">
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-6">
           {stats.map((stat) => (
@@ -17,11 +17,11 @@ export function StatsBar() {
                 {stat.live && (
                   <span className="inline-block w-2 h-2 rounded-full bg-accent-green pulse-green" />
                 )}
-                <span className="text-3xl font-bold font-mono text-text">
+                <span className="text-3xl font-bold font-mono text-foreground">
                   {stat.value}
                 </span>
               </div>
-              <div className="text-sm text-text-muted">{stat.label}</div>
+              <div className="text-sm text-muted-foreground">{stat.label}</div>
             </div>
           ))}
         </div>

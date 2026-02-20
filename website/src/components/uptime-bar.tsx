@@ -28,8 +28,8 @@ export function UptimeBar({ label, days = 90 }: UptimeBarProps) {
   return (
     <div>
       <div className="flex items-center justify-between mb-2">
-        <span className="text-sm text-text font-medium">{label}</span>
-        <span className="text-sm text-text-muted">{uptimePercent}% uptime</span>
+        <span className="text-sm text-foreground font-medium">{label}</span>
+        <span className="text-sm text-muted-foreground">{uptimePercent}% uptime</span>
       </div>
       <div className="flex gap-px">
         {uptimeDays.map((day) => (
@@ -44,8 +44,8 @@ export function UptimeBar({ label, days = 90 }: UptimeBarProps) {
         ))}
       </div>
       <div className="flex justify-between mt-1">
-        <span className="text-xs text-text-muted">{days} days ago</span>
-        <span className="text-xs text-text-muted">Today</span>
+        <span className="text-xs text-muted-foreground">{days} days ago</span>
+        <span className="text-xs text-muted-foreground">Today</span>
       </div>
     </div>
   );

@@ -14,7 +14,7 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
     <nav className="space-y-6">
       {docsNav.map((section) => (
         <div key={section.title}>
-          <h3 className="text-xs font-medium text-text-muted uppercase tracking-wider mb-2">
+          <h3 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">
             {section.title}
           </h3>
           <ul className="space-y-1">
@@ -29,7 +29,7 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
                       "block py-1.5 px-3 text-sm rounded-md transition-colors",
                       active
                         ? "bg-accent-purple/10 text-accent-purple border-l-2 border-accent-purple"
-                        : "text-text-muted hover:text-text hover:bg-bg-secondary"
+                        : "text-muted-foreground hover:text-foreground hover:bg-card"
                     )}
                   >
                     {item.title}
@@ -53,13 +53,13 @@ export function DocSidebar() {
       <div className="lg:hidden mb-4">
         <button
           onClick={() => setMobileOpen(!mobileOpen)}
-          className="flex items-center gap-2 text-sm text-text-muted hover:text-text transition-colors"
+          className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
         >
           {mobileOpen ? <X size={16} /> : <Menu size={16} />}
           {mobileOpen ? "Close menu" : "Documentation menu"}
         </button>
         {mobileOpen && (
-          <div className="mt-4 p-4 bg-bg-secondary border border-border rounded-md">
+          <div className="mt-4 p-4 bg-card border border-border rounded-md">
             <SidebarContent onNavigate={() => setMobileOpen(false)} />
           </div>
         )}

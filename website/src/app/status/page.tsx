@@ -13,7 +13,7 @@ export default function StatusPage() {
     <>
       <Section>
         <div className="flex items-center gap-4 mb-8">
-          <h1 className="text-4xl font-bold text-text">System Status</h1>
+          <h1 className="text-4xl font-bold text-foreground">System Status</h1>
           {allOperational ? (
             <Badge variant="green">All Systems Operational</Badge>
           ) : (
@@ -29,31 +29,31 @@ export default function StatusPage() {
       </Section>
 
       <Section secondary>
-        <h2 className="text-2xl font-bold text-text mb-8">Fleet Overview</h2>
+        <h2 className="text-2xl font-bold text-foreground mb-8">Fleet Overview</h2>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-6 mb-12">
           <div className="text-center">
-            <div className="text-3xl font-bold font-mono text-text">
+            <div className="text-3xl font-bold font-mono text-foreground">
               {fleetStats.activeWorkers}
             </div>
-            <div className="text-sm text-text-muted">Active Workers</div>
+            <div className="text-sm text-muted-foreground">Active Workers</div>
           </div>
           <div className="text-center">
-            <div className="text-3xl font-bold font-mono text-text">
+            <div className="text-3xl font-bold font-mono text-foreground">
               {fleetStats.totalCores}
             </div>
-            <div className="text-sm text-text-muted">Total Cores</div>
+            <div className="text-sm text-muted-foreground">Total Cores</div>
           </div>
           <div className="text-center">
             <div className="text-3xl font-bold font-mono text-accent-green">
               {fleetStats.uptimePercent}%
             </div>
-            <div className="text-sm text-text-muted">Uptime (30d)</div>
+            <div className="text-sm text-muted-foreground">Uptime (30d)</div>
           </div>
           <div className="text-center">
-            <div className="text-3xl font-bold font-mono text-text">
+            <div className="text-3xl font-bold font-mono text-foreground">
               {fleetStats.primesLast24h}
             </div>
-            <div className="text-sm text-text-muted">Primes (24h)</div>
+            <div className="text-sm text-muted-foreground">Primes (24h)</div>
           </div>
         </div>
 
@@ -66,19 +66,19 @@ export default function StatusPage() {
       </Section>
 
       <Section>
-        <h2 className="text-2xl font-bold text-text mb-8">Recent Incidents</h2>
+        <h2 className="text-2xl font-bold text-foreground mb-8">Recent Incidents</h2>
         {recentIncidents.length === 0 ? (
-          <p className="text-text-muted">No recent incidents.</p>
+          <p className="text-muted-foreground">No recent incidents.</p>
         ) : (
           <div className="space-y-4">
             {recentIncidents.map((incident) => (
               <div
                 key={incident.date}
-                className="border border-border rounded-md p-4 bg-bg-secondary"
+                className="border border-border rounded-md p-4 bg-card"
               >
                 <div className="flex items-center justify-between mb-2">
                   <div className="flex items-center gap-3">
-                    <h3 className="text-text font-semibold">
+                    <h3 className="text-foreground font-semibold">
                       {incident.title}
                     </h3>
                     <Badge
@@ -89,14 +89,14 @@ export default function StatusPage() {
                       {incident.status}
                     </Badge>
                   </div>
-                  <span className="text-sm text-text-muted">
+                  <span className="text-sm text-muted-foreground">
                     {incident.date}
                   </span>
                 </div>
-                <p className="text-sm text-text-muted">
+                <p className="text-sm text-muted-foreground">
                   {incident.description}
                 </p>
-                <p className="text-xs text-text-muted mt-1">
+                <p className="text-xs text-muted-foreground mt-1">
                   Duration: {incident.duration}
                 </p>
               </div>

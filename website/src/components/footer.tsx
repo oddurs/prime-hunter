@@ -53,16 +53,16 @@ export function Footer() {
           <div className="col-span-2 md:col-span-1">
             <div className="flex items-center gap-2 mb-4">
               <DarkReachLogo size={20} />
-              <span className="text-text font-semibold">darkreach</span>
+              <span className="text-foreground font-semibold">darkreach</span>
             </div>
-            <p className="text-sm text-text-muted leading-relaxed">
+            <p className="text-sm text-muted-foreground leading-relaxed">
               AI-driven distributed computing for scientific discovery.
             </p>
           </div>
 
           {columns.map((col) => (
             <div key={col.title}>
-              <h3 className="text-xs font-medium text-text-muted uppercase tracking-wider mb-3">
+              <h3 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-3">
                 {col.title}
               </h3>
               <ul className="space-y-2">
@@ -73,14 +73,14 @@ export function Footer() {
                         href={link.href}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="text-sm text-text-muted hover:text-text transition-colors"
+                        className="text-sm text-muted-foreground hover:text-foreground transition-colors"
                       >
                         {link.label}
                       </a>
                     ) : (
                       <Link
                         href={link.href}
-                        className="text-sm text-text-muted hover:text-text transition-colors"
+                        className="text-sm text-muted-foreground hover:text-foreground transition-colors"
                       >
                         {link.label}
                       </Link>
@@ -93,14 +93,14 @@ export function Footer() {
         </div>
 
         <div className="mt-12 pt-8 border-t border-border flex flex-col sm:flex-row items-center justify-between gap-4">
-          <span className="text-text-muted text-sm">
+          <span className="text-muted-foreground text-sm">
             &copy; {new Date().getFullYear()} darkreach. Open source under MIT.
           </span>
           <a
             href="https://github.com/darkreach/darkreach"
             target="_blank"
             rel="noopener noreferrer"
-            className="text-sm text-text-muted hover:text-text transition-colors"
+            className="text-sm text-muted-foreground hover:text-foreground transition-colors"
           >
             github.com/darkreach/darkreach
           </a>

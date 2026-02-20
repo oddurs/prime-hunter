@@ -163,10 +163,10 @@ export default function PrimeFormsPage() {
         {forms.map((form) => (
           <div
             key={form.name}
-            className="border border-border rounded-lg p-6 bg-bg-secondary"
+            className="border border-border rounded-lg p-6 bg-card"
           >
             <div className="flex flex-wrap items-center gap-3 mb-3">
-              <h2 className="text-xl font-bold text-text m-0 p-0 border-0">
+              <h2 className="text-xl font-bold text-foreground m-0 p-0 border-0">
                 {form.name}
               </h2>
               <Badge variant="purple">{form.algorithm}</Badge>
@@ -176,7 +176,7 @@ export default function PrimeFormsPage() {
             </div>
             <p className="mb-3">{form.description}</p>
             {form.records && (
-              <p className="text-sm text-text-muted mb-3">{form.records}</p>
+              <p className="text-sm text-muted-foreground mb-3">{form.records}</p>
             )}
             <p className="text-sm mb-2">
               <strong>OEIS:</strong>{" "}
@@ -189,7 +189,7 @@ export default function PrimeFormsPage() {
                   {form.oeis}
                 </a>
               ) : (
-                <span className="text-text-muted">{form.oeis}</span>
+                <span className="text-muted-foreground">{form.oeis}</span>
               )}
             </p>
             <CodeBlock language="bash">{form.command}</CodeBlock>

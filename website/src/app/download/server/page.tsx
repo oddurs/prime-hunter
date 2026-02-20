@@ -75,18 +75,18 @@ export default function ServerPage() {
   return (
     <>
       <Section>
-        <nav className="text-sm text-text-muted mb-8">
-          <Link href="/download" className="hover:text-text transition-colors">
+        <nav className="text-sm text-muted-foreground mb-8">
+          <Link href="/download" className="hover:text-foreground transition-colors">
             Download
           </Link>
           <span className="mx-2">/</span>
-          <span className="text-text">Coordinator Setup</span>
+          <span className="text-foreground">Coordinator Setup</span>
         </nav>
 
-        <h1 className="text-4xl font-bold text-text mb-4">
+        <h1 className="text-4xl font-bold text-foreground mb-4">
           Coordinator Setup
         </h1>
-        <p className="text-text-muted max-w-3xl mb-12">
+        <p className="text-muted-foreground max-w-3xl mb-12">
           The coordinator runs the darkreach dashboard — an Axum web server that
           provides the REST API, WebSocket coordination, fleet management, and
           the real-time UI. Workers connect to it to receive work and report
@@ -95,10 +95,10 @@ export default function ServerPage() {
 
         <div className="space-y-12">
           <div>
-            <h2 className="text-2xl font-semibold text-text mb-2">
+            <h2 className="text-2xl font-semibold text-foreground mb-2">
               Prerequisites
             </h2>
-            <ul className="list-disc list-inside text-text-muted space-y-1">
+            <ul className="list-disc list-inside text-muted-foreground space-y-1">
               <li>Linux server (Ubuntu 22.04+ recommended)</li>
               <li>Rust toolchain (1.75+)</li>
               <li>GMP library (libgmp-dev)</li>
@@ -107,46 +107,46 @@ export default function ServerPage() {
           </div>
 
           <div>
-            <h2 className="text-2xl font-semibold text-text mb-2">
+            <h2 className="text-2xl font-semibold text-foreground mb-2">
               1. Build from source
             </h2>
             <CodeBlock language="bash">{buildCommands}</CodeBlock>
           </div>
 
           <div>
-            <h2 className="text-2xl font-semibold text-text mb-2">
+            <h2 className="text-2xl font-semibold text-foreground mb-2">
               2. Configure and run
             </h2>
             <CodeBlock language="bash">{configCommands}</CodeBlock>
-            <p className="text-sm text-text-muted mt-3">
+            <p className="text-sm text-muted-foreground mt-3">
               The dashboard will be available at{" "}
               <code className="text-accent-purple">http://your-server:7001</code>.
             </p>
           </div>
 
           <div>
-            <h2 className="text-2xl font-semibold text-text mb-2">
+            <h2 className="text-2xl font-semibold text-foreground mb-2">
               3. Systemd service
             </h2>
-            <p className="text-text-muted mb-4">
+            <p className="text-muted-foreground mb-4">
               For production, run the coordinator as a systemd service with
               automatic restarts and security hardening.
             </p>
             <CodeBlock language="ini">{systemdUnit}</CodeBlock>
-            <p className="text-sm text-text-muted mt-4 mb-4">
+            <p className="text-sm text-muted-foreground mt-4 mb-4">
               Install and enable the service:
             </p>
             <CodeBlock language="bash">{systemdSetup}</CodeBlock>
           </div>
 
           <div>
-            <h2 className="text-2xl font-semibold text-text mb-2">
+            <h2 className="text-2xl font-semibold text-foreground mb-2">
               Configuration Reference
             </h2>
             <div className="overflow-x-auto rounded-lg border border-border">
               <table className="w-full text-sm">
                 <thead>
-                  <tr className="bg-bg-secondary text-text-muted text-left">
+                  <tr className="bg-card text-muted-foreground text-left">
                     <th className="px-4 py-3 font-medium">Flag</th>
                     <th className="px-4 py-3 font-medium">Env Var</th>
                     <th className="px-4 py-3 font-medium">Description</th>
@@ -158,10 +158,10 @@ export default function ServerPage() {
                       <td className="px-4 py-3 font-mono text-accent-purple text-xs">
                         {row.flag}
                       </td>
-                      <td className="px-4 py-3 font-mono text-text-muted text-xs">
+                      <td className="px-4 py-3 font-mono text-muted-foreground text-xs">
                         {row.env}
                       </td>
-                      <td className="px-4 py-3 text-text-muted">{row.desc}</td>
+                      <td className="px-4 py-3 text-muted-foreground">{row.desc}</td>
                     </tr>
                   ))}
                 </tbody>

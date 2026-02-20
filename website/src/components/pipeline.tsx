@@ -31,10 +31,10 @@ const steps = [
 export function Pipeline() {
   return (
     <Section secondary>
-      <h2 className="text-3xl font-bold text-text mb-4 text-center">
+      <h2 className="text-3xl font-bold text-foreground mb-4 text-center">
         Discovery Pipeline
       </h2>
-      <p className="text-text-muted text-center max-w-2xl mx-auto mb-12">
+      <p className="text-muted-foreground text-center max-w-2xl mx-auto mb-12">
         Every candidate passes through a four-stage pipeline optimized for each
         prime form.
       </p>
@@ -42,16 +42,16 @@ export function Pipeline() {
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
         {steps.map((step, i) => (
           <div key={step.title} className="text-center">
-            <div className="relative inline-flex items-center justify-center w-16 h-16 rounded-full bg-bg border border-border text-accent-purple mb-4">
+            <div className="relative inline-flex items-center justify-center w-16 h-16 rounded-full bg-background border border-border text-accent-purple mb-4">
               <step.icon size={28} />
               <span className="absolute -top-1 -right-1 w-6 h-6 rounded-full bg-accent-purple text-white text-xs font-bold flex items-center justify-center">
                 {i + 1}
               </span>
             </div>
-            <h3 className="text-lg font-semibold text-text mb-2">
+            <h3 className="text-lg font-semibold text-foreground mb-2">
               {step.title}
             </h3>
-            <p className="text-sm text-text-muted leading-relaxed max-w-xs mx-auto">
+            <p className="text-sm text-muted-foreground leading-relaxed max-w-xs mx-auto">
               {step.description}
             </p>
           </div>

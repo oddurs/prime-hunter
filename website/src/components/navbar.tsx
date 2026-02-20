@@ -40,7 +40,7 @@ function NavDropdown({
     >
       <button
         className={`flex items-center gap-1 text-sm transition-colors ${
-          active ? "text-text" : "text-text-muted hover:text-text"
+          active ? "text-foreground" : "text-muted-foreground hover:text-foreground"
         }`}
       >
         {label}
@@ -51,12 +51,12 @@ function NavDropdown({
       )}
       {open && (
         <div className="absolute top-full left-0 pt-2 z-50">
-          <div className="bg-bg-secondary border border-border rounded-md py-1 min-w-[180px] shadow-lg">
+          <div className="bg-card border border-border rounded-md py-1 min-w-[180px] shadow-lg">
             {links.map((link) => (
               <Link
                 key={link.href}
                 href={link.href}
-                className="block px-4 py-2 text-sm text-text-muted hover:text-text hover:bg-bg transition-colors"
+                className="block px-4 py-2 text-sm text-muted-foreground hover:text-foreground hover:bg-background transition-colors"
               >
                 {link.label}
               </Link>
@@ -87,14 +87,14 @@ export function Navbar() {
       <nav
         className={`fixed top-0 left-0 right-0 z-50 transition-colors duration-200 ${
           scrolled
-            ? "bg-bg/95 backdrop-blur-sm border-b border-border"
+            ? "bg-background/95 backdrop-blur-sm border-b border-border"
             : "bg-transparent"
         }`}
       >
         <div className="mx-auto max-w-7xl flex items-center justify-between px-6 sm:px-8 lg:px-12 h-16">
           <Link href="/" className="flex items-center gap-2">
             <DarkReachLogo size={28} />
-            <span className="text-text font-semibold text-lg">darkreach</span>
+            <span className="text-foreground font-semibold text-lg">darkreach</span>
           </Link>
 
           <div className="hidden md:flex items-center gap-8">
@@ -102,8 +102,8 @@ export function Navbar() {
               href="/about"
               className={`relative text-sm pb-0.5 transition-colors ${
                 isActive("/about")
-                  ? "text-text"
-                  : "text-text-muted hover:text-text"
+                  ? "text-foreground"
+                  : "text-muted-foreground hover:text-foreground"
               }`}
             >
               About
@@ -128,8 +128,8 @@ export function Navbar() {
               href="/blog"
               className={`relative text-sm pb-0.5 transition-colors ${
                 isActive("/blog")
-                  ? "text-text"
-                  : "text-text-muted hover:text-text"
+                  ? "text-foreground"
+                  : "text-muted-foreground hover:text-foreground"
               }`}
             >
               Blog
@@ -142,8 +142,8 @@ export function Navbar() {
               href="/status"
               className={`relative text-sm pb-0.5 transition-colors ${
                 isActive("/status")
-                  ? "text-text"
-                  : "text-text-muted hover:text-text"
+                  ? "text-foreground"
+                  : "text-muted-foreground hover:text-foreground"
               }`}
             >
               Status
@@ -158,7 +158,7 @@ export function Navbar() {
               href="https://github.com/darkreach/darkreach"
               target="_blank"
               rel="noopener noreferrer"
-              className="text-text-muted hover:text-text transition-colors"
+              className="text-muted-foreground hover:text-foreground transition-colors"
               aria-label="GitHub"
             >
               <Github size={20} />
@@ -170,7 +170,7 @@ export function Navbar() {
               Open Dashboard
             </a>
             <button
-              className="md:hidden text-text-muted hover:text-text transition-colors"
+              className="md:hidden text-muted-foreground hover:text-foreground transition-colors"
               onClick={() => setMobileOpen(true)}
               aria-label="Open menu"
             >

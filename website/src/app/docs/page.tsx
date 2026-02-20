@@ -58,11 +58,11 @@ export default function DocsPage() {
             <Card hover className="h-full group cursor-pointer">
               <div className="flex items-center gap-3 mb-2">
                 <link.icon size={18} className="text-accent-purple" />
-                <h3 className="text-text font-semibold group-hover:text-accent-purple transition-colors">
+                <h3 className="text-foreground font-semibold group-hover:text-accent-purple transition-colors">
                   {link.title}
                 </h3>
               </div>
-              <p className="text-sm text-text-muted">{link.description}</p>
+              <p className="text-sm text-muted-foreground">{link.description}</p>
             </Card>
           </Link>
         ))}

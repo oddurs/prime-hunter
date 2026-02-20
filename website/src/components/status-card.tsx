@@ -15,7 +15,7 @@ const statusLabels: Record<ServiceStatus, string> = {
 
 export function StatusCard({ service }: { service: Service }) {
   return (
-    <div className="flex items-center justify-between p-4 rounded-md border border-border bg-bg-secondary">
+    <div className="flex items-center justify-between p-4 rounded-md border border-border bg-card">
       <div>
         <div className="flex items-center gap-2 mb-1">
           <span
@@ -25,9 +25,9 @@ export function StatusCard({ service }: { service: Service }) {
               service.status === "operational" && "pulse-green"
             )}
           />
-          <h3 className="text-text font-semibold">{service.name}</h3>
+          <h3 className="text-foreground font-semibold">{service.name}</h3>
         </div>
-        <p className="text-sm text-text-muted">{service.description}</p>
+        <p className="text-sm text-muted-foreground">{service.description}</p>
       </div>
       <div className="text-right shrink-0 ml-4">
         <span
@@ -43,7 +43,7 @@ export function StatusCard({ service }: { service: Service }) {
           {statusLabels[service.status]}
         </span>
         {service.latency && (
-          <p className="text-xs text-text-muted mt-0.5">{service.latency}</p>
+          <p className="text-xs text-muted-foreground mt-0.5">{service.latency}</p>
         )}
       </div>
     </div>
