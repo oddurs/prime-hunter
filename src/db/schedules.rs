@@ -9,8 +9,8 @@
 //! - `cron`: fires on a cron schedule (e.g., "0 2 * * *" for daily at 2am)
 //! - `event`: fires when a matching event occurs (e.g., "PrimeFound")
 
+use super::{AgentScheduleRow, Database};
 use anyhow::Result;
-use super::{Database, AgentScheduleRow};
 
 impl Database {
     /// Get all schedules, ordered by name.
@@ -64,12 +64,10 @@ impl Database {
 
     /// Update last_checked_at for a schedule (used by the cron evaluator).
     pub async fn mark_schedule_checked(&self, id: i64) -> Result<()> {
-        sqlx::query(
-            "UPDATE agent_schedules SET last_checked_at = NOW() WHERE id = $1",
-        )
-        .bind(id)
-        .execute(&self.pool)
-        .await?;
+        sqlx::query("UPDATE agent_schedules SET last_checked_at = NOW() WHERE id = $1")
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
         Ok(())
     }
 }

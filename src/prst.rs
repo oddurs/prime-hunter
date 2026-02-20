@@ -353,7 +353,10 @@ mod tests {
                 PrstResult::Prime {
                     is_deterministic, ..
                 } => {
-                    assert!(is_deterministic, "3*2^50000+1 should be deterministic prime");
+                    assert!(
+                        is_deterministic,
+                        "3*2^50000+1 should be deterministic prime"
+                    );
                 }
                 PrstResult::Unavailable { .. } => {
                     eprintln!("PRST not available, skipping integration test");

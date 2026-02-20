@@ -71,7 +71,9 @@ pub fn run_search(cli: &Cli) -> Result<()> {
 
     // Sync progress counters into the client's atomics
     match &client {
-        Some(Client::Http(c)) => sync_progress_to_atomics(&progress, &c.tested, &c.found, &c.current),
+        Some(Client::Http(c)) => {
+            sync_progress_to_atomics(&progress, &c.tested, &c.found, &c.current)
+        }
         Some(Client::Pg(c)) => sync_progress_to_atomics(&progress, &c.tested, &c.found, &c.current),
         None => {}
     }
@@ -229,40 +231,195 @@ fn dispatch_search(
 ) -> Result<()> {
     match cmd {
         Commands::Factorial { start, end } => factorial::search(
-            *start, *end, progress, db, rt_handle, checkpoint_path, search_params, mr, sl, coord, eb,
+            *start,
+            *end,
+            progress,
+            db,
+            rt_handle,
+            checkpoint_path,
+            search_params,
+            mr,
+            sl,
+            coord,
+            eb,
         ),
-        Commands::Palindromic { base, min_digits, max_digits } => palindromic::search(
-            *base, *min_digits, *max_digits, progress, db, rt_handle, checkpoint_path, search_params, mr, sl, coord, eb,
+        Commands::Palindromic {
+            base,
+            min_digits,
+            max_digits,
+        } => palindromic::search(
+            *base,
+            *min_digits,
+            *max_digits,
+            progress,
+            db,
+            rt_handle,
+            checkpoint_path,
+            search_params,
+            mr,
+            sl,
+            coord,
+            eb,
         ),
-        Commands::Kbn { k, base, min_n, max_n } => kbn::search(
-            *k, *base, *min_n, *max_n, progress, db, rt_handle, checkpoint_path, search_params, mr, sl, coord, eb,
+        Commands::Kbn {
+            k,
+            base,
+            min_n,
+            max_n,
+        } => kbn::search(
+            *k,
+            *base,
+            *min_n,
+            *max_n,
+            progress,
+            db,
+            rt_handle,
+            checkpoint_path,
+            search_params,
+            mr,
+            sl,
+            coord,
+            eb,
         ),
-        Commands::NearRepdigit { min_digits, max_digits } => near_repdigit::search(
-            *min_digits, *max_digits, progress, db, rt_handle, checkpoint_path, search_params, mr, sl, coord, eb,
+        Commands::NearRepdigit {
+            min_digits,
+            max_digits,
+        } => near_repdigit::search(
+            *min_digits,
+            *max_digits,
+            progress,
+            db,
+            rt_handle,
+            checkpoint_path,
+            search_params,
+            mr,
+            sl,
+            coord,
+            eb,
         ),
         Commands::Primorial { start, end } => primorial::search(
-            *start, *end, progress, db, rt_handle, checkpoint_path, search_params, mr, sl, coord, eb,
+            *start,
+            *end,
+            progress,
+            db,
+            rt_handle,
+            checkpoint_path,
+            search_params,
+            mr,
+            sl,
+            coord,
+            eb,
         ),
         Commands::CullenWoodall { min_n, max_n } => cullen_woodall::search(
-            *min_n, *max_n, progress, db, rt_handle, checkpoint_path, search_params, mr, sl, coord, eb,
+            *min_n,
+            *max_n,
+            progress,
+            db,
+            rt_handle,
+            checkpoint_path,
+            search_params,
+            mr,
+            sl,
+            coord,
+            eb,
         ),
         Commands::Wagstaff { min_exp, max_exp } => wagstaff::search(
-            *min_exp, *max_exp, progress, db, rt_handle, checkpoint_path, search_params, mr, sl, coord, eb,
+            *min_exp,
+            *max_exp,
+            progress,
+            db,
+            rt_handle,
+            checkpoint_path,
+            search_params,
+            mr,
+            sl,
+            coord,
+            eb,
         ),
         Commands::CarolKynea { min_n, max_n } => carol_kynea::search(
-            *min_n, *max_n, progress, db, rt_handle, checkpoint_path, search_params, mr, sl, coord, eb,
+            *min_n,
+            *max_n,
+            progress,
+            db,
+            rt_handle,
+            checkpoint_path,
+            search_params,
+            mr,
+            sl,
+            coord,
+            eb,
         ),
-        Commands::Twin { k, base, min_n, max_n } => twin::search(
-            *k, *base, *min_n, *max_n, progress, db, rt_handle, checkpoint_path, search_params, mr, sl, coord, eb,
+        Commands::Twin {
+            k,
+            base,
+            min_n,
+            max_n,
+        } => twin::search(
+            *k,
+            *base,
+            *min_n,
+            *max_n,
+            progress,
+            db,
+            rt_handle,
+            checkpoint_path,
+            search_params,
+            mr,
+            sl,
+            coord,
+            eb,
         ),
-        Commands::SophieGermain { k, base, min_n, max_n } => sophie_germain::search(
-            *k, *base, *min_n, *max_n, progress, db, rt_handle, checkpoint_path, search_params, mr, sl, coord, eb,
+        Commands::SophieGermain {
+            k,
+            base,
+            min_n,
+            max_n,
+        } => sophie_germain::search(
+            *k,
+            *base,
+            *min_n,
+            *max_n,
+            progress,
+            db,
+            rt_handle,
+            checkpoint_path,
+            search_params,
+            mr,
+            sl,
+            coord,
+            eb,
         ),
         Commands::Repunit { base, min_n, max_n } => repunit::search(
-            *base, *min_n, *max_n, progress, db, rt_handle, checkpoint_path, search_params, mr, sl, coord, eb,
+            *base,
+            *min_n,
+            *max_n,
+            progress,
+            db,
+            rt_handle,
+            checkpoint_path,
+            search_params,
+            mr,
+            sl,
+            coord,
+            eb,
         ),
-        Commands::GenFermat { fermat_exp, min_base, max_base } => gen_fermat::search(
-            *fermat_exp, *min_base, *max_base, progress, db, rt_handle, checkpoint_path, search_params, mr, sl, coord, eb,
+        Commands::GenFermat {
+            fermat_exp,
+            min_base,
+            max_base,
+        } => gen_fermat::search(
+            *fermat_exp,
+            *min_base,
+            *max_base,
+            progress,
+            db,
+            rt_handle,
+            checkpoint_path,
+            search_params,
+            mr,
+            sl,
+            coord,
+            eb,
         ),
         Commands::Dashboard { .. }
         | Commands::Work { .. }
@@ -289,11 +446,15 @@ fn sync_progress_to_atomics(
     std::thread::spawn(move || loop {
         std::thread::sleep(std::time::Duration::from_secs(5));
         wc_tested.store(
-            progress_ref.tested.load(std::sync::atomic::Ordering::Relaxed),
+            progress_ref
+                .tested
+                .load(std::sync::atomic::Ordering::Relaxed),
             std::sync::atomic::Ordering::Relaxed,
         );
         wc_found.store(
-            progress_ref.found.load(std::sync::atomic::Ordering::Relaxed),
+            progress_ref
+                .found
+                .load(std::sync::atomic::Ordering::Relaxed),
             std::sync::atomic::Ordering::Relaxed,
         );
         *wc_current.lock().unwrap() = progress_ref.current.lock().unwrap().clone();
@@ -343,7 +504,12 @@ pub fn run_work_loop(
     let progress = progress::Progress::new();
     let reporter_handle = progress.start_reporter();
 
-    sync_progress_to_atomics(&progress, &pg_client.tested, &pg_client.found, &pg_client.current);
+    sync_progress_to_atomics(
+        &progress,
+        &pg_client.tested,
+        &pg_client.found,
+        &pg_client.current,
+    );
 
     let heartbeat_handle = pg_client.start_heartbeat();
     let coord: Option<&dyn CoordinationClient> = Some(&pg_client);
@@ -372,8 +538,12 @@ pub fn run_work_loop(
             block.block_id, block.block_start, block.block_end
         );
 
-        progress.tested.store(0, std::sync::atomic::Ordering::Relaxed);
-        progress.found.store(0, std::sync::atomic::Ordering::Relaxed);
+        progress
+            .tested
+            .store(0, std::sync::atomic::Ordering::Relaxed);
+        progress
+            .found
+            .store(0, std::sync::atomic::Ordering::Relaxed);
 
         let block_result = run_search_block(
             &job.search_type,
@@ -448,38 +618,191 @@ fn run_search_block(
     let eb: Option<&events::EventBus> = None;
 
     match search_type {
-        "factorial" => factorial::search(start, end, progress, db, rt_handle, checkpoint_path, &sp, mr, sl, coord, eb),
-        "primorial" => primorial::search(start, end, progress, db, rt_handle, checkpoint_path, &sp, mr, sl, coord, eb),
+        "factorial" => factorial::search(
+            start,
+            end,
+            progress,
+            db,
+            rt_handle,
+            checkpoint_path,
+            &sp,
+            mr,
+            sl,
+            coord,
+            eb,
+        ),
+        "primorial" => primorial::search(
+            start,
+            end,
+            progress,
+            db,
+            rt_handle,
+            checkpoint_path,
+            &sp,
+            mr,
+            sl,
+            coord,
+            eb,
+        ),
         "palindromic" => {
             let base = params["base"].as_u64().unwrap_or(10) as u32;
-            palindromic::search(base, start, end, progress, db, rt_handle, checkpoint_path, &sp, mr, sl, coord, eb)
+            palindromic::search(
+                base,
+                start,
+                end,
+                progress,
+                db,
+                rt_handle,
+                checkpoint_path,
+                &sp,
+                mr,
+                sl,
+                coord,
+                eb,
+            )
         }
-        "near_repdigit" => near_repdigit::search(start, end, progress, db, rt_handle, checkpoint_path, &sp, mr, sl, coord, eb),
+        "near_repdigit" => near_repdigit::search(
+            start,
+            end,
+            progress,
+            db,
+            rt_handle,
+            checkpoint_path,
+            &sp,
+            mr,
+            sl,
+            coord,
+            eb,
+        ),
         "kbn" => {
             let k = params["k"].as_u64().unwrap_or(1);
             let base = params["base"].as_u64().unwrap_or(2) as u32;
-            kbn::search(k, base, start, end, progress, db, rt_handle, checkpoint_path, &sp, mr, sl, coord, eb)
+            kbn::search(
+                k,
+                base,
+                start,
+                end,
+                progress,
+                db,
+                rt_handle,
+                checkpoint_path,
+                &sp,
+                mr,
+                sl,
+                coord,
+                eb,
+            )
         }
-        "cullen_woodall" => cullen_woodall::search(start, end, progress, db, rt_handle, checkpoint_path, &sp, mr, sl, coord, eb),
-        "wagstaff" => wagstaff::search(start, end, progress, db, rt_handle, checkpoint_path, &sp, mr, sl, coord, eb),
-        "carol_kynea" => carol_kynea::search(start, end, progress, db, rt_handle, checkpoint_path, &sp, mr, sl, coord, eb),
+        "cullen_woodall" => cullen_woodall::search(
+            start,
+            end,
+            progress,
+            db,
+            rt_handle,
+            checkpoint_path,
+            &sp,
+            mr,
+            sl,
+            coord,
+            eb,
+        ),
+        "wagstaff" => wagstaff::search(
+            start,
+            end,
+            progress,
+            db,
+            rt_handle,
+            checkpoint_path,
+            &sp,
+            mr,
+            sl,
+            coord,
+            eb,
+        ),
+        "carol_kynea" => carol_kynea::search(
+            start,
+            end,
+            progress,
+            db,
+            rt_handle,
+            checkpoint_path,
+            &sp,
+            mr,
+            sl,
+            coord,
+            eb,
+        ),
         "twin" => {
             let k = params["k"].as_u64().unwrap_or(1);
             let base = params["base"].as_u64().unwrap_or(2) as u32;
-            twin::search(k, base, start, end, progress, db, rt_handle, checkpoint_path, &sp, mr, sl, coord, eb)
+            twin::search(
+                k,
+                base,
+                start,
+                end,
+                progress,
+                db,
+                rt_handle,
+                checkpoint_path,
+                &sp,
+                mr,
+                sl,
+                coord,
+                eb,
+            )
         }
         "sophie_germain" => {
             let k = params["k"].as_u64().unwrap_or(1);
             let base = params["base"].as_u64().unwrap_or(2) as u32;
-            sophie_germain::search(k, base, start, end, progress, db, rt_handle, checkpoint_path, &sp, mr, sl, coord, eb)
+            sophie_germain::search(
+                k,
+                base,
+                start,
+                end,
+                progress,
+                db,
+                rt_handle,
+                checkpoint_path,
+                &sp,
+                mr,
+                sl,
+                coord,
+                eb,
+            )
         }
         "repunit" => {
             let base = params["base"].as_u64().unwrap_or(10) as u32;
-            repunit::search(base, start, end, progress, db, rt_handle, checkpoint_path, &sp, mr, sl, coord, eb)
+            repunit::search(
+                base,
+                start,
+                end,
+                progress,
+                db,
+                rt_handle,
+                checkpoint_path,
+                &sp,
+                mr,
+                sl,
+                coord,
+                eb,
+            )
         }
         "gen_fermat" => {
             let fermat_exp = params["fermat_exp"].as_u64().unwrap_or(1) as u32;
-            gen_fermat::search(fermat_exp, start, end, progress, db, rt_handle, checkpoint_path, &sp, mr, sl, coord, eb)
+            gen_fermat::search(
+                fermat_exp,
+                start,
+                end,
+                progress,
+                db,
+                rt_handle,
+                checkpoint_path,
+                &sp,
+                mr,
+                sl,
+                coord,
+                eb,
+            )
         }
         other => Err(anyhow::anyhow!("Unknown search type: {}", other)),
     }
@@ -806,14 +1129,16 @@ pub fn run_join(server: &str, username: &str, email: &str) -> Result<()> {
 
 /// Run the volunteer work loop (claim → compute → submit → repeat).
 pub fn run_volunteer(cli: &Cli) -> Result<()> {
-    use darkreach::{volunteer, progress};
+    use darkreach::{progress, volunteer};
     use tracing::{info, warn};
 
     let config = volunteer::load_config()?;
     volunteer::register_worker(&config)?;
 
     let database_url = cli.database_url.as_deref().ok_or_else(|| {
-        anyhow::anyhow!("DATABASE_URL is required for volunteer mode (set via --database-url or env)")
+        anyhow::anyhow!(
+            "DATABASE_URL is required for volunteer mode (set via --database-url or env)"
+        )
     })?;
     let rt = tokio::runtime::Runtime::new()?;
     let database = rt.block_on(db::Database::connect(database_url))?;
@@ -842,16 +1167,18 @@ pub fn run_volunteer(cli: &Cli) -> Result<()> {
                 let ctrl_c = tokio::signal::ctrl_c();
                 #[cfg(unix)]
                 {
-                    let mut sigterm = tokio::signal::unix::signal(
-                        tokio::signal::unix::SignalKind::terminate(),
-                    ).expect("SIGTERM handler");
+                    let mut sigterm =
+                        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+                            .expect("SIGTERM handler");
                     tokio::select! {
                         _ = ctrl_c => {},
                         _ = sigterm.recv() => {},
                     }
                 }
                 #[cfg(not(unix))]
-                { let _ = ctrl_c.await; }
+                {
+                    let _ = ctrl_c.await;
+                }
                 stop_flag.store(true, std::sync::atomic::Ordering::Relaxed);
             });
         });
@@ -926,7 +1253,10 @@ pub fn run_volunteer(cli: &Cli) -> Result<()> {
         match volunteer::submit_result(&config, &submission) {
             Ok(()) => {
                 blocks_completed += 1;
-                info!(block_id = assignment.block_id, tested, found, "Block result submitted");
+                info!(
+                    block_id = assignment.block_id,
+                    tested, found, "Block result submitted"
+                );
             }
             Err(e) => {
                 warn!(block_id = assignment.block_id, error = %e, "Failed to submit result");

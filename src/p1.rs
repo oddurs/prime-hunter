@@ -71,7 +71,10 @@ pub fn p1_stage2(n: &Integer, a: &Integer, b1: u64, b2: u64) -> Option<Integer> 
     }
 
     // Start from the first prime > b1
-    let mut current = a.clone().pow_mod(&Integer::from(primes[start_idx]), n).ok()?;
+    let mut current = a
+        .clone()
+        .pow_mod(&Integer::from(primes[start_idx]), n)
+        .ok()?;
     let mut product = Integer::from(&current - 1u32) % n;
     let batch_size = 200;
 
@@ -236,7 +239,10 @@ mod tests {
         // n = 1000000007 * 1000000009 (both are prime, p-1 has large factors)
         let n = Integer::from(1000000007u64) * Integer::from(1000000009u64);
         let factor = p1_stage1(&n, 100);
-        assert!(factor.is_none(), "P-1 with small B1 should miss non-smooth factors");
+        assert!(
+            factor.is_none(),
+            "P-1 with small B1 should miss non-smooth factors"
+        );
     }
 
     #[test]
@@ -246,7 +252,10 @@ mod tests {
         // P-1 with B1=11 gives a ≡ 1 (mod n), trivial gcd
         let n = Integer::from(2047u32);
         let factor = p1_stage1(&n, 11);
-        assert!(factor.is_none(), "P-1 should return None when all factors are B1-smooth");
+        assert!(
+            factor.is_none(),
+            "P-1 should return None when all factors are B1-smooth"
+        );
     }
 
     #[test]
@@ -260,7 +269,10 @@ mod tests {
         // n = 29 * 10007 = 290203
         let n = Integer::from(29u64 * 10007);
         let factor = p1_factor(&n, 5, Some(10));
-        assert!(factor.is_some(), "P-1 Stage 2 should find 29 (needs prime 7 in stage 2)");
+        assert!(
+            factor.is_some(),
+            "P-1 Stage 2 should find 29 (needs prime 7 in stage 2)"
+        );
         let f = factor.unwrap();
         assert!(n.is_divisible(&f));
     }
@@ -310,7 +322,10 @@ mod tests {
         let n = Integer::from(211u64 * 10007);
         // Stage 1 alone should miss
         let s1 = p1_stage1(&n, 5);
-        assert!(s1.is_none(), "Stage 1 with B1=5 should miss 211 (needs prime 7)");
+        assert!(
+            s1.is_none(),
+            "Stage 1 with B1=5 should miss 211 (needs prime 7)"
+        );
 
         // Combined with Stage 2 should find it
         let factor = p1_factor(&n, 5, Some(10));
@@ -325,13 +340,19 @@ mod tests {
     fn adaptive_p1_filter_skips_small_candidates() {
         // Candidates below 5K bits should be skipped (returns false regardless)
         let small = Integer::from(2u32).pow(4999) - 1u32; // 4999 bits
-        assert!(!adaptive_p1_filter(&small), "P-1 should skip candidates < 5K bits");
+        assert!(
+            !adaptive_p1_filter(&small),
+            "P-1 should skip candidates < 5K bits"
+        );
 
         let tiny = Integer::from(1000003u32);
         assert!(!adaptive_p1_filter(&tiny), "P-1 should skip small primes");
 
         let composite = Integer::from(41u32 * 10007); // has smooth factor but tiny
-        assert!(!adaptive_p1_filter(&composite), "P-1 should skip even easy composites if small");
+        assert!(
+            !adaptive_p1_filter(&composite),
+            "P-1 should skip even easy composites if small"
+        );
     }
 
     #[test]
@@ -361,8 +382,14 @@ mod tests {
             q
         };
         let n = Integer::from(&p * &q);
-        assert!(n.significant_bits() >= 5000, "composite should be ≥ 5K bits");
-        assert!(adaptive_p1_filter(&n), "P-1 should find 65537 (perfectly smooth p-1)");
+        assert!(
+            n.significant_bits() >= 5000,
+            "composite should be ≥ 5K bits"
+        );
+        assert!(
+            adaptive_p1_filter(&n),
+            "P-1 should find 65537 (perfectly smooth p-1)"
+        );
     }
 
     #[test]
@@ -415,6 +442,9 @@ mod tests {
             q
         };
         let n = Integer::from(&p * &q);
-        assert!(adaptive_p1_filter(&n), "5K-20K tier (B1=100K) should catch 99991");
+        assert!(
+            adaptive_p1_filter(&n),
+            "5K-20K tier (B1=100K) should catch 99991"
+        );
     }
 }

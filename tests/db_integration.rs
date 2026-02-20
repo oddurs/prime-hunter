@@ -38,9 +38,16 @@ async fn insert_prime_and_retrieve() {
     require_db!();
     let db = setup().await;
 
-    db.insert_prime("factorial", "5! + 1", 3, r#"{"form":"factorial"}"#, "deterministic", None)
-        .await
-        .unwrap();
+    db.insert_prime(
+        "factorial",
+        "5! + 1",
+        3,
+        r#"{"form":"factorial"}"#,
+        "deterministic",
+        None,
+    )
+    .await
+    .unwrap();
 
     let primes = db
         .get_primes_filtered(10, 0, &PrimeFilter::default())
@@ -242,7 +249,10 @@ async fn get_filtered_count() {
         .await
         .unwrap();
 
-    let count = db.get_filtered_count(&PrimeFilter::default()).await.unwrap();
+    let count = db
+        .get_filtered_count(&PrimeFilter::default())
+        .await
+        .unwrap();
     assert_eq!(count, 3);
 
     let filter = PrimeFilter {
@@ -260,9 +270,15 @@ async fn worker_upsert_and_retrieve() {
     require_db!();
     let db = setup().await;
 
-    db.upsert_worker("test-worker-1", "host1.example.com", 8, "factorial", r#"{"start":1}"#)
-        .await
-        .unwrap();
+    db.upsert_worker(
+        "test-worker-1",
+        "host1.example.com",
+        8,
+        "factorial",
+        r#"{"start":1}"#,
+    )
+    .await
+    .unwrap();
 
     let workers = db.get_all_workers().await.unwrap();
     assert_eq!(workers.len(), 1);
@@ -272,9 +288,15 @@ async fn worker_upsert_and_retrieve() {
     assert_eq!(workers[0].search_type, "factorial");
 
     // Upsert same worker updates fields
-    db.upsert_worker("test-worker-1", "host1-updated.com", 16, "kbn", r#"{"k":3}"#)
-        .await
-        .unwrap();
+    db.upsert_worker(
+        "test-worker-1",
+        "host1-updated.com",
+        16,
+        "kbn",
+        r#"{"k":3}"#,
+    )
+    .await
+    .unwrap();
 
     let workers = db.get_all_workers().await.unwrap();
     assert_eq!(workers.len(), 1);
@@ -290,9 +312,7 @@ async fn worker_delete() {
     db.upsert_worker("w1", "host1", 4, "factorial", "")
         .await
         .unwrap();
-    db.upsert_worker("w2", "host2", 8, "kbn", "")
-        .await
-        .unwrap();
+    db.upsert_worker("w2", "host2", 8, "kbn", "").await.unwrap();
 
     db.delete_worker("w1").await.unwrap();
 
@@ -315,14 +335,36 @@ async fn worker_set_and_clear_command() {
 
     // Heartbeat RPC should return and clear the command
     let cmd = db
-        .worker_heartbeat_rpc("w1", "host1", 4, "factorial", "", 100, 5, "testing", None, None)
+        .worker_heartbeat_rpc(
+            "w1",
+            "host1",
+            4,
+            "factorial",
+            "",
+            100,
+            5,
+            "testing",
+            None,
+            None,
+        )
         .await
         .unwrap();
     assert_eq!(cmd, Some("stop".to_string()));
 
     // Second heartbeat should return None (command was cleared)
     let cmd = db
-        .worker_heartbeat_rpc("w1", "host1", 4, "factorial", "", 200, 5, "testing", None, None)
+        .worker_heartbeat_rpc(
+            "w1",
+            "host1",
+            4,
+            "factorial",
+            "",
+            200,
+            5,
+            "testing",
+            None,
+            None,
+        )
         .await
         .unwrap();
     assert_eq!(cmd, None);
@@ -433,9 +475,7 @@ async fn get_job_block_summary_after_completion() {
     assert_eq!(block.block_start, 1);
     assert_eq!(block.block_end, 11);
 
-    db.complete_work_block(block.block_id, 10, 2)
-        .await
-        .unwrap();
+    db.complete_work_block(block.block_id, 10, 2).await.unwrap();
 
     let summary = db.get_job_block_summary(job_id).await.unwrap();
     assert_eq!(summary.available, 2); // 2 remaining
@@ -453,7 +493,16 @@ async fn agent_task_lifecycle() {
 
     // Create a task
     let task = db
-        .create_agent_task("Test task", "Do something", "normal", Some("opus"), "manual", None, 1, None)
+        .create_agent_task(
+            "Test task",
+            "Do something",
+            "normal",
+            Some("opus"),
+            "manual",
+            None,
+            1,
+            None,
+        )
         .await
         .unwrap();
     assert_eq!(task.title, "Test task");
@@ -491,7 +540,15 @@ async fn template_expand_creates_parent_and_children() {
     let db = setup().await;
 
     let parent_id = db
-        .expand_template("fix-bug", "Fix login bug", "Users can't log in", "high", Some(5.0), 1, None)
+        .expand_template(
+            "fix-bug",
+            "Fix login bug",
+            "Users can't log in",
+            "high",
+            Some(5.0),
+            1,
+            None,
+        )
         .await
         .unwrap();
 
@@ -562,7 +619,10 @@ async fn claim_skips_tasks_with_unmet_deps() {
     // Step 1 depends on step 0 which is now in_progress, not completed
     // So nothing more should be claimable
     let next = db.claim_pending_agent_task("test-agent").await.unwrap();
-    assert!(next.is_none(), "Step 1 should not be claimable while step 0 is in_progress");
+    assert!(
+        next.is_none(),
+        "Step 1 should not be claimable while step 0 is in_progress"
+    );
 }
 
 #[tokio::test]
@@ -571,9 +631,18 @@ async fn claim_skips_parent_tasks() {
     let db = setup().await;
 
     // Create a standalone task and a template task
-    db.create_agent_task("Standalone", "solo task", "normal", None, "manual", None, 1, None)
-        .await
-        .unwrap();
+    db.create_agent_task(
+        "Standalone",
+        "solo task",
+        "normal",
+        None,
+        "manual",
+        None,
+        1,
+        None,
+    )
+    .await
+    .unwrap();
     let _parent_id = db
         .expand_template("fix-bug", "Parent", "test", "urgent", None, 1, None)
         .await
@@ -582,9 +651,16 @@ async fn claim_skips_parent_tasks() {
     // The parent task has children, so it should be skipped.
     // With urgent priority the parent would be first, but it should be skipped.
     // The first claimable should be the standalone task or the first child.
-    let claimed = db.claim_pending_agent_task("test-agent").await.unwrap().unwrap();
+    let claimed = db
+        .claim_pending_agent_task("test-agent")
+        .await
+        .unwrap()
+        .unwrap();
     // Parent should never be claimed (it has children)
-    assert_ne!(claimed.title, "Parent", "Parent tasks should not be claimed directly");
+    assert_ne!(
+        claimed.title, "Parent",
+        "Parent tasks should not be claimed directly"
+    );
 }
 
 #[tokio::test]
@@ -629,9 +705,15 @@ async fn try_complete_parent_fails_on_child_failure() {
     db.complete_agent_task(children[0].id, "completed", None, 100, 0.01)
         .await
         .unwrap();
-    db.complete_agent_task(children[1].id, "failed", Some(&serde_json::json!({"error": "test"})), 50, 0.005)
-        .await
-        .unwrap();
+    db.complete_agent_task(
+        children[1].id,
+        "failed",
+        Some(&serde_json::json!({"error": "test"})),
+        50,
+        0.005,
+    )
+    .await
+    .unwrap();
     db.cancel_agent_task(children[2].id).await.unwrap();
 
     // Parent should be marked as failed (on_child_failure = 'fail')
@@ -669,7 +751,10 @@ async fn permission_inheritance() {
     let children_0 = db.get_child_tasks(parent_id_0).await.unwrap();
     // All children should be capped at 0
     for child in &children_0 {
-        assert_eq!(child.permission_level, 0, "Child permission should be capped at parent level 0");
+        assert_eq!(
+            child.permission_level, 0,
+            "Child permission should be capped at parent level 0"
+        );
     }
 }
 
@@ -794,16 +879,25 @@ async fn role_templates_association() {
     // Engine role should have fix-bug template (seeded in test helper)
     let templates = db.get_role_templates("engine").await.unwrap();
     let names: Vec<&str> = templates.iter().map(|t| t.name.as_str()).collect();
-    assert!(names.contains(&"fix-bug"), "Engine role should have fix-bug template");
+    assert!(
+        names.contains(&"fix-bug"),
+        "Engine role should have fix-bug template"
+    );
 
     // Frontend role should also have fix-bug
     let frontend_templates = db.get_role_templates("frontend").await.unwrap();
     let frontend_names: Vec<&str> = frontend_templates.iter().map(|t| t.name.as_str()).collect();
-    assert!(frontend_names.contains(&"fix-bug"), "Frontend role should have fix-bug template");
+    assert!(
+        frontend_names.contains(&"fix-bug"),
+        "Frontend role should have fix-bug template"
+    );
 
     // Research role has no templates seeded in test helper
     let research_templates = db.get_role_templates("research").await.unwrap();
-    assert!(research_templates.is_empty(), "Research role has no templates in test seed");
+    assert!(
+        research_templates.is_empty(),
+        "Research role has no templates in test seed"
+    );
 }
 
 #[tokio::test]
@@ -834,7 +928,16 @@ async fn task_with_role_stores_role_name() {
 
     // Create task without role
     let task2 = db
-        .create_agent_task("Generic task", "test", "normal", None, "manual", None, 1, None)
+        .create_agent_task(
+            "Generic task",
+            "test",
+            "normal",
+            None,
+            "manual",
+            None,
+            1,
+            None,
+        )
         .await
         .unwrap();
     assert!(task2.role_name.is_none());
@@ -882,14 +985,28 @@ async fn agent_log_insert_and_query() {
     let db = setup().await;
 
     let task = db
-        .create_agent_task("Log test task", "Testing logs", "normal", None, "test", None, 1, None)
+        .create_agent_task(
+            "Log test task",
+            "Testing logs",
+            "normal",
+            None,
+            "test",
+            None,
+            1,
+            None,
+        )
         .await
         .unwrap();
 
     // Insert 10 log lines: 7 stdout, 3 stderr
     let mut entries: Vec<(String, i32, Option<String>, String)> = Vec::new();
     for i in 1..=7 {
-        entries.push(("stdout".into(), i, Some("assistant".into()), format!("stdout line {}", i)));
+        entries.push((
+            "stdout".into(),
+            i,
+            Some("assistant".into()),
+            format!("stdout line {}", i),
+        ));
     }
     for i in 1..=3 {
         entries.push(("stderr".into(), i, None, format!("stderr line {}", i)));
@@ -901,12 +1018,18 @@ async fn agent_log_insert_and_query() {
     assert_eq!(all.len(), 10);
 
     // Query stdout only
-    let stdout_only = db.get_agent_logs(task.id, Some("stdout"), 0, 100).await.unwrap();
+    let stdout_only = db
+        .get_agent_logs(task.id, Some("stdout"), 0, 100)
+        .await
+        .unwrap();
     assert_eq!(stdout_only.len(), 7);
     assert!(stdout_only.iter().all(|l| l.stream == "stdout"));
 
     // Query stderr only
-    let stderr_only = db.get_agent_logs(task.id, Some("stderr"), 0, 100).await.unwrap();
+    let stderr_only = db
+        .get_agent_logs(task.id, Some("stderr"), 0, 100)
+        .await
+        .unwrap();
     assert_eq!(stderr_only.len(), 3);
 
     // Test offset/limit pagination
@@ -924,7 +1047,16 @@ async fn agent_event_extended_fields() {
     let db = setup().await;
 
     let task = db
-        .create_agent_task("Event ext test", "Testing extended events", "normal", None, "test", None, 1, None)
+        .create_agent_task(
+            "Event ext test",
+            "Testing extended events",
+            "normal",
+            None,
+            "test",
+            None,
+            1,
+            None,
+        )
         .await
         .unwrap();
 
@@ -961,9 +1093,22 @@ async fn agent_daily_cost_analytics() {
     require_db!();
     let db = setup().await;
 
-    for (model, cost, tokens) in [("sonnet", 0.05, 5000i64), ("sonnet", 0.03, 3000), ("opus", 0.15, 8000)] {
+    for (model, cost, tokens) in [
+        ("sonnet", 0.05, 5000i64),
+        ("sonnet", 0.03, 3000),
+        ("opus", 0.15, 8000),
+    ] {
         let task = db
-            .create_agent_task("Cost test", "", "normal", Some(model), "test", None, 1, None)
+            .create_agent_task(
+                "Cost test",
+                "",
+                "normal",
+                Some(model),
+                "test",
+                None,
+                1,
+                None,
+            )
             .await
             .unwrap();
         let result = serde_json::json!({"text": "done"});
@@ -995,7 +1140,16 @@ async fn agent_token_anomaly_detection() {
     // 4 normal tasks (1000 tokens), 1 outlier (10000 tokens)
     for tokens in [1000i64, 1000, 1000, 1000, 10000] {
         let task = db
-            .create_agent_task("Anomaly test", "", "normal", Some("sonnet"), "test", None, 1, None)
+            .create_agent_task(
+                "Anomaly test",
+                "",
+                "normal",
+                Some("sonnet"),
+                "test",
+                None,
+                1,
+                None,
+            )
             .await
             .unwrap();
         sqlx::query("UPDATE agent_tasks SET template_name = 'anomaly-test' WHERE id = $1")

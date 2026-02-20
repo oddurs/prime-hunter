@@ -29,18 +29,12 @@ async fn app() -> Router {
 
 async fn get(app: Router, uri: &str) -> (StatusCode, serde_json::Value) {
     let response = app
-        .oneshot(
-            Request::builder()
-                .uri(uri)
-                .body(Body::empty())
-                .unwrap(),
-        )
+        .oneshot(Request::builder().uri(uri).body(Body::empty()).unwrap())
         .await
         .unwrap();
     let status = response.status();
     let body = response.into_body().collect().await.unwrap().to_bytes();
-    let json: serde_json::Value =
-        serde_json::from_slice(&body).unwrap_or(serde_json::json!(null));
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap_or(serde_json::json!(null));
     (status, json)
 }
 
@@ -60,15 +54,21 @@ async fn sql_injection_sort_column_sanitized() {
     ];
 
     for injection in &injections {
-        let uri = format!(
-            "/api/primes?sort_by={}",
-            urlencoding::encode(injection)
-        );
+        let uri = format!("/api/primes?sort_by={}", urlencoding::encode(injection));
         let (status, json) = get(app().await, &uri).await;
         // Should succeed (injected value falls through to default "id")
-        assert_eq!(status, StatusCode::OK, "Injection attempt should not crash: {}", injection);
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "Injection attempt should not crash: {}",
+            injection
+        );
         // Should return valid JSON array
-        assert!(json.is_array(), "Response should be valid JSON array for: {}", injection);
+        assert!(
+            json.is_array(),
+            "Response should be valid JSON array for: {}",
+            injection
+        );
     }
 }
 
@@ -82,12 +82,14 @@ async fn sql_injection_sort_dir_sanitized() {
     ];
 
     for injection in &injections {
-        let uri = format!(
-            "/api/primes?sort_dir={}",
-            urlencoding::encode(injection)
-        );
+        let uri = format!("/api/primes?sort_dir={}", urlencoding::encode(injection));
         let (status, _) = get(app().await, &uri).await;
-        assert_eq!(status, StatusCode::OK, "Sort dir injection should not crash: {}", injection);
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "Sort dir injection should not crash: {}",
+            injection
+        );
     }
 }
 
@@ -103,13 +105,19 @@ async fn sql_injection_search_param_escaped() {
     ];
 
     for injection in &injections {
-        let uri = format!(
-            "/api/primes?search={}",
-            urlencoding::encode(injection)
-        );
+        let uri = format!("/api/primes?search={}", urlencoding::encode(injection));
         let (status, json) = get(app().await, &uri).await;
-        assert_eq!(status, StatusCode::OK, "Search injection should not crash: {}", injection);
-        assert!(json.is_array(), "Should return valid JSON for: {}", injection);
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "Search injection should not crash: {}",
+            injection
+        );
+        assert!(
+            json.is_array(),
+            "Should return valid JSON for: {}",
+            injection
+        );
     }
 }
 
@@ -163,11 +171,17 @@ async fn cors_preflight_returns_correct_headers() {
 
     // Should have CORS headers
     assert!(
-        response.headers().get("access-control-allow-origin").is_some(),
+        response
+            .headers()
+            .get("access-control-allow-origin")
+            .is_some(),
         "Missing access-control-allow-origin header"
     );
     assert!(
-        response.headers().get("access-control-allow-methods").is_some(),
+        response
+            .headers()
+            .get("access-control-allow-methods")
+            .is_some(),
         "Missing access-control-allow-methods header"
     );
 }
@@ -188,7 +202,10 @@ async fn cors_get_includes_allow_origin() {
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
-    assert!(response.headers().get("access-control-allow-origin").is_some());
+    assert!(response
+        .headers()
+        .get("access-control-allow-origin")
+        .is_some());
 }
 
 // ---------------------------------------------------------------------------

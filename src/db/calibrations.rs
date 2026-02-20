@@ -10,8 +10,8 @@
 //! in the `cost_calibration` table (one row per form). The `cost_observations`
 //! view aggregates timing data from `work_blocks` for the fitting process.
 
+use super::{CostCalibrationRow, Database};
 use anyhow::Result;
-use super::{Database, CostCalibrationRow};
 
 impl Database {
     /// Get all cost calibration coefficients, one row per form.

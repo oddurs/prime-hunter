@@ -453,9 +453,7 @@ pub(super) async fn handler_api_project_cost(
 // ── Records Endpoints ───────────────────────────────────────────
 
 /// GET /api/records — Get all world records with our-best comparison.
-pub(super) async fn handler_api_records(
-    State(state): State<Arc<AppState>>,
-) -> impl IntoResponse {
+pub(super) async fn handler_api_records(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     match state.db.get_records().await {
         Ok(records) => Json(serde_json::json!(records)).into_response(),
         Err(e) => (

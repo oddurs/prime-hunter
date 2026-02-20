@@ -676,7 +676,15 @@ mod tests {
                     min_digits: 1,
                     max_digits: 9,
                 },
-                vec!["palindromic", "--base", "10", "--min-digits", "1", "--max-digits", "9"],
+                vec![
+                    "palindromic",
+                    "--base",
+                    "10",
+                    "--min-digits",
+                    "1",
+                    "--max-digits",
+                    "9",
+                ],
             ),
             (
                 SearchParams::Kbn {
@@ -685,7 +693,9 @@ mod tests {
                     min_n: 1,
                     max_n: 1000,
                 },
-                vec!["kbn", "--k", "3", "--base", "2", "--min-n", "1", "--max-n", "1000"],
+                vec![
+                    "kbn", "--k", "3", "--base", "2", "--min-n", "1", "--max-n", "1000",
+                ],
             ),
             (
                 SearchParams::CullenWoodall {
@@ -714,13 +724,26 @@ mod tests {
                     min_base: 2,
                     max_base: 100,
                 },
-                vec!["gen-fermat", "--fermat-exp", "2", "--min-base", "2", "--max-base", "100"],
+                vec![
+                    "gen-fermat",
+                    "--fermat-exp",
+                    "2",
+                    "--min-base",
+                    "2",
+                    "--max-base",
+                    "100",
+                ],
             ),
         ];
         for (params, expected) in &cases {
             let args = params.to_args();
             let expected_strings: Vec<String> = expected.iter().map(|s| s.to_string()).collect();
-            assert_eq!(args, expected_strings, "to_args mismatch for {:?}", params.search_type_name());
+            assert_eq!(
+                args,
+                expected_strings,
+                "to_args mismatch for {:?}",
+                params.search_type_name()
+            );
         }
     }
 
@@ -730,7 +753,11 @@ mod tests {
             let args = params.to_args();
             assert!(!args.is_empty());
             // First arg should be the subcommand name (not a flag)
-            assert!(!args[0].starts_with('-'), "First arg should be subcommand, got: {}", args[0]);
+            assert!(
+                !args[0].starts_with('-'),
+                "First arg should be subcommand, got: {}",
+                args[0]
+            );
         }
     }
 

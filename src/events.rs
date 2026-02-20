@@ -505,7 +505,10 @@ mod tests {
         let notifs = bus.recent_notifications(100);
         assert_eq!(notifs.len(), 2); // one per form
 
-        let factorial_notif = notifs.iter().find(|n| n.title.contains("factorial")).unwrap();
+        let factorial_notif = notifs
+            .iter()
+            .find(|n| n.title.contains("factorial"))
+            .unwrap();
         assert_eq!(factorial_notif.count, 2);
 
         let kbn_notif = notifs.iter().find(|n| n.title.contains("kbn")).unwrap();

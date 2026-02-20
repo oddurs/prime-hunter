@@ -8,8 +8,7 @@ use std::sync::Once;
 /// Returns the test database URL from the `TEST_DATABASE_URL` environment variable.
 /// Panics if the variable is not set.
 pub fn test_db_url() -> String {
-    std::env::var("TEST_DATABASE_URL")
-        .expect("TEST_DATABASE_URL must be set for integration tests")
+    std::env::var("TEST_DATABASE_URL").expect("TEST_DATABASE_URL must be set for integration tests")
 }
 
 /// Returns true if the test database URL is configured.
@@ -134,9 +133,12 @@ async fn run_migrations(pool: &sqlx::PgPool) {
         let sql = std::fs::read_to_string(path).unwrap();
         let cleaned = clean_migration_sql(&sql);
         if !cleaned.trim().is_empty() {
-            sqlx::raw_sql(&cleaned).execute(pool).await.unwrap_or_else(|e| {
-                panic!("Migration {} failed: {}", file, e);
-            });
+            sqlx::raw_sql(&cleaned)
+                .execute(pool)
+                .await
+                .unwrap_or_else(|e| {
+                    panic!("Migration {} failed: {}", file, e);
+                });
         }
     }
 }

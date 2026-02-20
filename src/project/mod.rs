@@ -29,16 +29,16 @@
 //! - [`records`] — World record tracking via t5k.org scraping
 
 mod config;
-mod types;
 mod cost;
 mod orchestration;
 mod records;
+mod types;
 
 pub use config::*;
-pub use types::*;
 pub use cost::*;
 pub use orchestration::*;
 pub use records::*;
+pub use types::*;
 
 #[cfg(test)]
 mod tests;

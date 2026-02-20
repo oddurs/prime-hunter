@@ -94,10 +94,7 @@ recommended_workers = 4
         Some("previous_phase_found_zero".to_string())
     );
     assert!(config.budget.is_some());
-    assert_eq!(
-        config.budget.as_ref().unwrap().max_cost_usd,
-        Some(500.0)
-    );
+    assert_eq!(config.budget.as_ref().unwrap().max_cost_usd, Some(500.0));
 }
 
 #[test]
@@ -673,7 +670,10 @@ fn followup_uses_kbn_range_keys() {
     assert_eq!(end, 300001);
     // Verify k and base are preserved
     assert_eq!(followup.search_params.get("k").unwrap().as_u64(), Some(1));
-    assert_eq!(followup.search_params.get("base").unwrap().as_u64(), Some(2));
+    assert_eq!(
+        followup.search_params.get("base").unwrap().as_u64(),
+        Some(2)
+    );
 }
 
 #[test]

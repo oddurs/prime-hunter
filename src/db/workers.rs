@@ -5,9 +5,9 @@
 //! (tested count, found count, checkpoint, system metrics). Stale workers
 //! (no heartbeat for 60s+) are pruned by the background task.
 
+use super::{Database, WorkerRow};
 use anyhow::Result;
 use serde_json::Value;
-use super::{Database, WorkerRow};
 
 impl Database {
     /// Upsert a worker registration. Creates the row on first heartbeat,
@@ -113,7 +113,10 @@ impl Database {
     pub async fn get_fleet_summary(&self) -> Result<super::FleetSummary> {
         let workers = self.get_all_workers().await?;
         let cutoff = chrono::Utc::now() - chrono::Duration::seconds(60);
-        let active: Vec<_> = workers.iter().filter(|w| w.last_heartbeat > cutoff).collect();
+        let active: Vec<_> = workers
+            .iter()
+            .filter(|w| w.last_heartbeat > cutoff)
+            .collect();
 
         let worker_count = active.len() as u32;
         let total_cores: u32 = active.iter().map(|w| w.cores.max(0) as u32).sum();

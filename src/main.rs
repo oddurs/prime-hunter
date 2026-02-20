@@ -381,7 +381,16 @@ fn main() -> Result<()> {
             })?;
             let rt = tokio::runtime::Runtime::new()?;
             let database = rt.block_on(db::Database::connect(database_url))?;
-            cli::run_verify(&rt, &database, *id, *all, form.as_deref(), *batch_size, *force, tool)
+            cli::run_verify(
+                &rt,
+                &database,
+                *id,
+                *all,
+                form.as_deref(),
+                *batch_size,
+                *force,
+                tool,
+            )
         }
         Commands::Join {
             username,

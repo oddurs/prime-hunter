@@ -493,15 +493,12 @@ pub(crate) fn test_prime(
         IsPrime::Yes => ("deterministic", None),
         IsPrime::Probably => (
             "probabilistic",
-            Some(PrimalityCertificate::MillerRabin {
-                rounds: mr_rounds,
-            }),
+            Some(PrimalityCertificate::MillerRabin { rounds: mr_rounds }),
         ),
         IsPrime::No => ("", None),
     };
     (r, cert_label, cert)
 }
-
 
 /// BSGS-based sieve: for each sieve prime, compute the discrete log to find
 /// all n-values where k*b^n ≡ ∓1 (mod p), then mark them as composite.
@@ -932,7 +929,10 @@ mod tests {
         let (result, cert, certificate) = test_prime(&candidate, 1, 2, 31, false, 25);
         assert_eq!(result, IsPrime::Yes);
         assert_eq!(cert, "deterministic");
-        assert!(matches!(certificate, Some(PrimalityCertificate::Llr { .. })));
+        assert!(matches!(
+            certificate,
+            Some(PrimalityCertificate::Llr { .. })
+        ));
     }
 
     #[test]
@@ -1055,14 +1055,24 @@ mod tests {
             for n in min_n..=max_n {
                 let idx = (n - min_n) as usize;
                 assert_eq!(
-                    bsgs_plus.get(idx), old_plus[idx],
+                    bsgs_plus.get(idx),
+                    old_plus[idx],
                     "k={} base={} n={}: +1 mismatch (bsgs={}, old={})",
-                    k, base, n, bsgs_plus.get(idx), old_plus[idx]
+                    k,
+                    base,
+                    n,
+                    bsgs_plus.get(idx),
+                    old_plus[idx]
                 );
                 assert_eq!(
-                    bsgs_minus.get(idx), old_minus[idx],
+                    bsgs_minus.get(idx),
+                    old_minus[idx],
                     "k={} base={} n={}: -1 mismatch (bsgs={}, old={})",
-                    k, base, n, bsgs_minus.get(idx), old_minus[idx]
+                    k,
+                    base,
+                    n,
+                    bsgs_minus.get(idx),
+                    old_minus[idx]
                 );
             }
         }

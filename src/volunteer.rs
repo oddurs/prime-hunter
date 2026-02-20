@@ -138,10 +138,7 @@ pub fn register(server: &str, username: &str, email: &str) -> Result<VolunteerCo
         "email": email,
     });
 
-    let response: RegisterResponse = ureq::post(&url)
-        .send_json(&body)?
-        .body_mut()
-        .read_json()?;
+    let response: RegisterResponse = ureq::post(&url).send_json(&body)?.body_mut().read_json()?;
 
     let worker_id = generate_worker_id();
     let config = VolunteerConfig {
@@ -207,10 +204,7 @@ pub fn claim_work(config: &VolunteerConfig, cores: usize) -> Result<Option<WorkA
 
 /// Submit a result to the coordinator.
 pub fn submit_result(config: &VolunteerConfig, submission: &ResultSubmission) -> Result<()> {
-    let url = format!(
-        "{}/api/v1/result",
-        config.server.trim_end_matches('/')
-    );
+    let url = format!("{}/api/v1/result", config.server.trim_end_matches('/'));
     ureq::post(&url)
         .header("Authorization", &auth_header(config))
         .send_json(submission)?;
@@ -219,10 +213,7 @@ pub fn submit_result(config: &VolunteerConfig, submission: &ResultSubmission) ->
 
 /// Get volunteer stats from the coordinator.
 pub fn get_stats(config: &VolunteerConfig) -> Result<VolunteerStats> {
-    let url = format!(
-        "{}/api/v1/stats",
-        config.server.trim_end_matches('/')
-    );
+    let url = format!("{}/api/v1/stats", config.server.trim_end_matches('/'));
     let stats: VolunteerStats = ureq::get(&url)
         .header("Authorization", &auth_header(config))
         .call()?
@@ -234,10 +225,7 @@ pub fn get_stats(config: &VolunteerConfig) -> Result<VolunteerStats> {
 /// Get the leaderboard from the coordinator.
 pub fn get_leaderboard(server: &str) -> Result<Vec<LeaderboardEntry>> {
     let url = format!("{}/api/v1/leaderboard", server.trim_end_matches('/'));
-    let entries: Vec<LeaderboardEntry> = ureq::get(&url)
-        .call()?
-        .body_mut()
-        .read_json()?;
+    let entries: Vec<LeaderboardEntry> = ureq::get(&url).call()?.body_mut().read_json()?;
     Ok(entries)
 }
 

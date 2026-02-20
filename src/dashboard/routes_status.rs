@@ -7,8 +7,8 @@ use axum::Json;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-use super::AppState;
 use super::websocket;
+use super::AppState;
 use crate::{checkpoint, db};
 
 pub(super) async fn handler_index() -> impl IntoResponse {
@@ -27,8 +27,14 @@ pub(super) struct StatusResponse {
 pub(super) async fn handler_api_status(State(state): State<Arc<AppState>>) -> Json<StatusResponse> {
     let cp = checkpoint::load(&state.checkpoint_path);
     match cp {
-        Some(c) => Json(StatusResponse { active: true, checkpoint: serde_json::to_value(&c).ok() }),
-        None => Json(StatusResponse { active: false, checkpoint: None }),
+        Some(c) => Json(StatusResponse {
+            active: true,
+            checkpoint: serde_json::to_value(&c).ok(),
+        }),
+        None => Json(StatusResponse {
+            active: false,
+            checkpoint: None,
+        }),
     }
 }
 
@@ -59,18 +65,50 @@ pub(super) async fn handler_api_export(
     let primes = match state.db.get_primes_filtered(100_000, 0, &filter).await {
         Ok(p) => p,
         Err(e) => {
-            return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))).into_response();
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": e.to_string()})),
+            )
+                .into_response();
         }
     };
     if format == "json" {
         let body = serde_json::to_string_pretty(&primes).unwrap_or_default();
-        ([(header::CONTENT_TYPE, "application/json"), (header::CONTENT_DISPOSITION, "attachment; filename=\"primes.json\"")], body).into_response()
+        (
+            [
+                (header::CONTENT_TYPE, "application/json"),
+                (
+                    header::CONTENT_DISPOSITION,
+                    "attachment; filename=\"primes.json\"",
+                ),
+            ],
+            body,
+        )
+            .into_response()
     } else {
         let mut csv = String::from("id,form,expression,digits,found_at,proof_method\n");
         for p in &primes {
-            csv.push_str(&format!("{},\"{}\",\"{}\",{},{},\"{}\"\n", p.id, p.form.replace('"', "\"\""), p.expression.replace('"', "\"\""), p.digits, p.found_at.to_rfc3339(), p.proof_method.replace('"', "\"\"")));
+            csv.push_str(&format!(
+                "{},\"{}\",\"{}\",{},{},\"{}\"\n",
+                p.id,
+                p.form.replace('"', "\"\""),
+                p.expression.replace('"', "\"\""),
+                p.digits,
+                p.found_at.to_rfc3339(),
+                p.proof_method.replace('"', "\"\"")
+            ));
         }
-        ([(header::CONTENT_TYPE, "text/csv"), (header::CONTENT_DISPOSITION, "attachment; filename=\"primes.csv\"")], csv).into_response()
+        (
+            [
+                (header::CONTENT_TYPE, "text/csv"),
+                (
+                    header::CONTENT_DISPOSITION,
+                    "attachment; filename=\"primes.csv\"",
+                ),
+            ],
+            csv,
+        )
+            .into_response()
     }
 }
 
@@ -81,6 +119,10 @@ pub(super) async fn handler_api_ws_snapshot(
 ) -> impl IntoResponse {
     match websocket::build_update(&state).await {
         Some(json) => ([(header::CONTENT_TYPE, "application/json")], json).into_response(),
-        None => (StatusCode::INTERNAL_SERVER_ERROR, "failed to build snapshot").into_response(),
+        None => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "failed to build snapshot",
+        )
+            .into_response(),
     }
 }

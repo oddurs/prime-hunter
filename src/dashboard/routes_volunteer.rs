@@ -81,7 +81,11 @@ pub(super) async fn handler_v1_register(
         );
     }
 
-    match state.db.register_volunteer(&payload.username, &payload.email).await {
+    match state
+        .db
+        .register_volunteer(&payload.username, &payload.email)
+        .await
+    {
         Ok(vol) => (
             StatusCode::CREATED,
             Json(serde_json::json!({
@@ -163,7 +167,11 @@ pub(super) async fn handler_v1_worker_heartbeat(
         Err(e) => return e,
     };
 
-    match state.db.volunteer_worker_heartbeat(&payload.worker_id).await {
+    match state
+        .db
+        .volunteer_worker_heartbeat(&payload.worker_id)
+        .await
+    {
         Ok(()) => (StatusCode::OK, Json(serde_json::json!({"ok": true}))),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -216,10 +224,7 @@ pub(super) async fn handler_v1_work(
                 })),
             )
         }
-        Ok(None) => (
-            StatusCode::NO_CONTENT,
-            Json(serde_json::json!(null)),
-        ),
+        Ok(None) => (StatusCode::NO_CONTENT, Json(serde_json::json!(null))),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({"error": format!("Work claim failed: {}", e)})),

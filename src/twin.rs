@@ -50,7 +50,6 @@ use crate::progress::Progress;
 use crate::CoordinationClient;
 use crate::{exact_digits, sieve};
 
-
 pub fn search(
     k: u64,
     base: u32,
@@ -162,7 +161,8 @@ pub fn search(
                 if crate::p1::adaptive_p1_filter(&plus) {
                     return None;
                 }
-                let (r_plus, cert_plus, certificate_plus) = kbn::test_prime(&plus, k, base, n, true, mr_rounds);
+                let (r_plus, cert_plus, certificate_plus) =
+                    kbn::test_prime(&plus, k, base, n, true, mr_rounds);
                 if r_plus == IsPrime::No {
                     return None;
                 }
@@ -176,7 +176,8 @@ pub fn search(
                 if crate::p1::adaptive_p1_filter(&minus) {
                     return None;
                 }
-                let (r_minus, cert_minus, certificate_minus) = kbn::test_prime(&minus, k, base, n, false, mr_rounds);
+                let (r_minus, cert_minus, certificate_minus) =
+                    kbn::test_prime(&minus, k, base, n, false, mr_rounds);
                 if r_minus == IsPrime::No {
                     return None;
                 }
@@ -189,7 +190,9 @@ pub fn search(
                 };
                 // Prefer the +1 certificate (Proth), fall back to -1 (LLR)
                 let certificate = certificate_plus.or(certificate_minus);
-                let cert_json = certificate.as_ref().and_then(|c| serde_json::to_string(c).ok());
+                let cert_json = certificate
+                    .as_ref()
+                    .and_then(|c| serde_json::to_string(c).ok());
                 Some((n, digits, certainty.to_string(), cert_json))
             })
             .collect();
@@ -213,7 +216,15 @@ pub fn search(
                     expr, digits, certainty
                 );
             }
-            db.insert_prime_sync(rt, "twin", &expr, digits, search_params, &certainty, cert_json.as_deref())?;
+            db.insert_prime_sync(
+                rt,
+                "twin",
+                &expr,
+                digits,
+                search_params,
+                &certainty,
+                cert_json.as_deref(),
+            )?;
             if let Some(wc) = worker_client {
                 wc.report_prime("twin", &expr, digits, search_params, &certainty);
             }
@@ -399,10 +410,14 @@ mod tests {
     fn known_twin_pairs_base3() {
         // k=1, base=3: n=1 → (4, 2) — 4 composite, n=2 → (10, 8) — both composite
         // k=2, base=3: n=1 → (7, 5) — both prime! Twin pair.
-        let plus = kb_plus(2, 3, 1);  // 2*3+1 = 7
+        let plus = kb_plus(2, 3, 1); // 2*3+1 = 7
         let minus = kb_minus(2, 3, 1); // 2*3-1 = 5
         assert_ne!(plus.is_probably_prime(25), IsPrime::No, "7 should be prime");
-        assert_ne!(minus.is_probably_prime(25), IsPrime::No, "5 should be prime");
+        assert_ne!(
+            minus.is_probably_prime(25),
+            IsPrime::No,
+            "5 should be prime"
+        );
     }
 
     #[test]
@@ -468,11 +483,13 @@ mod tests {
             let idx = (n - 1) as usize;
             assert!(
                 plus_surv.get(idx),
-                "Known twin n={}: +1 should survive sieve", n
+                "Known twin n={}: +1 should survive sieve",
+                n
             );
             assert!(
                 minus_surv.get(idx),
-                "Known twin n={}: -1 should survive sieve", n
+                "Known twin n={}: -1 should survive sieve",
+                n
             );
         }
     }

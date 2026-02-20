@@ -7,9 +7,12 @@
 //! Budget enforcement uses three time periods (daily/weekly/monthly) to cap
 //! spending. The execution engine claims tasks atomically with `FOR UPDATE SKIP LOCKED`.
 
+use super::{
+    AgentBudgetRow, AgentEventRow, AgentLogRow, AgentTaskRow, AgentTemplateRow, DailyCostRow,
+    Database, TemplateCostRow,
+};
 use anyhow::Result;
 use serde_json::Value;
-use super::{Database, AgentBudgetRow, AgentEventRow, AgentLogRow, AgentTaskRow, AgentTemplateRow, DailyCostRow, TemplateCostRow};
 
 impl Database {
     /// Get agent tasks with optional status filter, most recent first.
@@ -118,14 +121,12 @@ impl Database {
                 .await?;
             }
             "completed" | "failed" => {
-                sqlx::query(
-                    "UPDATE agent_tasks SET status = $1, completed_at = $2 WHERE id = $3",
-                )
-                .bind(status)
-                .bind(now)
-                .bind(id)
-                .execute(&self.pool)
-                .await?;
+                sqlx::query("UPDATE agent_tasks SET status = $1, completed_at = $2 WHERE id = $3")
+                    .bind(status)
+                    .bind(now)
+                    .bind(id)
+                    .execute(&self.pool)
+                    .await?;
             }
             _ => {
                 sqlx::query("UPDATE agent_tasks SET status = $1 WHERE id = $2")
@@ -190,7 +191,10 @@ impl Database {
         summary: &str,
         detail: Option<&Value>,
     ) -> Result<()> {
-        self.insert_agent_event_ex(task_id, event_type, agent, summary, detail, None, None, None, None).await
+        self.insert_agent_event_ex(
+            task_id, event_type, agent, summary, detail, None, None, None, None,
+        )
+        .await
     }
 
     /// Extended event insert with tool_name, token counts, and duration.
@@ -293,12 +297,10 @@ impl Database {
 
     /// Count total log lines for a task.
     pub async fn get_agent_log_count(&self, task_id: i64) -> Result<i64> {
-        let count: (i64,) = sqlx::query_as(
-            "SELECT COUNT(*) FROM agent_logs WHERE task_id = $1",
-        )
-        .bind(task_id)
-        .fetch_one(&self.pool)
-        .await?;
+        let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM agent_logs WHERE task_id = $1")
+            .bind(task_id)
+            .fetch_one(&self.pool)
+            .await?;
         Ok(count.0)
     }
 
@@ -393,13 +395,11 @@ impl Database {
 
     /// Update a budget period's limit.
     pub async fn update_agent_budget(&self, id: i64, budget_usd: f64) -> Result<()> {
-        sqlx::query(
-            "UPDATE agent_budgets SET budget_usd = $1, updated_at = NOW() WHERE id = $2",
-        )
-        .bind(budget_usd)
-        .bind(id)
-        .execute(&self.pool)
-        .await?;
+        sqlx::query("UPDATE agent_budgets SET budget_usd = $1, updated_at = NOW() WHERE id = $2")
+            .bind(budget_usd)
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
         Ok(())
     }
 
@@ -515,11 +515,7 @@ impl Database {
     }
 
     /// Increment spent_usd and tokens_used on ALL active budget period rows.
-    pub async fn update_agent_budget_spending(
-        &self,
-        tokens: i64,
-        cost: f64,
-    ) -> Result<()> {
+    pub async fn update_agent_budget_spending(&self, tokens: i64, cost: f64) -> Result<()> {
         sqlx::query(
             "UPDATE agent_budgets SET
                 spent_usd = spent_usd + $1,
@@ -722,10 +718,7 @@ impl Database {
             .ok_or_else(|| anyhow::anyhow!("Parent task {} not found", parent_id))?;
 
         // Already terminal
-        if matches!(
-            parent.status.as_str(),
-            "completed" | "failed" | "cancelled"
-        ) {
+        if matches!(parent.status.as_str(), "completed" | "failed" | "cancelled") {
             return Ok(None);
         }
 
@@ -745,13 +738,11 @@ impl Database {
             "completed"
         };
 
-        sqlx::query(
-            "UPDATE agent_tasks SET status = $1, completed_at = NOW() WHERE id = $2",
-        )
-        .bind(new_status)
-        .bind(parent_id)
-        .execute(&self.pool)
-        .await?;
+        sqlx::query("UPDATE agent_tasks SET status = $1, completed_at = NOW() WHERE id = $2")
+            .bind(new_status)
+            .bind(parent_id)
+            .execute(&self.pool)
+            .await?;
 
         self.get_agent_task(parent_id).await
     }
@@ -776,12 +767,11 @@ impl Database {
 
     /// Get dependency task IDs for a given task.
     pub async fn get_task_deps(&self, task_id: i64) -> Result<Vec<i64>> {
-        let rows: Vec<(i64,)> = sqlx::query_as(
-            "SELECT depends_on FROM agent_task_deps WHERE task_id = $1",
-        )
-        .bind(task_id)
-        .fetch_all(&self.pool)
-        .await?;
+        let rows: Vec<(i64,)> =
+            sqlx::query_as("SELECT depends_on FROM agent_task_deps WHERE task_id = $1")
+                .bind(task_id)
+                .fetch_all(&self.pool)
+                .await?;
         Ok(rows.into_iter().map(|(id,)| id).collect())
     }
 

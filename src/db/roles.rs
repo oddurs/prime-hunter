@@ -5,8 +5,8 @@
 //! include "engine", "frontend", "ops", and "research", each scoped to a
 //! set of domains with appropriate defaults.
 
+use super::{AgentRoleRow, AgentTemplateRow, Database};
 use anyhow::Result;
-use super::{Database, AgentRoleRow, AgentTemplateRow};
 
 impl Database {
     /// Retrieve all agent roles, ordered by name.

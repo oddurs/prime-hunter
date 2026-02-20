@@ -339,7 +339,10 @@ pub fn search(
                     let expr = format!("(2^{}-1)^2-2", n);
 
                     match pfgw::try_test(&expr, &carol, pfgw::PfgwMode::Prp) {
-                        Some(pfgw::PfgwResult::Prime { method, is_deterministic }) => {
+                        Some(pfgw::PfgwResult::Prime {
+                            method,
+                            is_deterministic,
+                        }) => {
                             let cert = if is_deterministic {
                                 format!("deterministic ({})", method)
                             } else {
@@ -373,7 +376,10 @@ pub fn search(
                     let expr = format!("(2^{}+1)^2-2", n);
 
                     match pfgw::try_test(&expr, &kynea, pfgw::PfgwMode::Prp) {
-                        Some(pfgw::PfgwResult::Prime { method, is_deterministic }) => {
+                        Some(pfgw::PfgwResult::Prime {
+                            method,
+                            is_deterministic,
+                        }) => {
                             let cert = if is_deterministic {
                                 format!("deterministic ({})", method)
                             } else {
@@ -618,7 +624,8 @@ mod tests {
         for n in 2..=20u64 {
             let k_carol = (1u64 << (n - 1)) - 1;
             let exp = n + 1;
-            let reconstructed = Integer::from(k_carol) * Integer::from(2u32).pow(crate::checked_u32(exp)) - 1u32;
+            let reconstructed =
+                Integer::from(k_carol) * Integer::from(2u32).pow(crate::checked_u32(exp)) - 1u32;
             assert_eq!(
                 reconstructed,
                 carol(n),
@@ -627,7 +634,8 @@ mod tests {
             );
 
             let k_kynea = (1u64 << (n - 1)) + 1;
-            let reconstructed = Integer::from(k_kynea) * Integer::from(2u32).pow(crate::checked_u32(exp)) - 1u32;
+            let reconstructed =
+                Integer::from(k_kynea) * Integer::from(2u32).pow(crate::checked_u32(exp)) - 1u32;
             assert_eq!(
                 reconstructed,
                 kynea(n),

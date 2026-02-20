@@ -49,9 +49,9 @@ pub mod db;
 pub mod deploy;
 pub mod events;
 pub mod factorial;
+pub mod fleet;
 #[cfg(feature = "flint")]
 pub mod flint;
-pub mod fleet;
 pub mod gen_fermat;
 pub mod gwnum;
 pub mod kbn;
@@ -59,13 +59,13 @@ pub mod metrics;
 pub mod near_repdigit;
 pub mod p1;
 pub mod palindromic;
+pub mod pfgw;
 pub mod pg_worker;
 pub mod primorial;
 pub mod progress;
 pub mod project;
 pub mod prom_metrics;
 pub mod proof;
-pub mod pfgw;
 pub mod prst;
 pub mod repunit;
 pub mod search_manager;
@@ -169,7 +169,8 @@ fn poly_mul(
     // r1 = a0*b1 + a1*b0 + a1*b1*b
     let a1b1 = Integer::from(&a[1] * &b[1]) % n;
     let r0 = (Integer::from(&a[0] * &b[0]) - Integer::from(&a1b1 * coeff_c)) % n;
-    let r1 = (Integer::from(&a[0] * &b[1]) + Integer::from(&a[1] * &b[0])
+    let r1 = (Integer::from(&a[0] * &b[1])
+        + Integer::from(&a[1] * &b[0])
         + Integer::from(&a1b1 * coeff_b))
         % n;
     // Normalize to [0, n)
@@ -179,12 +180,7 @@ fn poly_mul(
 }
 
 /// Square an element in the polynomial ring (slightly faster than generic mul).
-fn poly_sqr(
-    a: &[Integer; 2],
-    coeff_b: &Integer,
-    coeff_c: &Integer,
-    n: &Integer,
-) -> [Integer; 2] {
+fn poly_sqr(a: &[Integer; 2], coeff_b: &Integer, coeff_c: &Integer, n: &Integer) -> [Integer; 2] {
     poly_mul(a, a, coeff_b, coeff_c, n)
 }
 
@@ -192,12 +188,7 @@ fn poly_sqr(
 ///
 /// Returns the result as `[r0, r1]` where the answer is `r0 + r1·x`.
 /// The initial value is `x` itself, i.e., `[0, 1]`.
-fn poly_pow_mod(
-    exp: &Integer,
-    coeff_b: &Integer,
-    coeff_c: &Integer,
-    n: &Integer,
-) -> [Integer; 2] {
+fn poly_pow_mod(exp: &Integer, coeff_b: &Integer, coeff_c: &Integer, n: &Integer) -> [Integer; 2] {
     if *exp == 0u32 {
         return [Integer::from(1u32), Integer::from(0u32)]; // 1 in the ring
     }
@@ -205,7 +196,7 @@ fn poly_pow_mod(
     let bits = exp.significant_bits();
     // Start with x = [0, 1]
     let mut result = [Integer::from(0u32), Integer::from(1u32)]; // = x
-    // Process bits from second-highest down
+                                                                 // Process bits from second-highest down
     for i in (0..bits - 1).rev() {
         result = poly_sqr(&result, coeff_b, coeff_c, n);
         if exp.get_bit(i) {
@@ -574,13 +565,18 @@ mod tests {
 
     #[test]
     fn block_size_for_n_monotonically_nonincreasing() {
-        let test_points = [0u64, 500, 1_000, 1_001, 5_000, 10_000, 10_001,
-            25_000, 50_000, 50_001, 100_000, 200_000, 200_001, 1_000_000];
+        let test_points = [
+            0u64, 500, 1_000, 1_001, 5_000, 10_000, 10_001, 25_000, 50_000, 50_001, 100_000,
+            200_000, 200_001, 1_000_000,
+        ];
         for w in test_points.windows(2) {
             assert!(
                 block_size_for_n(w[1]) <= block_size_for_n(w[0]),
                 "block_size_for_n({}) = {} > block_size_for_n({}) = {}",
-                w[1], block_size_for_n(w[1]), w[0], block_size_for_n(w[0])
+                w[1],
+                block_size_for_n(w[1]),
+                w[0],
+                block_size_for_n(w[0])
             );
         }
     }
@@ -600,26 +596,49 @@ mod tests {
 
     #[test]
     fn block_size_for_n_heavy_monotonically_nonincreasing() {
-        let test_points = [0u64, 500, 1_000, 1_001, 5_000, 10_000, 10_001,
-            25_000, 50_000, 50_001, 100_000, 200_000, 200_001, 1_000_000];
+        let test_points = [
+            0u64, 500, 1_000, 1_001, 5_000, 10_000, 10_001, 25_000, 50_000, 50_001, 100_000,
+            200_000, 200_001, 1_000_000,
+        ];
         for w in test_points.windows(2) {
             assert!(
                 block_size_for_n_heavy(w[1]) <= block_size_for_n_heavy(w[0]),
                 "block_size_for_n_heavy({}) = {} > block_size_for_n_heavy({}) = {}",
-                w[1], block_size_for_n_heavy(w[1]), w[0], block_size_for_n_heavy(w[0])
+                w[1],
+                block_size_for_n_heavy(w[1]),
+                w[0],
+                block_size_for_n_heavy(w[0])
             );
         }
     }
 
     #[test]
     fn block_size_for_n_heavy_always_leq_normal() {
-        let test_points = [0u64, 500, 1_000, 1_001, 5_000, 10_000, 10_001,
-            25_000, 50_000, 50_001, 100_000, 200_000, 200_001, 1_000_000, u64::MAX];
+        let test_points = [
+            0u64,
+            500,
+            1_000,
+            1_001,
+            5_000,
+            10_000,
+            10_001,
+            25_000,
+            50_000,
+            50_001,
+            100_000,
+            200_000,
+            200_001,
+            1_000_000,
+            u64::MAX,
+        ];
         for &n in &test_points {
             assert!(
                 block_size_for_n_heavy(n) <= block_size_for_n(n),
                 "heavy({}) = {} > normal({}) = {}",
-                n, block_size_for_n_heavy(n), n, block_size_for_n(n)
+                n,
+                block_size_for_n_heavy(n),
+                n,
+                block_size_for_n(n)
             );
         }
     }
@@ -627,8 +646,16 @@ mod tests {
     #[test]
     fn block_size_for_n_returns_positive() {
         for &n in &[0u64, 1, 500, 10_000, 100_000, u64::MAX / 2, u64::MAX] {
-            assert!(block_size_for_n(n) > 0, "block_size_for_n({}) must be > 0", n);
-            assert!(block_size_for_n_heavy(n) > 0, "block_size_for_n_heavy({}) must be > 0", n);
+            assert!(
+                block_size_for_n(n) > 0,
+                "block_size_for_n({}) must be > 0",
+                n
+            );
+            assert!(
+                block_size_for_n_heavy(n) > 0,
+                "block_size_for_n_heavy({}) must be > 0",
+                n
+            );
         }
     }
 
@@ -637,14 +664,20 @@ mod tests {
     #[test]
     fn frobenius_test_known_primes() {
         // Small primes
-        for &p in &[2u32, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 101, 1009, 10007, 104729] {
+        for &p in &[
+            2u32, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 101, 1009, 10007, 104729,
+        ] {
             let n = Integer::from(p);
             assert!(frobenius_test(&n), "Frobenius rejected known prime {}", p);
         }
         // Mersenne primes: 2^p - 1 for p = 13, 17, 19
         for &exp in &[13u32, 17, 19] {
             let m = Integer::from(2u32).pow(exp) - 1u32;
-            assert!(frobenius_test(&m), "Frobenius rejected Mersenne prime 2^{}-1", exp);
+            assert!(
+                frobenius_test(&m),
+                "Frobenius rejected Mersenne prime 2^{}-1",
+                exp
+            );
         }
     }
 
@@ -661,12 +694,16 @@ mod tests {
     fn frobenius_test_products_of_large_primes() {
         // Products of two large primes
         let composites = [
-            Integer::from(1009u32) * Integer::from(1013u32),  // 1022117
+            Integer::from(1009u32) * Integer::from(1013u32), // 1022117
             Integer::from(10007u32) * Integer::from(10009u32), // 100160063
             Integer::from(104729u32) * Integer::from(104743u32),
         ];
         for n in &composites {
-            assert!(!frobenius_test(n), "Frobenius accepted large composite {}", n);
+            assert!(
+                !frobenius_test(n),
+                "Frobenius accepted large composite {}",
+                n
+            );
         }
     }
 

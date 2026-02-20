@@ -99,11 +99,7 @@ mod inner {
             for n in [50, 100, 500, 1000, 5000] {
                 let flint_result = factorial(n);
                 let gmp_result = Integer::from(Integer::factorial(n as u32));
-                assert_eq!(
-                    flint_result, gmp_result,
-                    "FLINT and GMP disagree on {}!",
-                    n
-                );
+                assert_eq!(flint_result, gmp_result, "FLINT and GMP disagree on {}!", n);
             }
         }
 
@@ -122,11 +118,7 @@ mod inner {
             for p in [31, 89, 100, 317, 500] {
                 let flint_result = primorial(p);
                 let gmp_result = Integer::from(Integer::primorial(p as u32));
-                assert_eq!(
-                    flint_result, gmp_result,
-                    "FLINT and GMP disagree on {}#",
-                    p
-                );
+                assert_eq!(flint_result, gmp_result, "FLINT and GMP disagree on {}#", p);
             }
         }
     }

@@ -33,17 +33,17 @@
 //! via `tokio::runtime::Handle::block_on`. This is safe because Rayon threads
 //! are not Tokio tasks — they won't deadlock the executor.
 
-mod primes;
-mod workers;
-mod jobs;
 mod agents;
+mod calibrations;
+mod jobs;
 mod memory;
+mod primes;
+mod projects;
+mod records;
 mod roles;
 mod schedules;
-mod projects;
-mod calibrations;
-mod records;
 pub mod volunteers;
+mod workers;
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};

@@ -9,10 +9,10 @@
 
 use anyhow::Result;
 
-use crate::db::Database;
 use super::config::{Objective, PhaseConfig, ProjectConfig};
 use super::cost::extract_range_from_params;
 use super::types::{ProjectPhaseRow, ProjectRow};
+use crate::db::Database;
 
 // ── Auto-Strategy Generation ────────────────────────────────────
 
@@ -163,10 +163,7 @@ pub async fn orchestrate_tick(db: &Database) -> Result<()> {
 
     for project in &projects {
         if let Err(e) = orchestrate_project(db, project).await {
-            eprintln!(
-                "Orchestration error for project '{}': {}",
-                project.slug, e
-            );
+            eprintln!("Orchestration error for project '{}': {}", project.slug, e);
             db.insert_project_event(
                 project.id,
                 "error",
@@ -219,7 +216,12 @@ async fn orchestrate_project(db: &Database, project: &ProjectRow) -> Result<()> 
     let phases_snapshot = db.get_project_phases(project.id).await?;
     for phase in phases_snapshot.iter().filter(|p| p.status == "completed") {
         if let Some(followup) = generate_followup_phase(project, phase, &phases_snapshot) {
-            let next_order = phases_snapshot.iter().map(|p| p.phase_order).max().unwrap_or(0) + 1;
+            let next_order = phases_snapshot
+                .iter()
+                .map(|p| p.phase_order)
+                .max()
+                .unwrap_or(0)
+                + 1;
             match db.insert_phase(project.id, &followup, next_order).await {
                 Ok(_) => {
                     db.insert_project_event(
@@ -253,12 +255,15 @@ async fn orchestrate_project(db: &Database, project: &ProjectRow) -> Result<()> 
     let phases = db.get_project_phases(project.id).await?;
 
     // 2. Activate next eligible phases (check fleet requirements first)
-    let fleet = db.get_fleet_summary().await.unwrap_or_else(|_| crate::db::FleetSummary {
-        worker_count: 0,
-        total_cores: 0,
-        max_ram_gb: 0,
-        active_search_types: vec![],
-    });
+    let fleet = db
+        .get_fleet_summary()
+        .await
+        .unwrap_or_else(|_| crate::db::FleetSummary {
+            worker_count: 0,
+            total_cores: 0,
+            max_ram_gb: 0,
+            active_search_types: vec![],
+        });
 
     for phase in phases.iter().filter(|p| p.status == "pending") {
         if should_activate(phase, &phases) {
@@ -354,7 +359,10 @@ async fn orchestrate_project(db: &Database, project: &ProjectRow) -> Result<()> 
     }
 
     // 5. Check budget alerts (use freshly computed cost, not stale project row)
-    if let Some(max_cost) = project.budget.get("max_cost_usd").and_then(serde_json::Value::as_f64)
+    if let Some(max_cost) = project
+        .budget
+        .get("max_cost_usd")
+        .and_then(serde_json::Value::as_f64)
     {
         if total_cost_usd >= max_cost {
             db.update_project_status(project.id, "paused").await?;
@@ -480,7 +488,8 @@ pub(crate) fn generate_followup_phase(
     }
 
     // Extract the range from the completed phase's search params
-    let (range_start, range_end) = super::cost::extract_range_from_params(&completed_phase.search_params);
+    let (range_start, range_end) =
+        super::cost::extract_range_from_params(&completed_phase.search_params);
     if range_end <= range_start {
         return None;
     }

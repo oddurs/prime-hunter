@@ -7,7 +7,9 @@ use std::sync::Arc;
 
 use super::AppState;
 
-pub(super) async fn handler_api_notifications(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+pub(super) async fn handler_api_notifications(
+    State(state): State<Arc<AppState>>,
+) -> impl IntoResponse {
     let notifications = state.event_bus.recent_notifications(50);
     Json(serde_json::json!({ "notifications": notifications }))
 }

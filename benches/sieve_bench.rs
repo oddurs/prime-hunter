@@ -30,7 +30,9 @@ fn bench_bsgs_discrete_log(c: &mut Criterion) {
     let p = 1_000_003u64;
     let order = sieve::multiplicative_order(2, p);
     c.bench_function("discrete_log_bsgs(2, 500, 1000003)", |b| {
-        b.iter(|| sieve::discrete_log_bsgs(black_box(2), black_box(500), black_box(p), black_box(order)));
+        b.iter(|| {
+            sieve::discrete_log_bsgs(black_box(2), black_box(500), black_box(p), black_box(order))
+        });
     });
 }
 

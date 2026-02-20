@@ -8,8 +8,8 @@
 //! Records are upserted on (form, category) so repeated scraping updates
 //! existing entries rather than creating duplicates.
 
-use anyhow::Result;
 use super::Database;
+use anyhow::Result;
 
 impl Database {
     /// Upsert a world record entry (insert or update on form+category).

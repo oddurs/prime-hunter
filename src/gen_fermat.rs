@@ -257,11 +257,12 @@ pub fn search(
                 let expr = format!("{}^{}+1", b, exponent);
 
                 // Try PFGW acceleration (50-100x faster for large candidates)
-                if let Some(pfgw_result) =
-                    pfgw::try_test(&expr, &candidate, pfgw::PfgwMode::Prp)
-                {
+                if let Some(pfgw_result) = pfgw::try_test(&expr, &candidate, pfgw::PfgwMode::Prp) {
                     match pfgw_result {
-                        pfgw::PfgwResult::Prime { method, is_deterministic } => {
+                        pfgw::PfgwResult::Prime {
+                            method,
+                            is_deterministic,
+                        } => {
                             let certainty = if is_deterministic {
                                 format!("deterministic ({})", method)
                             } else {
@@ -311,7 +312,15 @@ pub fn search(
                     expr, digits, certainty
                 );
             }
-            db.insert_prime_sync(rt, "gen_fermat", &expr, digits, search_params, &certainty, None)?;
+            db.insert_prime_sync(
+                rt,
+                "gen_fermat",
+                &expr,
+                digits,
+                search_params,
+                &certainty,
+                None,
+            )?;
             if let Some(wc) = worker_client {
                 wc.report_prime("gen_fermat", &expr, digits, search_params, &certainty);
             }
@@ -516,9 +525,18 @@ mod tests {
         // Odd bases: b^(2^n) + 1 is always even > 2, can't be prime
         // is_pepin_provable should return false for odd b and b=0
         assert!(!is_pepin_provable(0), "b=0 should not be Pépin-provable");
-        assert!(!is_pepin_provable(3), "b=3 (odd) should not be Pépin-provable");
-        assert!(!is_pepin_provable(5), "b=5 (odd) should not be Pépin-provable");
-        assert!(!is_pepin_provable(7), "b=7 (odd) should not be Pépin-provable");
+        assert!(
+            !is_pepin_provable(3),
+            "b=3 (odd) should not be Pépin-provable"
+        );
+        assert!(
+            !is_pepin_provable(5),
+            "b=5 (odd) should not be Pépin-provable"
+        );
+        assert!(
+            !is_pepin_provable(7),
+            "b=7 (odd) should not be Pépin-provable"
+        );
     }
 
     #[test]
@@ -539,7 +557,8 @@ mod tests {
         let sieve_primes = sieve::generate_primes(100);
         let survives = sieve_gf(2, 10, 1, &sieve_primes, 2);
         assert_eq!(
-            survives.len(), 5,
+            survives.len(),
+            5,
             "Even bases 2,4,6,8,10 should give 5 sieve entries"
         );
     }

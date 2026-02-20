@@ -122,11 +122,7 @@ pub fn is_available(digits: u64) -> bool {
 /// Returns None if PFGW is not configured (init() not called).
 /// Returns Some(Unavailable) if PFGW is configured but the candidate is too small
 /// or the binary is not found.
-pub fn try_test(
-    expression: &str,
-    candidate: &rug::Integer,
-    mode: PfgwMode,
-) -> Option<PfgwResult> {
+pub fn try_test(expression: &str, candidate: &rug::Integer, mode: PfgwMode) -> Option<PfgwResult> {
     let config = PFGW_CONFIG.get()?;
 
     // Check digit threshold
@@ -486,12 +482,16 @@ mod tests {
     #[test]
     fn parse_malformed_output_progress_only() {
         // PFGW sometimes outputs only progress lines with no result — should return Unavailable
-        let output = "Testing 100!+1 ... 12.3%\nTesting 100!+1 ... 47.1%\nTesting 100!+1 ... 98.2%\n";
+        let output =
+            "Testing 100!+1 ... 12.3%\nTesting 100!+1 ... 47.1%\nTesting 100!+1 ... 98.2%\n";
         match parse_output(output) {
             PfgwResult::Unavailable { reason } => {
                 assert!(reason.contains("unrecognized"), "reason: {}", reason);
             }
-            other => panic!("expected Unavailable for progress-only output, got {:?}", other),
+            other => panic!(
+                "expected Unavailable for progress-only output, got {:?}",
+                other
+            ),
         }
     }
 
@@ -501,7 +501,11 @@ mod tests {
         let output = "x".repeat(500);
         match parse_output(&output) {
             PfgwResult::Unavailable { reason } => {
-                assert!(reason.len() < 300, "reason should be truncated, got len={}", reason.len());
+                assert!(
+                    reason.len() < 300,
+                    "reason should be truncated, got len={}",
+                    reason.len()
+                );
             }
             other => panic!("expected Unavailable for long output, got {:?}", other),
         }

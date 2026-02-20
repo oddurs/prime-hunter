@@ -4,8 +4,8 @@
 //! trust level progression (adaptive replication), and credit tracking for
 //! the public volunteer computing platform.
 
-use anyhow::Result;
 use super::Database;
+use anyhow::Result;
 use serde::Serialize;
 
 /// Volunteer account row from the `volunteers` table.
@@ -50,11 +50,7 @@ impl Database {
     // ── Registration ──────────────────────────────────────────────
 
     /// Register a new volunteer account. Returns the generated API key and username.
-    pub async fn register_volunteer(
-        &self,
-        username: &str,
-        email: &str,
-    ) -> Result<VolunteerRow> {
+    pub async fn register_volunteer(&self, username: &str, email: &str) -> Result<VolunteerRow> {
         let row = sqlx::query_as::<_, VolunteerRow>(
             "INSERT INTO volunteers (username, email)
              VALUES ($1, $2)
@@ -78,16 +74,11 @@ impl Database {
     }
 
     /// Look up a volunteer by API key (used for authentication).
-    pub async fn get_volunteer_by_api_key(
-        &self,
-        api_key: &str,
-    ) -> Result<Option<VolunteerRow>> {
-        let row = sqlx::query_as::<_, VolunteerRow>(
-            "SELECT * FROM volunteers WHERE api_key = $1",
-        )
-        .bind(api_key)
-        .fetch_optional(&self.pool)
-        .await?;
+    pub async fn get_volunteer_by_api_key(&self, api_key: &str) -> Result<Option<VolunteerRow>> {
+        let row = sqlx::query_as::<_, VolunteerRow>("SELECT * FROM volunteers WHERE api_key = $1")
+            .bind(api_key)
+            .fetch_optional(&self.pool)
+            .await?;
         Ok(row)
     }
 
@@ -131,16 +122,11 @@ impl Database {
     }
 
     /// Update heartbeat timestamp for a volunteer worker.
-    pub async fn volunteer_worker_heartbeat(
-        &self,
-        worker_id: &str,
-    ) -> Result<()> {
-        sqlx::query(
-            "UPDATE volunteer_workers SET last_heartbeat = NOW() WHERE worker_id = $1",
-        )
-        .bind(worker_id)
-        .execute(&self.pool)
-        .await?;
+    pub async fn volunteer_worker_heartbeat(&self, worker_id: &str) -> Result<()> {
+        sqlx::query("UPDATE volunteer_workers SET last_heartbeat = NOW() WHERE worker_id = $1")
+            .bind(worker_id)
+            .execute(&self.pool)
+            .await?;
         Ok(())
     }
 
@@ -240,10 +226,7 @@ impl Database {
 
     /// Record a valid result and advance trust level if thresholds met.
     /// Trust levels: 1 (new) → 2 (reliable, 10+ valid) → 3 (trusted, 100+ valid).
-    pub async fn record_valid_result(
-        &self,
-        volunteer_id: uuid::Uuid,
-    ) -> Result<()> {
+    pub async fn record_valid_result(&self, volunteer_id: uuid::Uuid) -> Result<()> {
         sqlx::query(
             "UPDATE volunteer_trust SET
                consecutive_valid = consecutive_valid + 1,
@@ -262,10 +245,7 @@ impl Database {
     }
 
     /// Record an invalid result: reset consecutive_valid, bump trust down to 1.
-    pub async fn record_invalid_result(
-        &self,
-        volunteer_id: uuid::Uuid,
-    ) -> Result<()> {
+    pub async fn record_invalid_result(&self, volunteer_id: uuid::Uuid) -> Result<()> {
         sqlx::query(
             "UPDATE volunteer_trust SET
                consecutive_valid = 0,
@@ -298,28 +278,21 @@ impl Database {
         .execute(&self.pool)
         .await?;
 
-        sqlx::query(
-            "UPDATE volunteers SET credit = credit + $2 WHERE id = $1",
-        )
-        .bind(volunteer_id)
-        .bind(credit)
-        .execute(&self.pool)
-        .await?;
+        sqlx::query("UPDATE volunteers SET credit = credit + $2 WHERE id = $1")
+            .bind(volunteer_id)
+            .bind(credit)
+            .execute(&self.pool)
+            .await?;
 
         Ok(())
     }
 
     /// Increment primes_found for a volunteer.
-    pub async fn increment_volunteer_primes(
-        &self,
-        volunteer_id: uuid::Uuid,
-    ) -> Result<()> {
-        sqlx::query(
-            "UPDATE volunteers SET primes_found = primes_found + 1 WHERE id = $1",
-        )
-        .bind(volunteer_id)
-        .execute(&self.pool)
-        .await?;
+    pub async fn increment_volunteer_primes(&self, volunteer_id: uuid::Uuid) -> Result<()> {
+        sqlx::query("UPDATE volunteers SET primes_found = primes_found + 1 WHERE id = $1")
+            .bind(volunteer_id)
+            .execute(&self.pool)
+            .await?;
         Ok(())
     }
 
@@ -348,45 +321,33 @@ impl Database {
     }
 
     /// Get the volunteer leaderboard (top N by credit).
-    pub async fn get_volunteer_leaderboard(
-        &self,
-        limit: i64,
-    ) -> Result<Vec<LeaderboardRow>> {
-        let rows = sqlx::query_as::<_, LeaderboardRow>(
-            "SELECT * FROM volunteer_leaderboard LIMIT $1",
-        )
-        .bind(limit)
-        .fetch_all(&self.pool)
-        .await?;
+    pub async fn get_volunteer_leaderboard(&self, limit: i64) -> Result<Vec<LeaderboardRow>> {
+        let rows =
+            sqlx::query_as::<_, LeaderboardRow>("SELECT * FROM volunteer_leaderboard LIMIT $1")
+                .bind(limit)
+                .fetch_all(&self.pool)
+                .await?;
         Ok(rows)
     }
 
     // ── Quorum & Verification ─────────────────────────────────────
 
     /// Set the minimum quorum for a work block based on volunteer trust.
-    pub async fn set_block_quorum(
-        &self,
-        block_id: i32,
-        min_quorum: i16,
-    ) -> Result<()> {
-        sqlx::query(
-            "UPDATE work_blocks SET min_quorum = $2 WHERE block_id = $1",
-        )
-        .bind(block_id)
-        .bind(min_quorum)
-        .execute(&self.pool)
-        .await?;
+    pub async fn set_block_quorum(&self, block_id: i32, min_quorum: i16) -> Result<()> {
+        sqlx::query("UPDATE work_blocks SET min_quorum = $2 WHERE block_id = $1")
+            .bind(block_id)
+            .bind(min_quorum)
+            .execute(&self.pool)
+            .await?;
         Ok(())
     }
 
     /// Mark a work block as verified after quorum is met.
     pub async fn mark_block_verified(&self, block_id: i32) -> Result<()> {
-        sqlx::query(
-            "UPDATE work_blocks SET verified = TRUE WHERE block_id = $1",
-        )
-        .bind(block_id)
-        .execute(&self.pool)
-        .await?;
+        sqlx::query("UPDATE work_blocks SET verified = TRUE WHERE block_id = $1")
+            .bind(block_id)
+            .execute(&self.pool)
+            .await?;
         Ok(())
     }
 

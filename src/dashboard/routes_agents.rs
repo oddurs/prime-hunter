@@ -184,7 +184,9 @@ pub(super) async fn handler_api_agent_events(
     }
 }
 
-pub(super) async fn handler_api_agent_budgets(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+pub(super) async fn handler_api_agent_budgets(
+    State(state): State<Arc<AppState>>,
+) -> impl IntoResponse {
     match state.db.get_agent_budgets().await {
         Ok(budgets) => Json(serde_json::json!({ "budgets": budgets })).into_response(),
         Err(e) => (
@@ -221,7 +223,9 @@ pub(super) async fn handler_api_agent_budget_update(
 
 // --- Agent Memory API ---
 
-pub(super) async fn handler_api_agent_memory_list(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+pub(super) async fn handler_api_agent_memory_list(
+    State(state): State<Arc<AppState>>,
+) -> impl IntoResponse {
     match state.db.get_all_agent_memory().await {
         Ok(entries) => Json(serde_json::json!({ "memories": entries })).into_response(),
         Err(e) => (
@@ -373,20 +377,24 @@ pub(super) async fn handler_api_agent_template_expand(
         .get("priority")
         .and_then(|p| p.as_str())
         .unwrap_or("normal");
-    let max_cost_usd = body
-        .get("max_cost_usd")
-        .and_then(|c| c.as_f64());
+    let max_cost_usd = body.get("max_cost_usd").and_then(|c| c.as_f64());
     let permission_level = body
         .get("permission_level")
         .and_then(|l| l.as_i64())
         .unwrap_or(1) as i32;
-    let role_name = body
-        .get("role_name")
-        .and_then(|r| r.as_str());
+    let role_name = body.get("role_name").and_then(|r| r.as_str());
 
     match state
         .db
-        .expand_template(&name, title, description, priority, max_cost_usd, permission_level, role_name)
+        .expand_template(
+            &name,
+            title,
+            description,
+            priority,
+            max_cost_usd,
+            permission_level,
+            role_name,
+        )
         .await
     {
         Ok(parent_id) => {

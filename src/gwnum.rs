@@ -112,7 +112,8 @@ impl GwContext {
         use std::ffi::CString;
         use std::mem::MaybeUninit;
 
-        let mut handle = Box::new(unsafe { MaybeUninit::<gwnum_sys::gwhandle>::zeroed().assume_init() });
+        let mut handle =
+            Box::new(unsafe { MaybeUninit::<gwnum_sys::gwhandle>::zeroed().assume_init() });
 
         let version = CString::new("30.19").unwrap(); // GWNUM version string
         unsafe {
@@ -123,9 +124,8 @@ impl GwContext {
             );
         }
 
-        let ret = unsafe {
-            gwnum_sys::gwsetup(&mut *handle, k as f64, b as u64, n as u64, c as i64)
-        };
+        let ret =
+            unsafe { gwnum_sys::gwsetup(&mut *handle, k as f64, b as u64, n as u64, c as i64) };
 
         if ret != 0 {
             unsafe { gwnum_sys::gwdone(&mut *handle) };
@@ -217,13 +217,7 @@ impl GwContext {
     #[cfg(feature = "gwnum")]
     pub fn mul(&mut self, a: &GwNum, b: &GwNum, dest: &mut GwNum) -> Result<(), GwError> {
         unsafe {
-            gwnum_sys::gwmul3(
-                &mut *self.handle,
-                a.inner,
-                b.inner,
-                dest.inner,
-                0,
-            );
+            gwnum_sys::gwmul3(&mut *self.handle, a.inner, b.inner, dest.inner, 0);
         }
         self.check_error()
     }
@@ -299,7 +293,12 @@ impl GwContext {
         let max_words = 1024 * 1024; // 4MB, enough for multi-million digit numbers
         let mut buf: Vec<u32> = vec![0; max_words];
         let len = unsafe {
-            gwnum_sys::gwtobinary(&mut *self.handle, g.inner, buf.as_mut_ptr(), max_words as i32)
+            gwnum_sys::gwtobinary(
+                &mut *self.handle,
+                g.inner,
+                buf.as_mut_ptr(),
+                max_words as i32,
+            )
         };
         buf.truncate(len as usize);
         Integer::from_digits(&buf, rug::integer::Order::Lsf)
@@ -393,7 +392,9 @@ pub fn vrba_reix_test(p: u64) -> Result<bool, GwError> {
         if p > 50_000 && i % 10_000 == 0 && i > 0 {
             eprintln!(
                 "  Vrba-Reix: {}/{} squarings ({:.1}%)",
-                i, iters, i as f64 / iters as f64 * 100.0
+                i,
+                iters,
+                i as f64 / iters as f64 * 100.0
             );
         }
 
@@ -418,7 +419,8 @@ pub fn vrba_reix_test(p: u64) -> Result<bool, GwError> {
                 // Hardware/FFT error detected — rollback to last verified checkpoint
                 eprintln!(
                     "  Vrba-Reix ERROR at iteration {} — rolling back to {}",
-                    i + 1, verified_checkpoint_iter
+                    i + 1,
+                    verified_checkpoint_iter
                 );
 
                 // Reload verified checkpoint into GWNUM and replay
@@ -578,7 +580,9 @@ pub fn gwnum_llr(k: u64, n: u64) -> Result<Option<bool>, GwError> {
         if n > 50_000 && i % 10_000 == 0 && i > 0 {
             eprintln!(
                 "  GWNUM LLR: {}/{} squarings ({:.1}%)",
-                i, iters, i as f64 / iters as f64 * 100.0
+                i,
+                iters,
+                i as f64 / iters as f64 * 100.0
             );
         }
 
@@ -602,7 +606,8 @@ pub fn gwnum_llr(k: u64, n: u64) -> Result<Option<bool>, GwError> {
                 // Hardware/FFT error detected — rollback to last verified checkpoint
                 eprintln!(
                     "  GWNUM LLR ERROR at iteration {} — rolling back to {}",
-                    i + 1, verified_checkpoint_iter
+                    i + 1,
+                    verified_checkpoint_iter
                 );
 
                 // Reload verified checkpoint into GWNUM and replay

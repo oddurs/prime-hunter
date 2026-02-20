@@ -30,12 +30,7 @@ async fn app() -> Router {
 
 async fn get(app: Router, uri: &str) -> (StatusCode, serde_json::Value) {
     let response = app
-        .oneshot(
-            Request::builder()
-                .uri(uri)
-                .body(Body::empty())
-                .unwrap(),
-        )
+        .oneshot(Request::builder().uri(uri).body(Body::empty()).unwrap())
         .await
         .unwrap();
     let status = response.status();
@@ -44,7 +39,11 @@ async fn get(app: Router, uri: &str) -> (StatusCode, serde_json::Value) {
     (status, json)
 }
 
-async fn post_json(app: Router, uri: &str, body: serde_json::Value) -> (StatusCode, serde_json::Value) {
+async fn post_json(
+    app: Router,
+    uri: &str,
+    body: serde_json::Value,
+) -> (StatusCode, serde_json::Value) {
     let response = app
         .oneshot(
             Request::builder()
@@ -378,7 +377,10 @@ async fn cors_headers_present() {
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
-    assert!(response.headers().get("access-control-allow-origin").is_some());
+    assert!(response
+        .headers()
+        .get("access-control-allow-origin")
+        .is_some());
 }
 
 #[tokio::test]

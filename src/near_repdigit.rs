@@ -243,9 +243,7 @@ pub fn search(
 
                 // Try PFGW acceleration (near-repdigit: PRP only — N-1 doesn't have a
                 // trivially factored form; the BLS proof uses N+1 factorization instead)
-                if let Some(pfgw_result) =
-                    pfgw::try_test(&expr, &candidate, pfgw::PfgwMode::Prp)
-                {
+                if let Some(pfgw_result) = pfgw::try_test(&expr, &candidate, pfgw::PfgwMode::Prp) {
                     match pfgw_result {
                         pfgw::PfgwResult::Prime {
                             method,

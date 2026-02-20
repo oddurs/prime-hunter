@@ -70,42 +70,102 @@ pub fn detect_domains(title: &str, description: &str) -> Vec<&'static str> {
     let mut domains = Vec::new();
 
     let engine_keywords = [
-        "sieve", "primality", "factorial", "kbn", "gmp", "rug", "proof", "algorithm",
-        "palindromic", "proth", "llr", "pocklington", "montgomery", "morrison",
-        "repunit", "wagstaff", "cullen", "woodall", "carol", "kynea", "twin",
-        "sophie", "germain", "fermat", "primorial", "near_repdigit", "near-repdigit",
+        "sieve",
+        "primality",
+        "factorial",
+        "kbn",
+        "gmp",
+        "rug",
+        "proof",
+        "algorithm",
+        "palindromic",
+        "proth",
+        "llr",
+        "pocklington",
+        "montgomery",
+        "morrison",
+        "repunit",
+        "wagstaff",
+        "cullen",
+        "woodall",
+        "carol",
+        "kynea",
+        "twin",
+        "sophie",
+        "germain",
+        "fermat",
+        "primorial",
+        "near_repdigit",
+        "near-repdigit",
     ];
     if engine_keywords.iter().any(|kw| text.contains(kw)) {
         domains.push("engine");
     }
 
     let frontend_keywords = [
-        "react", "next.js", "nextjs", "component", "dashboard", "chart", "ui",
-        "tailwind", "frontend", "recharts", "shadcn", "page.tsx", "hook",
+        "react",
+        "next.js",
+        "nextjs",
+        "component",
+        "dashboard",
+        "chart",
+        "ui",
+        "tailwind",
+        "frontend",
+        "recharts",
+        "shadcn",
+        "page.tsx",
+        "hook",
     ];
     if frontend_keywords.iter().any(|kw| text.contains(kw)) {
         domains.push("frontend");
     }
 
     let deploy_keywords = [
-        "deploy", "systemd", "ssh", "production", "ops", "build", "release",
-        "pgo", "mimalloc", "cargo build", "binary", "service",
+        "deploy",
+        "systemd",
+        "ssh",
+        "production",
+        "ops",
+        "build",
+        "release",
+        "pgo",
+        "mimalloc",
+        "cargo build",
+        "binary",
+        "service",
     ];
     if deploy_keywords.iter().any(|kw| text.contains(kw)) {
         domains.push("deploy");
     }
 
     let docs_keywords = [
-        "research", "oeis", "paper", "publication", "strategy", "record",
-        "documentation", "roadmap",
+        "research",
+        "oeis",
+        "paper",
+        "publication",
+        "strategy",
+        "record",
+        "documentation",
+        "roadmap",
     ];
     if docs_keywords.iter().any(|kw| text.contains(kw)) {
         domains.push("docs");
     }
 
     let server_keywords = [
-        "api", "websocket", "axum", "database", "postgres", "coordination",
-        "fleet", "worker", "endpoint", "rest", "sqlx", "migration",
+        "api",
+        "websocket",
+        "axum",
+        "database",
+        "postgres",
+        "coordination",
+        "fleet",
+        "worker",
+        "endpoint",
+        "rest",
+        "sqlx",
+        "migration",
     ];
     if server_keywords.iter().any(|kw| text.contains(kw)) {
         domains.push("server");
@@ -170,10 +230,7 @@ pub async fn assemble_context(
                 continue;
             }
             if let Ok(content) = std::fs::read_to_string(path) {
-                sections.push(format!(
-                    "# Project Context: {}\n\n{}",
-                    path, content
-                ));
+                sections.push(format!("# Project Context: {}\n\n{}", path, content));
                 included_paths.push(path);
                 eprintln!("  Context: included {}", path);
             }
@@ -194,10 +251,7 @@ pub async fn assemble_context(
                 } else {
                     String::new()
                 };
-                sections.push(format!(
-                    "# Roadmap: {}\n\n{}{}",
-                    path, truncated, suffix
-                ));
+                sections.push(format!("# Roadmap: {}\n\n{}{}", path, truncated, suffix));
                 eprintln!("  Context: included roadmap {}", path);
             }
         }
@@ -211,10 +265,7 @@ pub async fn assemble_context(
         if output.status.success() {
             let log = String::from_utf8_lossy(&output.stdout);
             if !log.trim().is_empty() {
-                sections.push(format!(
-                    "# Recent Git History\n\n```\n{}\n```",
-                    log.trim()
-                ));
+                sections.push(format!("# Recent Git History\n\n```\n{}\n```", log.trim()));
             }
         }
     }
@@ -222,7 +273,9 @@ pub async fn assemble_context(
     // 4. Agent memory (all entries, grouped by category)
     if let Ok(memories) = db.get_all_agent_memory().await {
         if !memories.is_empty() {
-            let mut memory_text = String::from("# Agent Memory\n\nAccumulated knowledge from previous agent tasks:\n\n");
+            let mut memory_text = String::from(
+                "# Agent Memory\n\nAccumulated knowledge from previous agent tasks:\n\n",
+            );
             let mut current_category = String::new();
             for mem in &memories {
                 if mem.category != current_category {
@@ -257,10 +310,7 @@ pub async fn assemble_context(
             if !siblings.is_empty() {
                 let mut sibling_text = String::from("## Sibling Tasks\n\n");
                 for s in &siblings {
-                    sibling_text.push_str(&format!(
-                        "- #{} [{}] {}\n",
-                        s.id, s.status, s.title
-                    ));
+                    sibling_text.push_str(&format!("- #{} [{}] {}\n", s.id, s.status, s.title));
                 }
                 history_parts.push(sibling_text);
             }
@@ -288,10 +338,7 @@ pub async fn assemble_context(
                     } else {
                         result_summary.to_string()
                     };
-                    results_text.push_str(&format!(
-                        "### Step: {}\n\n{}\n\n",
-                        s.title, truncated
-                    ));
+                    results_text.push_str(&format!("### Step: {}\n\n{}\n\n", s.title, truncated));
                 }
                 history_parts.push(results_text);
                 eprintln!(
@@ -312,7 +359,12 @@ pub async fn assemble_context(
                     .as_ref()
                     .and_then(|r| r.get("error"))
                     .and_then(|e| e.as_str())
-                    .or_else(|| p.result.as_ref().and_then(|r| r.get("text")).and_then(|t| t.as_str()))
+                    .or_else(|| {
+                        p.result
+                            .as_ref()
+                            .and_then(|r| r.get("text"))
+                            .and_then(|t| t.as_str())
+                    })
                     .unwrap_or("(no details)");
                 prev_text.push_str(&format!(
                     "### Attempt #{} ({})\n- Status: {}\n- Result: {}\n\n",
@@ -323,7 +375,10 @@ pub async fn assemble_context(
                 ));
             }
             history_parts.push(prev_text);
-            eprintln!("  Context: included {} previous failed attempts", prev.len());
+            eprintln!(
+                "  Context: included {} previous failed attempts",
+                prev.len()
+            );
         }
     }
 
@@ -331,7 +386,11 @@ pub async fn assemble_context(
         sections.push(format!("# Task History\n\n{}", history_parts.join("\n")));
     }
 
-    eprintln!("  Context: assembled {} sections for task {}", sections.len(), task.id);
+    eprintln!(
+        "  Context: assembled {} sections for task {}",
+        sections.len(),
+        task.id
+    );
     sections
 }
 
@@ -483,7 +542,9 @@ impl AgentManager {
         cmd.stderr(std::process::Stdio::null());
         cmd.kill_on_drop(true);
 
-        let mut child = cmd.spawn().map_err(|e| format!("Failed to spawn claude: {}", e))?;
+        let mut child = cmd
+            .spawn()
+            .map_err(|e| format!("Failed to spawn claude: {}", e))?;
         let pid = child.id();
 
         // Take stdout immediately and hand it to an async reader task
@@ -508,23 +569,22 @@ impl AgentManager {
             pid,
         };
 
-        self.agents.insert(task.id, AgentEntry {
-            info: info.clone(),
-            child,
-            stdout_handle,
-            timeout_at,
-            started_at_utc: now,
-            max_cost_usd,
-            cost_rate_per_sec: cost_rate,
-        });
+        self.agents.insert(
+            task.id,
+            AgentEntry {
+                info: info.clone(),
+                child,
+                stdout_handle,
+                timeout_at,
+                started_at_utc: now,
+                max_cost_usd,
+                cost_rate_per_sec: cost_rate,
+            },
+        );
 
         eprintln!(
             "Agent spawned for task {} (pid {:?}, model {}, level {}, timeout {}s)",
-            task.id,
-            pid,
-            model,
-            level,
-            DEFAULT_TIMEOUT_SECS
+            task.id, pid, model, level, DEFAULT_TIMEOUT_SECS
         );
 
         Ok(info)
@@ -665,7 +725,9 @@ impl Drop for AgentManager {
 
 /// Synchronously check if a JoinHandle is ready without blocking.
 /// This avoids needing the futures crate — just polls once.
-fn futures_util_now_or_never<T>(handle: &mut JoinHandle<T>) -> Option<Result<T, tokio::task::JoinError>> {
+fn futures_util_now_or_never<T>(
+    handle: &mut JoinHandle<T>,
+) -> Option<Result<T, tokio::task::JoinError>> {
     // Use a tiny runtime-free check: if the handle is finished, we can block briefly
     if handle.is_finished() {
         // The task is done, so this won't actually block
@@ -685,9 +747,7 @@ impl<T> JoinHandleExt<T> for JoinHandle<T> {
         // Since we only call this after is_finished() returns true,
         // a blocking approach is safe. We use tokio::task::block_in_place
         // to avoid panics if called from a tokio context.
-        tokio::task::block_in_place(|| {
-            tokio::runtime::Handle::current().block_on(self)
-        })
+        tokio::task::block_in_place(|| tokio::runtime::Handle::current().block_on(self))
     }
 }
 
@@ -771,8 +831,14 @@ async fn read_agent_stdout(
             "result" => {
                 // Extract usage/cost from the result message
                 if let Some(usage) = parsed.get("usage") {
-                    let input = usage.get("input_tokens").and_then(|t| t.as_i64()).unwrap_or(0);
-                    let output = usage.get("output_tokens").and_then(|t| t.as_i64()).unwrap_or(0);
+                    let input = usage
+                        .get("input_tokens")
+                        .and_then(|t| t.as_i64())
+                        .unwrap_or(0);
+                    let output = usage
+                        .get("output_tokens")
+                        .and_then(|t| t.as_i64())
+                        .unwrap_or(0);
                     result.tokens_used = input + output;
                 }
                 result.cost_usd = parsed
@@ -875,7 +941,10 @@ mod tests {
 
     #[test]
     fn detect_domains_engine_keywords() {
-        let domains = detect_domains("Optimize the sieve module", "Improve primality testing speed");
+        let domains = detect_domains(
+            "Optimize the sieve module",
+            "Improve primality testing speed",
+        );
         assert!(domains.contains(&"engine"));
     }
 
@@ -891,8 +960,14 @@ mod tests {
             "Add API endpoint for sieve stats",
             "Create a REST endpoint that returns sieve performance data for the dashboard",
         );
-        assert!(domains.contains(&"engine"), "should detect engine from 'sieve'");
-        assert!(domains.contains(&"server"), "should detect server from 'endpoint' or 'rest'");
+        assert!(
+            domains.contains(&"engine"),
+            "should detect engine from 'sieve'"
+        );
+        assert!(
+            domains.contains(&"server"),
+            "should detect server from 'endpoint' or 'rest'"
+        );
     }
 
     #[test]

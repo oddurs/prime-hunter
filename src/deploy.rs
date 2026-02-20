@@ -349,8 +349,26 @@ mod tests {
     #[test]
     fn deploy_increments_id() {
         let mut dm = DeploymentManager::new();
-        let d1 = dm.deploy("h1".into(), "u".into(), "t".into(), "p".into(), "c".into(), "d".into(), None, None);
-        let d2 = dm.deploy("h2".into(), "u".into(), "t".into(), "p".into(), "c".into(), "d".into(), None, None);
+        let d1 = dm.deploy(
+            "h1".into(),
+            "u".into(),
+            "t".into(),
+            "p".into(),
+            "c".into(),
+            "d".into(),
+            None,
+            None,
+        );
+        let d2 = dm.deploy(
+            "h2".into(),
+            "u".into(),
+            "t".into(),
+            "p".into(),
+            "c".into(),
+            "d".into(),
+            None,
+            None,
+        );
         assert_eq!(d1.id, 1);
         assert_eq!(d2.id, 2);
     }
@@ -358,7 +376,16 @@ mod tests {
     #[test]
     fn status_lifecycle_deploying_to_running() {
         let mut dm = DeploymentManager::new();
-        dm.deploy("h".into(), "u".into(), "t".into(), "p".into(), "c".into(), "d".into(), None, None);
+        dm.deploy(
+            "h".into(),
+            "u".into(),
+            "t".into(),
+            "p".into(),
+            "c".into(),
+            "d".into(),
+            None,
+            None,
+        );
 
         dm.mark_running(1, 12345);
         let d = dm.get(1).unwrap();
@@ -369,7 +396,16 @@ mod tests {
     #[test]
     fn status_lifecycle_running_to_paused() {
         let mut dm = DeploymentManager::new();
-        dm.deploy("h".into(), "u".into(), "t".into(), "p".into(), "c".into(), "d".into(), None, None);
+        dm.deploy(
+            "h".into(),
+            "u".into(),
+            "t".into(),
+            "p".into(),
+            "c".into(),
+            "d".into(),
+            None,
+            None,
+        );
         dm.mark_running(1, 12345);
 
         dm.mark_paused(1);
@@ -381,7 +417,16 @@ mod tests {
     #[test]
     fn status_lifecycle_paused_to_resuming() {
         let mut dm = DeploymentManager::new();
-        dm.deploy("h".into(), "u".into(), "t".into(), "p".into(), "c".into(), "d".into(), None, None);
+        dm.deploy(
+            "h".into(),
+            "u".into(),
+            "t".into(),
+            "p".into(),
+            "c".into(),
+            "d".into(),
+            None,
+            None,
+        );
         dm.mark_paused(1);
 
         dm.mark_resuming(1);
@@ -392,7 +437,16 @@ mod tests {
     #[test]
     fn status_lifecycle_to_failed() {
         let mut dm = DeploymentManager::new();
-        dm.deploy("h".into(), "u".into(), "t".into(), "p".into(), "c".into(), "d".into(), None, None);
+        dm.deploy(
+            "h".into(),
+            "u".into(),
+            "t".into(),
+            "p".into(),
+            "c".into(),
+            "d".into(),
+            None,
+            None,
+        );
 
         dm.mark_failed(1, "SSH connection refused".into());
         let d = dm.get(1).unwrap();
@@ -403,7 +457,16 @@ mod tests {
     #[test]
     fn status_lifecycle_to_stopped() {
         let mut dm = DeploymentManager::new();
-        dm.deploy("h".into(), "u".into(), "t".into(), "p".into(), "c".into(), "d".into(), None, None);
+        dm.deploy(
+            "h".into(),
+            "u".into(),
+            "t".into(),
+            "p".into(),
+            "c".into(),
+            "d".into(),
+            None,
+            None,
+        );
         dm.mark_running(1, 999);
 
         dm.mark_stopped(1);
@@ -423,9 +486,36 @@ mod tests {
     #[test]
     fn get_all_sorted_by_id_desc() {
         let mut dm = DeploymentManager::new();
-        dm.deploy("h1".into(), "u".into(), "t".into(), "p".into(), "c".into(), "d".into(), None, None);
-        dm.deploy("h2".into(), "u".into(), "t".into(), "p".into(), "c".into(), "d".into(), None, None);
-        dm.deploy("h3".into(), "u".into(), "t".into(), "p".into(), "c".into(), "d".into(), None, None);
+        dm.deploy(
+            "h1".into(),
+            "u".into(),
+            "t".into(),
+            "p".into(),
+            "c".into(),
+            "d".into(),
+            None,
+            None,
+        );
+        dm.deploy(
+            "h2".into(),
+            "u".into(),
+            "t".into(),
+            "p".into(),
+            "c".into(),
+            "d".into(),
+            None,
+            None,
+        );
+        dm.deploy(
+            "h3".into(),
+            "u".into(),
+            "t".into(),
+            "p".into(),
+            "c".into(),
+            "d".into(),
+            None,
+            None,
+        );
 
         let all = dm.get_all();
         assert_eq!(all.len(), 3);
@@ -474,16 +564,52 @@ mod tests {
         // Just verify none of them panic
         let forms: Vec<SearchParams> = vec![
             SearchParams::Factorial { start: 1, end: 10 },
-            SearchParams::Palindromic { base: 10, min_digits: 1, max_digits: 9 },
-            SearchParams::Kbn { k: 3, base: 2, min_n: 1, max_n: 100 },
+            SearchParams::Palindromic {
+                base: 10,
+                min_digits: 1,
+                max_digits: 9,
+            },
+            SearchParams::Kbn {
+                k: 3,
+                base: 2,
+                min_n: 1,
+                max_n: 100,
+            },
             SearchParams::Primorial { start: 2, end: 50 },
-            SearchParams::CullenWoodall { min_n: 1, max_n: 30 },
-            SearchParams::Wagstaff { min_exp: 3, max_exp: 50 },
-            SearchParams::CarolKynea { min_n: 1, max_n: 30 },
-            SearchParams::Twin { k: 3, base: 2, min_n: 1, max_n: 100 },
-            SearchParams::SophieGermain { k: 1, base: 2, min_n: 2, max_n: 100 },
-            SearchParams::Repunit { base: 10, min_n: 2, max_n: 50 },
-            SearchParams::GenFermat { fermat_exp: 1, min_base: 2, max_base: 100 },
+            SearchParams::CullenWoodall {
+                min_n: 1,
+                max_n: 30,
+            },
+            SearchParams::Wagstaff {
+                min_exp: 3,
+                max_exp: 50,
+            },
+            SearchParams::CarolKynea {
+                min_n: 1,
+                max_n: 30,
+            },
+            SearchParams::Twin {
+                k: 3,
+                base: 2,
+                min_n: 1,
+                max_n: 100,
+            },
+            SearchParams::SophieGermain {
+                k: 1,
+                base: 2,
+                min_n: 2,
+                max_n: 100,
+            },
+            SearchParams::Repunit {
+                base: 10,
+                min_n: 2,
+                max_n: 50,
+            },
+            SearchParams::GenFermat {
+                fermat_exp: 1,
+                min_base: 2,
+                max_base: 100,
+            },
         ];
         for (i, params) in forms.iter().enumerate() {
             let cmd = build_ssh_command(i as u64 + 1, "http://c:7001", "postgres://db", params);

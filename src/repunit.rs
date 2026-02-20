@@ -204,11 +204,12 @@ pub fn search(
                 let pfgw_expr = format!("({}^{}-1)/{}", base, n, base - 1);
 
                 // Try PFGW acceleration (50-100x faster for large candidates)
-                if let Some(pfgw_result) =
-                    pfgw::try_test(&pfgw_expr, &val, pfgw::PfgwMode::Prp)
-                {
+                if let Some(pfgw_result) = pfgw::try_test(&pfgw_expr, &val, pfgw::PfgwMode::Prp) {
                     match pfgw_result {
-                        pfgw::PfgwResult::Prime { method, is_deterministic } => {
+                        pfgw::PfgwResult::Prime {
+                            method,
+                            is_deterministic,
+                        } => {
                             let certainty = if is_deterministic {
                                 format!("deterministic ({})", method)
                             } else {
@@ -262,7 +263,15 @@ pub fn search(
                     expr, digits, certainty
                 );
             }
-            db.insert_prime_sync(rt, "repunit", &expr, digits, search_params, &certainty, None)?;
+            db.insert_prime_sync(
+                rt,
+                "repunit",
+                &expr,
+                digits,
+                search_params,
+                &certainty,
+                None,
+            )?;
             if let Some(wc) = worker_client {
                 wc.report_prime("repunit", &expr, digits, search_params, &certainty);
             }
@@ -453,11 +462,19 @@ mod tests {
         // R(5,7) = (5^7-1)/4 = 19531 (prime)
         let r3 = repunit(5, 3);
         assert_eq!(r3, 31);
-        assert_ne!(r3.is_probably_prime(25), IsPrime::No, "R(5,3) = 31 should be prime");
+        assert_ne!(
+            r3.is_probably_prime(25),
+            IsPrime::No,
+            "R(5,3) = 31 should be prime"
+        );
 
         let r7 = repunit(5, 7);
         assert_eq!(r7, 19531);
-        assert_ne!(r7.is_probably_prime(25), IsPrime::No, "R(5,7) = 19531 should be prime");
+        assert_ne!(
+            r7.is_probably_prime(25),
+            IsPrime::No,
+            "R(5,7) = 19531 should be prime"
+        );
     }
 
     #[test]
@@ -465,7 +482,11 @@ mod tests {
         // R(2,11) = 2^11-1 = 2047 = 23*89 (composite)
         let r11 = repunit(2, 11);
         assert_eq!(r11, 2047);
-        assert_eq!(r11.is_probably_prime(25), IsPrime::No, "R(2,11) = 2047 = 23*89");
+        assert_eq!(
+            r11.is_probably_prime(25),
+            IsPrime::No,
+            "R(2,11) = 2047 = 23*89"
+        );
 
         // R(2,23) = 2^23-1 = 8388607 = 47*178481 (composite)
         let r23 = repunit(2, 23);
@@ -533,7 +554,8 @@ mod tests {
             let idx = exponents.iter().position(|&e| e == n).unwrap();
             assert!(
                 survives[idx],
-                "Known repunit prime R(10,{}) should survive sieve", n
+                "Known repunit prime R(10,{}) should survive sieve",
+                n
             );
         }
     }

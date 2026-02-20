@@ -4,8 +4,8 @@
 //! candidate count and digit size. Cloud pricing defaults to Hetzner AX42
 //! ($0.04/core-hr). PFGW gives ~50x speedup, GWNUM ~100x.
 
-use serde::Serialize;
 use super::config::ProjectConfig;
+use serde::Serialize;
 
 /// Estimated resource usage and cost for a project or phase.
 #[derive(Debug, Clone, Serialize)]

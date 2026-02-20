@@ -5,8 +5,8 @@
 //! categorized (e.g., "strategy", "observation", "config") and linked to the
 //! task that created them.
 
+use super::{AgentMemoryRow, Database};
 use anyhow::Result;
-use super::{Database, AgentMemoryRow};
 
 impl Database {
     /// Retrieve all agent memory entries, ordered by category then key.
@@ -21,7 +21,10 @@ impl Database {
     }
 
     /// Retrieve agent memory entries filtered by category.
-    pub async fn get_agent_memory_by_category(&self, category: &str) -> Result<Vec<AgentMemoryRow>> {
+    pub async fn get_agent_memory_by_category(
+        &self,
+        category: &str,
+    ) -> Result<Vec<AgentMemoryRow>> {
         let rows = sqlx::query_as::<_, AgentMemoryRow>(
             "SELECT id, key, value, category, created_by_task, created_at, updated_at
              FROM agent_memory WHERE category = $1 ORDER BY key",

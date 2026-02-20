@@ -78,8 +78,7 @@ pub fn auto_sieve_depth(candidate_bits: u64, n_range: u64) -> u64 {
     let raw_depth = test_cost.powf(2.0 / 3.0) * 10.0;
 
     // Clamp to reasonable range
-    let depth = (raw_depth as u64)
-        .clamp(1_000_000, 1_000_000_000); // 1M minimum (meaningful sieve), 1B max (memory/time limit)
+    let depth = (raw_depth as u64).clamp(1_000_000, 1_000_000_000); // 1M minimum (meaningful sieve), 1B max (memory/time limit)
 
     // For very small ranges, deep sieving isn't worth it
     // (BSGS cost is per-prime, amortized over the range)
@@ -114,11 +113,7 @@ pub fn generate_primes(limit: u64) -> Vec<u64> {
     }
     if limit < 7 {
         // Small cases: return directly
-        return [2, 3, 5]
-            .iter()
-            .copied()
-            .filter(|&p| p <= limit)
-            .collect();
+        return [2, 3, 5].iter().copied().filter(|&p| p <= limit).collect();
     }
 
     // Residues coprime to 30: these are the only positions we track
@@ -126,8 +121,8 @@ pub fn generate_primes(limit: u64) -> Vec<u64> {
 
     // Map residue → index in the wheel (for residues coprime to 30)
     const RES_TO_IDX: [u8; 30] = [
-        255, 0, 255, 255, 255, 255, 255, 1, 255, 255, 255, 2, 255, 3, 255, 255,
-        255, 4, 255, 5, 255, 255, 255, 6, 255, 255, 255, 255, 255, 7,
+        255, 0, 255, 255, 255, 255, 255, 1, 255, 255, 255, 2, 255, 3, 255, 255, 255, 4, 255, 5,
+        255, 255, 255, 6, 255, 255, 255, 255, 255, 7,
     ];
 
     let limit = limit as usize;
@@ -514,7 +509,12 @@ impl BitSieve {
     /// Panics if `index >= len`.
     #[inline]
     pub fn get(&self, index: usize) -> bool {
-        debug_assert!(index < self.len, "BitSieve index out of bounds: {} >= {}", index, self.len);
+        debug_assert!(
+            index < self.len,
+            "BitSieve index out of bounds: {} >= {}",
+            index,
+            self.len
+        );
         let word = self.words[index / 64];
         word & (1u64 << (index % 64)) != 0
     }
@@ -785,21 +785,33 @@ mod tests {
         // 1000-bit candidates → ~10M sieve (the old default)
         let depth = auto_sieve_depth(1000, 10000);
         assert!(depth >= 1_000_000, "depth should be at least 1M: {}", depth);
-        assert!(depth <= 100_000_000, "depth shouldn't be excessively large for 1000-bit: {}", depth);
+        assert!(
+            depth <= 100_000_000,
+            "depth shouldn't be excessively large for 1000-bit: {}",
+            depth
+        );
     }
 
     #[test]
     fn auto_sieve_depth_large_candidates() {
         // 100K-bit candidates (like large kbn searches) → should be much deeper
         let depth = auto_sieve_depth(100_000, 10000);
-        assert!(depth > 10_000_000, "depth should exceed 10M for 100K-bit: {}", depth);
+        assert!(
+            depth > 10_000_000,
+            "depth should exceed 10M for 100K-bit: {}",
+            depth
+        );
     }
 
     #[test]
     fn auto_sieve_depth_tiny_range() {
         // Very small range → capped at SIEVE_LIMIT
         let depth = auto_sieve_depth(100_000, 50);
-        assert!(depth <= SIEVE_LIMIT, "depth should be capped for tiny range: {}", depth);
+        assert!(
+            depth <= SIEVE_LIMIT,
+            "depth should be capped for tiny range: {}",
+            depth
+        );
     }
 
     #[test]
@@ -814,8 +826,18 @@ mod tests {
         let d1 = auto_sieve_depth(1000, 10000);
         let d2 = auto_sieve_depth(10_000, 10000);
         let d3 = auto_sieve_depth(100_000, 10000);
-        assert!(d1 <= d2, "depth should grow with candidate size: {} vs {}", d1, d2);
-        assert!(d2 <= d3, "depth should grow with candidate size: {} vs {}", d2, d3);
+        assert!(
+            d1 <= d2,
+            "depth should grow with candidate size: {} vs {}",
+            d1,
+            d2
+        );
+        assert!(
+            d2 <= d3,
+            "depth should grow with candidate size: {} vs {}",
+            d2,
+            d3
+        );
     }
 
     #[test]
@@ -953,6 +975,9 @@ mod tests {
         }
         let count = bs.count_ones();
         let iter_count = bs.iter_set_bits().count();
-        assert_eq!(count, iter_count, "count_ones and iter_set_bits should agree");
+        assert_eq!(
+            count, iter_count,
+            "count_ones and iter_set_bits should agree"
+        );
     }
 }

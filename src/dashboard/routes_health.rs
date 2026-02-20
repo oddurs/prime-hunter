@@ -32,11 +32,8 @@ pub async fn handler_healthz() -> impl IntoResponse {
 /// Returns 503 Service Unavailable if the database is unreachable, which
 /// tells K8s to stop routing traffic until the probe passes again.
 pub async fn handler_readyz(State(state): State<Arc<AppState>>) -> impl IntoResponse {
-    let check = tokio::time::timeout(
-        std::time::Duration::from_secs(2),
-        state.db.health_check(),
-    )
-    .await;
+    let check =
+        tokio::time::timeout(std::time::Duration::from_secs(2), state.db.health_check()).await;
 
     match check {
         Ok(Ok(())) => (StatusCode::OK, "ok"),
@@ -53,7 +50,10 @@ pub async fn handler_metrics(State(state): State<Arc<AppState>>) -> impl IntoRes
     let body = state.prom_metrics.encode();
     (
         StatusCode::OK,
-        [("content-type", "application/openmetrics-text; version=1.0.0; charset=utf-8")],
+        [(
+            "content-type",
+            "application/openmetrics-text; version=1.0.0; charset=utf-8",
+        )],
         body,
     )
 }

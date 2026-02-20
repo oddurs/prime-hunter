@@ -4,8 +4,8 @@
 //! Run with: cargo test --test property_tests
 
 use proptest::prelude::*;
-use rug::Integer;
 use rug::ops::Pow;
+use rug::Integer;
 
 // --- Sieve module properties ---
 

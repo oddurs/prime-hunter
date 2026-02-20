@@ -4,9 +4,9 @@
 //! world records. Records are stored in PostgreSQL and compared against our
 //! best primes to measure competitive standing.
 
+use crate::db::Database;
 use anyhow::Result;
 use serde::Serialize;
-use crate::db::Database;
 
 /// Known t5k.org Top 20 page IDs for each form.
 /// Used by `fetch_t5k_record` to scrape current world records.
@@ -93,10 +93,7 @@ pub fn parse_t5k_html(html: &str, form: &str) -> Result<Option<RecordInfo>> {
     }
 
     let expression = cells[1].clone();
-    let digits = cells[2]
-        .replace(',', "")
-        .parse::<u64>()
-        .unwrap_or(0);
+    let digits = cells[2].replace(',', "").parse::<u64>().unwrap_or(0);
     let holder = cells[3].clone();
     let discovered_at = cells.get(4).cloned();
 

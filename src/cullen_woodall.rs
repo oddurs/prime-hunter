@@ -279,7 +279,10 @@ pub fn search(
 
                     // Try PFGW acceleration (50-100x faster for large candidates)
                     match pfgw::try_test(&expr, &cullen, pfgw::PfgwMode::Prp) {
-                        Some(pfgw::PfgwResult::Prime { method, is_deterministic }) => {
+                        Some(pfgw::PfgwResult::Prime {
+                            method,
+                            is_deterministic,
+                        }) => {
                             let cert = if is_deterministic {
                                 format!("deterministic ({})", method)
                             } else {
@@ -298,7 +301,12 @@ pub fn search(
                                 let (r, cert) = test_cullen(&cullen, n, mr_rounds);
                                 if r != IsPrime::No {
                                     let digits = exact_digits(&cullen);
-                                    Some((format!("{}*2^{} + 1", n, n), digits, cert.to_string(), "cullen"))
+                                    Some((
+                                        format!("{}*2^{} + 1", n, n),
+                                        digits,
+                                        cert.to_string(),
+                                        "cullen",
+                                    ))
                                 } else {
                                     None
                                 }
@@ -316,7 +324,10 @@ pub fn search(
 
                         // Try PFGW acceleration
                         match pfgw::try_test(&expr, &woodall, pfgw::PfgwMode::Prp) {
-                            Some(pfgw::PfgwResult::Prime { method, is_deterministic }) => {
+                            Some(pfgw::PfgwResult::Prime {
+                                method,
+                                is_deterministic,
+                            }) => {
                                 let cert = if is_deterministic {
                                     format!("deterministic ({})", method)
                                 } else {
@@ -335,7 +346,12 @@ pub fn search(
                                     let (r, cert) = test_woodall(&woodall, n, mr_rounds);
                                     if r != IsPrime::No {
                                         let digits = exact_digits(&woodall);
-                                        Some((format!("{}*2^{} - 1", n, n), digits, cert.to_string(), "woodall"))
+                                        Some((
+                                            format!("{}*2^{} - 1", n, n),
+                                            digits,
+                                            cert.to_string(),
+                                            "woodall",
+                                        ))
                                     } else {
                                         None
                                     }
@@ -568,7 +584,8 @@ mod tests {
         let exp = n + e as u64;
         assert_eq!(exp, 7);
         // Verify: m * 2^exp - 1 = 3 * 128 - 1 = 383
-        let reconstructed = Integer::from(m) * Integer::from(2u32).pow(crate::checked_u32(exp)) - 1u32;
+        let reconstructed =
+            Integer::from(m) * Integer::from(2u32).pow(crate::checked_u32(exp)) - 1u32;
         assert_eq!(reconstructed, woodall(n));
     }
 
@@ -601,8 +618,14 @@ mod tests {
             // Reconstruction: m * 2^e == n
             assert_eq!(m << e, n, "m * 2^e should reconstruct n={}", n);
             // W_n = m * 2^exp - 1
-            let reconstructed = Integer::from(m) * Integer::from(2u32).pow(crate::checked_u32(exp)) - 1u32;
-            assert_eq!(reconstructed, woodall(n), "Decomposition failed for W_{}", n);
+            let reconstructed =
+                Integer::from(m) * Integer::from(2u32).pow(crate::checked_u32(exp)) - 1u32;
+            assert_eq!(
+                reconstructed,
+                woodall(n),
+                "Decomposition failed for W_{}",
+                n
+            );
         }
     }
 
@@ -611,7 +634,7 @@ mod tests {
         // Verify the sieve recurrence f(n) = n*2^n mod p matches direct computation
         let p = 97u64;
         let mut g = sieve::pow_mod(2, 1, p); // 2^1 mod p
-        let mut f = (1 % p) * g % p;          // 1*2^1 mod p
+        let mut f = (1 % p) * g % p; // 1*2^1 mod p
 
         for n in 1..=20u64 {
             // Direct computation
@@ -631,7 +654,8 @@ mod tests {
         for n in 1..=64u64 {
             assert!(
                 n < (1u128 << n) as u64 || n > 63,
-                "Proth condition n < 2^n should hold for n={}", n
+                "Proth condition n < 2^n should hold for n={}",
+                n
             );
         }
     }
@@ -671,7 +695,8 @@ mod tests {
                 assert_eq!(
                     c.is_probably_prime(15),
                     IsPrime::No,
-                    "Sieve said C_{} composite but it's prime", n
+                    "Sieve said C_{} composite but it's prime",
+                    n
                 );
             }
             if !woodall_surv[idx] {
@@ -679,7 +704,8 @@ mod tests {
                 assert_eq!(
                     w.is_probably_prime(15),
                     IsPrime::No,
-                    "Sieve said W_{} composite but it's prime", n
+                    "Sieve said W_{} composite but it's prime",
+                    n
                 );
             }
         }

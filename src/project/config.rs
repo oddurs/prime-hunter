@@ -246,7 +246,10 @@ pub(crate) fn validate_phase_graph(phases: &[PhaseConfig]) -> Result<()> {
         successors.entry(phase.name.as_str()).or_default();
         for dep in phase.depends_on.as_deref().unwrap_or_default() {
             *in_degree.entry(phase.name.as_str()).or_insert(0) += 1;
-            successors.entry(dep.as_str()).or_default().push(phase.name.as_str());
+            successors
+                .entry(dep.as_str())
+                .or_default()
+                .push(phase.name.as_str());
         }
     }
 
@@ -282,7 +285,13 @@ pub(crate) fn validate_phase_graph(phases: &[PhaseConfig]) -> Result<()> {
 pub fn slugify(name: &str) -> String {
     name.to_lowercase()
         .chars()
-        .map(|c| if c.is_alphanumeric() || c == '-' { c } else { '-' })
+        .map(|c| {
+            if c.is_alphanumeric() || c == '-' {
+                c
+            } else {
+                '-'
+            }
+        })
         .collect::<String>()
         .split('-')
         .filter(|s| !s.is_empty())

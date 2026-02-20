@@ -12,9 +12,9 @@
 //! 4. `reclaim_stale_blocks` recovers blocks from crashed workers (runs every 30s)
 //! 5. `get_job_block_summary` aggregates block status for progress reporting
 
+use super::{Database, JobBlockSummary, SearchJobRow, WorkBlock};
 use anyhow::Result;
 use serde_json::Value;
-use super::{Database, JobBlockSummary, SearchJobRow, WorkBlock};
 
 impl Database {
     /// Create a new search job and generate its work blocks in a single transaction.
@@ -237,11 +237,7 @@ impl Database {
     }
 
     /// Link a search job to a project (set the FK on search_jobs).
-    pub async fn link_search_job_to_project(
-        &self,
-        job_id: i64,
-        project_id: i64,
-    ) -> Result<()> {
+    pub async fn link_search_job_to_project(&self, job_id: i64, project_id: i64) -> Result<()> {
         sqlx::query("UPDATE search_jobs SET project_id = $1 WHERE id = $2")
             .bind(project_id)
             .bind(job_id)

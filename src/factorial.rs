@@ -612,7 +612,9 @@ mod tests {
             let np1 = Integer::from(n + 1);
             assert!(
                 plus.is_divisible(&np1),
-                "Wilson: ({}+1) should divide {}!+1", n, n
+                "Wilson: ({}+1) should divide {}!+1",
+                n,
+                n
             );
         }
     }
@@ -630,13 +632,16 @@ mod tests {
             assert_eq!(
                 np1.is_probably_prime(10),
                 IsPrime::No,
-                "n+1={} should be composite", n + 1
+                "n+1={} should be composite",
+                n + 1
             );
             // Wilson doesn't apply, so (n+1) should NOT divide n!+1
             assert!(
                 !plus.is_divisible(&np1),
                 "(n+1)={} should NOT divide {}!+1={} when n+1 is composite",
-                n + 1, n, plus
+                n + 1,
+                n,
+                plus
             );
         }
     }
@@ -652,7 +657,9 @@ mod tests {
                 fm,
                 120 % p,
                 "5! mod {} should be {}, got {}",
-                p, 120 % p, fm
+                p,
+                120 % p,
+                fm
             );
         }
     }
@@ -668,8 +675,14 @@ mod tests {
             fsieve.advance(n);
         }
         let (plus, minus) = fsieve.check_composites();
-        assert!(!plus, "3!+1=7 should not be sieved as composite by [11,13,17]");
-        assert!(!minus, "3!-1=5 should not be sieved as composite by [11,13,17]");
+        assert!(
+            !plus,
+            "3!+1=7 should not be sieved as composite by [11,13,17]"
+        );
+        assert!(
+            !minus,
+            "3!-1=5 should not be sieved as composite by [11,13,17]"
+        );
     }
 
     #[test]

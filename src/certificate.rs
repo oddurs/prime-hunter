@@ -52,9 +52,7 @@ pub enum PrimalityCertificate {
 
     /// Pocklington N−1 proof: for each prime factor `q` of `N-1`,
     /// a witness base `a` where `a^(N-1) ≡ 1` and `gcd(a^((N-1)/q) - 1, N) = 1`.
-    Pocklington {
-        factors: Vec<PocklingtonWitness>,
-    },
+    Pocklington { factors: Vec<PocklingtonWitness> },
 
     /// Morrison N+1 proof: Lucas `P` value and per-factor witnesses where
     /// `V_{(N+1)/q}(P,1) ≢ 2 (mod N)`.

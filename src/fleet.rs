@@ -171,7 +171,13 @@ mod tests {
     #[test]
     fn register_duplicate_overwrites() {
         let mut f = make_fleet_with_worker("w1");
-        f.register("w1".into(), "host2".into(), 16, "factorial".into(), "{}".into());
+        f.register(
+            "w1".into(),
+            "host2".into(),
+            16,
+            "factorial".into(),
+            "{}".into(),
+        );
         let workers = f.get_all();
         assert_eq!(workers.len(), 1);
         assert_eq!(workers[0].hostname, "host2");
@@ -245,8 +251,20 @@ mod tests {
     fn multiple_workers_independent() {
         let mut f = Fleet::new();
         f.register("w1".into(), "host1".into(), 4, "kbn".into(), "{}".into());
-        f.register("w2".into(), "host2".into(), 8, "factorial".into(), "{}".into());
-        f.register("w3".into(), "host3".into(), 16, "palindromic".into(), "{}".into());
+        f.register(
+            "w2".into(),
+            "host2".into(),
+            8,
+            "factorial".into(),
+            "{}".into(),
+        );
+        f.register(
+            "w3".into(),
+            "host3".into(),
+            16,
+            "palindromic".into(),
+            "{}".into(),
+        );
         assert_eq!(f.get_all().len(), 3);
 
         f.deregister("w2");

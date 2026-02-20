@@ -54,7 +54,6 @@ use crate::progress::Progress;
 use crate::CoordinationClient;
 use crate::{exact_digits, sieve};
 
-
 /// Search for Sophie Germain primes: p = k*b^n - 1 where both p and 2p+1 are prime.
 ///
 /// 2p+1 = 2*k*b^n - 1, which is also a Riesel form with doubled k.
@@ -183,7 +182,8 @@ pub fn search(
                 if crate::p1::adaptive_p1_filter(&p) {
                     return None;
                 }
-                let (r_p, cert_p, certificate_p) = kbn::test_prime(&p, k, base, n, false, mr_rounds);
+                let (r_p, cert_p, certificate_p) =
+                    kbn::test_prime(&p, k, base, n, false, mr_rounds);
                 if r_p == IsPrime::No {
                     return None;
                 }
@@ -194,7 +194,8 @@ pub fn search(
                 if crate::p1::adaptive_p1_filter(&safe) {
                     return None;
                 }
-                let (r_safe, cert_safe, _certificate_safe) = kbn::test_prime(&safe, k2, base, n, false, mr_rounds);
+                let (r_safe, cert_safe, _certificate_safe) =
+                    kbn::test_prime(&safe, k2, base, n, false, mr_rounds);
                 if r_safe == IsPrime::No {
                     return None;
                 }
@@ -206,7 +207,9 @@ pub fn search(
                     _ => "probabilistic",
                 };
                 // Use the certificate from p (the Sophie Germain prime itself)
-                let cert_json = certificate_p.as_ref().and_then(|c| serde_json::to_string(c).ok());
+                let cert_json = certificate_p
+                    .as_ref()
+                    .and_then(|c| serde_json::to_string(c).ok());
                 Some((n, digits, certainty.to_string(), cert_json))
             })
             .collect();
@@ -444,13 +447,16 @@ mod tests {
             assert_ne!(
                 p_int.is_probably_prime(25),
                 IsPrime::No,
-                "SG prime {} should be prime", p
+                "SG prime {} should be prime",
+                p
             );
             let safe = Integer::from(2 * p + 1);
             assert_ne!(
                 safe.is_probably_prime(25),
                 IsPrime::No,
-                "Safe prime 2*{}+1={} should be prime", p, 2 * p + 1
+                "Safe prime 2*{}+1={} should be prime",
+                p,
+                2 * p + 1
             );
         }
     }
@@ -515,7 +521,9 @@ mod tests {
         assert!(
             intersection <= k_survivors.min(k2_survivors),
             "Intersection {} should be <= min({}, {})",
-            intersection, k_survivors, k2_survivors
+            intersection,
+            k_survivors,
+            k2_survivors
         );
     }
 

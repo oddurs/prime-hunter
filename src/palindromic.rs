@@ -236,7 +236,15 @@ pub fn search(
                             expr, digits, cert
                         );
                     }
-                    db.insert_prime_sync(rt, "palindromic", &expr, digits, search_params, cert, None)?;
+                    db.insert_prime_sync(
+                        rt,
+                        "palindromic",
+                        &expr,
+                        digits,
+                        search_params,
+                        cert,
+                        None,
+                    )?;
                     if let Some(wc) = worker_client {
                         wc.report_prime("palindromic", &expr, digits, search_params, cert);
                     }
@@ -584,7 +592,10 @@ mod tests {
     fn is_filter_composite_passes_prime() {
         // 10301 is prime
         let digits = vec![1, 0, 3, 0, 1];
-        let primes: Vec<u64> = sieve::generate_primes(1000).into_iter().filter(|&p| p >= 3).collect();
+        let primes: Vec<u64> = sieve::generate_primes(1000)
+            .into_iter()
+            .filter(|&p| p >= 3)
+            .collect();
         assert!(!is_filter_composite(&digits, 10, &primes, 5));
     }
 

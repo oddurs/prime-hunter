@@ -4,8 +4,8 @@
 //! newly discovered primes (both async and sync-from-rayon), filtered listing with
 //! dynamic WHERE clauses, verification status updates, and best-per-form lookups.
 
-use anyhow::Result;
 use super::{Database, PrimeDetail, PrimeFilter, PrimeRecord};
+use anyhow::Result;
 
 impl Database {
     /// Insert a new prime record with the current timestamp.
@@ -80,7 +80,14 @@ impl Database {
         proof_method: &str,
         certificate: Option<&str>,
     ) -> Result<()> {
-        rt.block_on(self.insert_prime(form, expression, digits, search_params, proof_method, certificate))
+        rt.block_on(self.insert_prime(
+            form,
+            expression,
+            digits,
+            search_params,
+            proof_method,
+            certificate,
+        ))
     }
 
     /// Synchronous duplicate-ignoring insert for rayon threads.

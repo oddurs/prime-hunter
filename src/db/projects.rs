@@ -13,8 +13,8 @@
 //! 4. `update_project_progress` / `update_project_cost` track aggregated stats
 //! 5. Completion/failure transitions via `update_project_status`
 
-use anyhow::Result;
 use super::Database;
+use anyhow::Result;
 
 impl Database {
     /// Create a new project with phases from a parsed TOML configuration.
@@ -167,11 +167,7 @@ impl Database {
     /// terminal states (completed, cancelled, failed).
     pub async fn update_project_status(&self, project_id: i64, status: &str) -> Result<()> {
         let now = chrono::Utc::now();
-        let started = if status == "active" {
-            Some(now)
-        } else {
-            None
-        };
+        let started = if status == "active" { Some(now) } else { None };
         let completed = if matches!(status, "completed" | "cancelled" | "failed") {
             Some(now)
         } else {
@@ -239,14 +235,12 @@ impl Database {
         total_tested: i64,
         total_found: i64,
     ) -> Result<()> {
-        sqlx::query(
-            "UPDATE project_phases SET total_tested = $1, total_found = $2 WHERE id = $3",
-        )
-        .bind(total_tested)
-        .bind(total_found)
-        .bind(phase_id)
-        .execute(&self.pool)
-        .await?;
+        sqlx::query("UPDATE project_phases SET total_tested = $1, total_found = $2 WHERE id = $3")
+            .bind(total_tested)
+            .bind(total_found)
+            .bind(phase_id)
+            .execute(&self.pool)
+            .await?;
         Ok(())
     }
 

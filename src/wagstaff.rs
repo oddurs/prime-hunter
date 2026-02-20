@@ -233,11 +233,9 @@ pub fn search(
                 }
 
                 // Try PFGW acceleration (Wagstaff: PRP only, no deterministic test exists)
-                if let Some(pfgw_result) = pfgw::try_test(
-                    &format!("(2^{}+1)/3", p),
-                    &candidate,
-                    pfgw::PfgwMode::Prp,
-                ) {
+                if let Some(pfgw_result) =
+                    pfgw::try_test(&format!("(2^{}+1)/3", p), &candidate, pfgw::PfgwMode::Prp)
+                {
                     match pfgw_result {
                         pfgw::PfgwResult::Prime {
                             method,
@@ -297,7 +295,15 @@ pub fn search(
                     expr, digits, certainty
                 );
             }
-            db.insert_prime_sync(rt, "wagstaff", &expr, digits, search_params, &certainty, None)?;
+            db.insert_prime_sync(
+                rt,
+                "wagstaff",
+                &expr,
+                digits,
+                search_params,
+                &certainty,
+                None,
+            )?;
             if let Some(wc) = worker_client {
                 wc.report_prime("wagstaff", &expr, digits, search_params, &certainty);
             }
@@ -461,12 +467,7 @@ mod tests {
         for &p in &[5u64, 7, 11, 13, 17, 19, 23, 31, 43, 61, 79, 101, 127] {
             let w = wagstaff(p);
             let result = w.is_probably_prime(25);
-            assert_ne!(
-                result,
-                IsPrime::No,
-                "(2^{}+1)/3 should pass MR",
-                p
-            );
+            assert_ne!(result, IsPrime::No, "(2^{}+1)/3 should pass MR", p);
             // For large enough Wagstaff numbers, GMP can't prove primality deterministically.
             // GMP returns IsPrime::Yes for very small numbers (< 2^64), so only check p >= 67.
             if p >= 67 {

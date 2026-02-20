@@ -92,9 +92,18 @@ mod tests {
         let m = collect(&sys);
 
         assert!(m.cpu_usage_percent >= 0.0, "CPU usage negative");
-        assert!(m.cpu_usage_percent <= 100.0 * sys.cpus().len() as f32, "CPU usage unreasonable");
-        assert!(m.memory_usage_percent >= 0.0, "Memory usage percent negative");
-        assert!(m.memory_usage_percent <= 100.0, "Memory usage percent > 100");
+        assert!(
+            m.cpu_usage_percent <= 100.0 * sys.cpus().len() as f32,
+            "CPU usage unreasonable"
+        );
+        assert!(
+            m.memory_usage_percent >= 0.0,
+            "Memory usage percent negative"
+        );
+        assert!(
+            m.memory_usage_percent <= 100.0,
+            "Memory usage percent > 100"
+        );
         assert!(m.disk_usage_percent >= 0.0, "Disk usage percent negative");
         assert!(m.disk_usage_percent <= 100.0, "Disk usage percent > 100");
     }

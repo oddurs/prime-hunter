@@ -17,27 +17,23 @@ fn darkreach() -> Command {
 
 #[test]
 fn help_shows_all_subcommands() {
-    darkreach()
-        .arg("--help")
-        .assert()
-        .success()
-        .stdout(
-            predicate::str::contains("factorial")
-                .and(predicate::str::contains("palindromic"))
-                .and(predicate::str::contains("kbn"))
-                .and(predicate::str::contains("dashboard"))
-                .and(predicate::str::contains("primorial"))
-                .and(predicate::str::contains("wagstaff"))
-                .and(predicate::str::contains("carol-kynea"))
-                .and(predicate::str::contains("twin"))
-                .and(predicate::str::contains("sophie-germain"))
-                .and(predicate::str::contains("repunit"))
-                .and(predicate::str::contains("gen-fermat"))
-                .and(predicate::str::contains("cullen-woodall"))
-                .and(predicate::str::contains("near-repdigit"))
-                .and(predicate::str::contains("work"))
-                .and(predicate::str::contains("verify")),
-        );
+    darkreach().arg("--help").assert().success().stdout(
+        predicate::str::contains("factorial")
+            .and(predicate::str::contains("palindromic"))
+            .and(predicate::str::contains("kbn"))
+            .and(predicate::str::contains("dashboard"))
+            .and(predicate::str::contains("primorial"))
+            .and(predicate::str::contains("wagstaff"))
+            .and(predicate::str::contains("carol-kynea"))
+            .and(predicate::str::contains("twin"))
+            .and(predicate::str::contains("sophie-germain"))
+            .and(predicate::str::contains("repunit"))
+            .and(predicate::str::contains("gen-fermat"))
+            .and(predicate::str::contains("cullen-woodall"))
+            .and(predicate::str::contains("near-repdigit"))
+            .and(predicate::str::contains("work"))
+            .and(predicate::str::contains("verify")),
+    );
 }
 
 #[test]
@@ -46,10 +42,7 @@ fn help_factorial_shows_args() {
         .args(["factorial", "--help"])
         .assert()
         .success()
-        .stdout(
-            predicate::str::contains("--start")
-                .and(predicate::str::contains("--end")),
-        );
+        .stdout(predicate::str::contains("--start").and(predicate::str::contains("--end")));
 }
 
 #[test]
@@ -85,10 +78,7 @@ fn help_dashboard_shows_args() {
         .args(["dashboard", "--help"])
         .assert()
         .success()
-        .stdout(
-            predicate::str::contains("--port")
-                .and(predicate::str::contains("--static-dir")),
-        );
+        .stdout(predicate::str::contains("--port").and(predicate::str::contains("--static-dir")));
 }
 
 #[test]
@@ -131,9 +121,19 @@ fn palindromic_missing_required_args_fails() {
 fn invalid_database_url_fails() {
     // An unreachable database URL should cause a connection error
     darkreach()
-        .env("DATABASE_URL", "postgres://invalid:invalid@127.0.0.1:59999/nonexistent")
-        .args(["--database-url", "postgres://invalid:invalid@127.0.0.1:59999/nonexistent",
-               "factorial", "--start", "1", "--end", "10"])
+        .env(
+            "DATABASE_URL",
+            "postgres://invalid:invalid@127.0.0.1:59999/nonexistent",
+        )
+        .args([
+            "--database-url",
+            "postgres://invalid:invalid@127.0.0.1:59999/nonexistent",
+            "factorial",
+            "--start",
+            "1",
+            "--end",
+            "10",
+        ])
         .timeout(std::time::Duration::from_secs(10))
         .assert()
         .failure();
@@ -160,7 +160,15 @@ fn factorial_finds_known_primes() {
     // n!-1 primes: 3, 4, 6, 7, 12, 14, 30, 32, ...
     // Range 1..50 should find several
     darkreach()
-        .args(["--database-url", &db_url, "factorial", "--start", "1", "--end", "50"])
+        .args([
+            "--database-url",
+            &db_url,
+            "factorial",
+            "--start",
+            "1",
+            "--end",
+            "50",
+        ])
         .timeout(std::time::Duration::from_secs(60))
         .assert()
         .success()
@@ -173,8 +181,17 @@ fn kbn_finds_mersenne_primes() {
     // k=1, base=2: 2^n-1 primes for n=2,3,5,7,13,17,19
     darkreach()
         .args([
-            "--database-url", &db_url,
-            "kbn", "--k", "1", "--base", "2", "--min-n", "2", "--max-n", "20",
+            "--database-url",
+            &db_url,
+            "kbn",
+            "--k",
+            "1",
+            "--base",
+            "2",
+            "--min-n",
+            "2",
+            "--max-n",
+            "20",
         ])
         .timeout(std::time::Duration::from_secs(60))
         .assert()
@@ -188,8 +205,15 @@ fn palindromic_finds_known_primes() {
     // Base 10, 1-5 digits: should find many palindromic primes (2,3,5,7,11,101,131,...)
     darkreach()
         .args([
-            "--database-url", &db_url,
-            "palindromic", "--base", "10", "--min-digits", "1", "--max-digits", "5",
+            "--database-url",
+            &db_url,
+            "palindromic",
+            "--base",
+            "10",
+            "--min-digits",
+            "1",
+            "--max-digits",
+            "5",
         ])
         .timeout(std::time::Duration::from_secs(60))
         .assert()
@@ -203,8 +227,13 @@ fn wagstaff_finds_known_primes() {
     // Known Wagstaff primes: exponents 3,5,7,11,13,17,19,23,31,43
     darkreach()
         .args([
-            "--database-url", &db_url,
-            "wagstaff", "--min-exp", "3", "--max-exp", "50",
+            "--database-url",
+            &db_url,
+            "wagstaff",
+            "--min-exp",
+            "3",
+            "--max-exp",
+            "50",
         ])
         .timeout(std::time::Duration::from_secs(60))
         .assert()
@@ -218,8 +247,13 @@ fn carol_kynea_finds_primes() {
     // Carol primes at n=2,3,4,6,7,10,12,15
     darkreach()
         .args([
-            "--database-url", &db_url,
-            "carol-kynea", "--min-n", "2", "--max-n", "16",
+            "--database-url",
+            &db_url,
+            "carol-kynea",
+            "--min-n",
+            "2",
+            "--max-n",
+            "16",
         ])
         .timeout(std::time::Duration::from_secs(60))
         .assert()

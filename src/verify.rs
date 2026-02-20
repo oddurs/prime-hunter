@@ -607,7 +607,12 @@ fn convert_repunit_to_pfgw(expression: &str) -> String {
     // Parse R(base,n) format
     if let Some(inner) = expr.strip_prefix("R(").and_then(|s| s.strip_suffix(')')) {
         if let Some((base_str, n_str)) = inner.split_once(',') {
-            return format!("({}^{}-1)/({})", base_str.trim(), n_str.trim(), base_str.trim().parse::<u64>().unwrap_or(10) - 1);
+            return format!(
+                "({}^{}-1)/({})",
+                base_str.trim(),
+                n_str.trim(),
+                base_str.trim().parse::<u64>().unwrap_or(10) - 1
+            );
         }
     }
     // Fallback: return as-is
@@ -754,9 +759,9 @@ const PROVABLE_FORMS: &[&str] = &[
 /// result resets trust.
 pub fn required_quorum(trust_level: i16, form: &str) -> i16 {
     match trust_level {
-        3 => 1,                                                    // Trusted: single-check all
-        2 if PROVABLE_FORMS.contains(&form) => 1,                 // Reliable + provable: proof is verification
-        _ => 2,                                                    // New/untrusted or PRP form: double-check
+        3 => 1,                                   // Trusted: single-check all
+        2 if PROVABLE_FORMS.contains(&form) => 1, // Reliable + provable: proof is verification
+        _ => 2,                                   // New/untrusted or PRP form: double-check
     }
 }
 
@@ -1067,7 +1072,9 @@ mod tests {
         let result = verify_pfgw("repunit", "R(10, 7)", &candidate);
         // Should return Skipped (PFGW not initialized in tests) or a valid result
         match result {
-            VerifyResult::Verified { .. } | VerifyResult::Failed { .. } | VerifyResult::Skipped { .. } => {}
+            VerifyResult::Verified { .. }
+            | VerifyResult::Failed { .. }
+            | VerifyResult::Skipped { .. } => {}
         }
     }
 

@@ -6,9 +6,9 @@ use axum::response::IntoResponse;
 use std::sync::Arc;
 use std::time::Duration;
 
-use super::{lock_or_recover, AppState};
 use super::routes_fleet::build_fleet_data;
 use super::routes_status::StatusResponse;
+use super::{lock_or_recover, AppState};
 use crate::checkpoint;
 
 pub(super) async fn handler_ws(
@@ -72,7 +72,10 @@ pub(super) async fn build_update(state: &Arc<AppState>) -> Option<String> {
     let workers = state.get_workers_from_pg().await;
     let fleet_data = build_fleet_data(&workers);
     {
-        let worker_stats: Vec<(String, u64, u64)> = workers.iter().map(|w| (w.worker_id.clone(), w.tested, w.found)).collect();
+        let worker_stats: Vec<(String, u64, u64)> = workers
+            .iter()
+            .map(|w| (w.worker_id.clone(), w.tested, w.found))
+            .collect();
         lock_or_recover(&state.searches).sync_worker_stats(&worker_stats);
     }
     let searches = lock_or_recover(&state.searches).get_all();
@@ -80,7 +83,11 @@ pub(super) async fn build_update(state: &Arc<AppState>) -> Option<String> {
     let coord_metrics = lock_or_recover(&state.coordinator_metrics).clone();
     let search_jobs = state.db.get_search_jobs().await.unwrap_or_default();
     let recent_notifications = state.event_bus.recent_notifications(20);
-    let agent_tasks = state.db.get_agent_tasks(Some("in_progress"), 100).await.unwrap_or_default();
+    let agent_tasks = state
+        .db
+        .get_agent_tasks(Some("in_progress"), 100)
+        .await
+        .unwrap_or_default();
     let agent_budgets = state.db.get_agent_budgets().await.unwrap_or_default();
     let running_agents = lock_or_recover(&state.agents).get_all();
     let projects = state.db.get_projects(None).await.unwrap_or_default();
