@@ -399,7 +399,8 @@ impl Database {
             .host(url.host_str().unwrap_or("localhost"))
             .port(url.port().unwrap_or(5432))
             .database(url.path().trim_start_matches('/'))
-            .username(&username);
+            .username(&username)
+            .statement_cache_capacity(0);
         if let Some(ref pw) = password {
             opts = opts.password(pw);
         }

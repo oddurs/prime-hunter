@@ -65,23 +65,25 @@ impl PgWorkerClient {
         let st = search_type.to_string();
         let sp = search_params.to_string();
         let p = pool.clone();
-        let _ = rt_handle.block_on(async {
-            sqlx::query(
-                "INSERT INTO workers (worker_id, hostname, cores, search_type, search_params, last_heartbeat)
+        rt_handle
+            .block_on(async {
+                sqlx::query(
+                    "INSERT INTO workers (worker_id, hostname, cores, search_type, search_params, last_heartbeat)
                  VALUES ($1, $2, $3, $4, $5, NOW())
                  ON CONFLICT (worker_id) DO UPDATE SET
                    hostname = EXCLUDED.hostname, cores = EXCLUDED.cores,
                    search_type = EXCLUDED.search_type, search_params = EXCLUDED.search_params,
                    last_heartbeat = NOW(), pending_command = NULL",
-            )
-            .bind(&wid)
-            .bind(&hn)
-            .bind(cores)
-            .bind(&st)
-            .bind(&sp)
-            .execute(&p)
-            .await
-        });
+                )
+                .bind(&wid)
+                .bind(&hn)
+                .bind(cores)
+                .bind(&st)
+                .bind(&sp)
+                .execute(&p)
+                .await
+            })
+            .expect("Failed to register worker in database");
         eprintln!("Registered with PostgreSQL (worker_id={})", worker_id);
 
         PgWorkerClient {
