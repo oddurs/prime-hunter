@@ -23,6 +23,16 @@ vi.mock("@/contexts/websocket-context", () => ({
   useWs: () => mockWsData,
 }));
 
+vi.mock("@/contexts/auth-context", () => ({
+  useAuth: () => ({
+    user: { email: "tester@example.com" },
+    session: null,
+    loading: false,
+    signIn: vi.fn(),
+    signOut: vi.fn(),
+  }),
+}));
+
 let mockPathname = "/";
 
 vi.mock("next/navigation", () => ({

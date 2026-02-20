@@ -46,8 +46,12 @@ mod roles;
 mod schedules;
 pub mod volunteers;
 mod workers;
-pub use observability::{MetricPoint, MetricSample, MetricSeries, SystemLogEntry, SystemLogRow};
-pub use releases::{WorkerReleaseChannelRow, WorkerReleaseRow};
+pub use observability::{
+    MetricPoint, MetricSample, MetricSeries, SystemLogEntry, SystemLogRow, WorkerRateRow,
+};
+pub use releases::{
+    WorkerReleaseAdoptionRow, WorkerReleaseChannelRow, WorkerReleaseEventRow, WorkerReleaseRow,
+};
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};

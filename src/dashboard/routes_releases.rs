@@ -52,6 +52,78 @@ pub(super) async fn handler_releases_list(
 }
 
 #[derive(Deserialize)]
+pub(super) struct EventsQuery {
+    #[serde(default)]
+    channel: Option<String>,
+    #[serde(default = "default_limit")]
+    limit: i64,
+}
+
+pub(super) async fn handler_releases_events(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<EventsQuery>,
+) -> impl IntoResponse {
+    let limit = query.limit.clamp(1, 500);
+    match state
+        .db
+        .list_worker_release_events(query.channel.as_deref(), limit)
+        .await
+    {
+        Ok(events) => (
+            StatusCode::OK,
+            Json(serde_json::json!({ "events": events })),
+        ),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": format!("failed to list events: {}", e)})),
+        ),
+    }
+}
+
+#[derive(Deserialize)]
+pub(super) struct HealthQuery {
+    #[serde(default = "default_active_hours")]
+    active_hours: i64,
+}
+
+fn default_active_hours() -> i64 {
+    24
+}
+
+pub(super) async fn handler_releases_health(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<HealthQuery>,
+) -> impl IntoResponse {
+    let active_hours = query.active_hours.clamp(1, 24 * 30);
+    let adoption = match state.db.worker_release_adoption(active_hours).await {
+        Ok(v) => v,
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": format!("failed to fetch adoption: {}", e)})),
+            );
+        }
+    };
+    let channels = match state.db.list_worker_release_channels().await {
+        Ok(v) => v,
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": format!("failed to list channels: {}", e)})),
+            );
+        }
+    };
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({
+            "active_hours": active_hours,
+            "adoption": adoption,
+            "channels": channels,
+        })),
+    )
+}
+
+#[derive(Deserialize)]
 pub(super) struct UpsertReleasePayload {
     version: String,
     artifacts: serde_json::Value,

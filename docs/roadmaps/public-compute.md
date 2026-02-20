@@ -42,6 +42,12 @@ Build a volunteer-grade public compute offering for darkreach.
   - `POST /api/releases/rollout` (channel -> version + rollout percent)
   - `POST /api/releases/rollback` (channel rollback to previous version)
   - `GET /api/releases/worker` (list versions + channel mappings)
+  - `GET /api/releases/events` (rollout/rollback audit trail)
+  - `GET /api/releases/health` (adoption by worker version + channel targets)
+- Added frontend release management page:
+  - `/releases` operator controls for rollout/rollback
+  - release metadata upsert form (`version`, `artifacts`, `notes`, `published_at`)
+  - channel targets, adoption view, and event timeline panels
 - `GET /api/volunteer/worker/latest` now resolves channel from DB first, then manifest fallback
 - Rollout percent now affects selection deterministically by `worker_id`:
   - `GET /api/volunteer/worker/latest?channel=stable&worker_id=<id>`

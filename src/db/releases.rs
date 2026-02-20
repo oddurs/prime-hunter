@@ -20,8 +20,7 @@ pub struct WorkerReleaseChannelRow {
     pub updated_at: chrono::DateTime<chrono::Utc>,
 }
 
-#[derive(sqlx::FromRow)]
-#[allow(dead_code)]
+#[derive(Serialize, sqlx::FromRow)]
 pub struct WorkerReleaseEventRow {
     pub id: i64,
     pub channel: String,
@@ -30,6 +29,12 @@ pub struct WorkerReleaseEventRow {
     pub rollout_percent: i32,
     pub changed_by: Option<String>,
     pub changed_at: chrono::DateTime<chrono::Utc>,
+}
+
+#[derive(Serialize, sqlx::FromRow)]
+pub struct WorkerReleaseAdoptionRow {
+    pub worker_version: Option<String>,
+    pub workers: i64,
 }
 
 impl Database {
@@ -275,6 +280,55 @@ impl Database {
 
         self.set_worker_release_channel(channel, &prev, event.rollout_percent, changed_by)
             .await
+    }
+
+    pub async fn list_worker_release_events(
+        &self,
+        channel: Option<&str>,
+        limit: i64,
+    ) -> Result<Vec<WorkerReleaseEventRow>> {
+        if let Some(channel) = channel {
+            let rows = sqlx::query_as::<_, WorkerReleaseEventRow>(
+                "SELECT id, channel, from_version, to_version, rollout_percent, changed_by, changed_at
+                 FROM worker_release_events
+                 WHERE channel = $1
+                 ORDER BY id DESC
+                 LIMIT $2",
+            )
+            .bind(channel)
+            .bind(limit)
+            .fetch_all(&self.pool)
+            .await?;
+            return Ok(rows);
+        }
+        let rows = sqlx::query_as::<_, WorkerReleaseEventRow>(
+            "SELECT id, channel, from_version, to_version, rollout_percent, changed_by, changed_at
+             FROM worker_release_events
+             ORDER BY id DESC
+             LIMIT $1",
+        )
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows)
+    }
+
+    pub async fn worker_release_adoption(
+        &self,
+        active_within_hours: i64,
+    ) -> Result<Vec<WorkerReleaseAdoptionRow>> {
+        let rows = sqlx::query_as::<_, WorkerReleaseAdoptionRow>(
+            "SELECT worker_version, COUNT(*)::bigint AS workers
+             FROM volunteer_workers
+             WHERE last_heartbeat IS NOT NULL
+               AND last_heartbeat >= NOW() - ($1 || ' hours')::interval
+             GROUP BY worker_version
+             ORDER BY workers DESC, worker_version",
+        )
+        .bind(active_within_hours.to_string())
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows)
     }
 }
 

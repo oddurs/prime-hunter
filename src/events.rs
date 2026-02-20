@@ -346,11 +346,8 @@ impl EventBus {
     /// Get events with id greater than `last_id`, in ascending order.
     pub fn recent_events_since(&self, last_id: u64, limit: usize) -> Vec<EventRecord> {
         let events = self.recent.lock().unwrap();
-        let mut filtered: Vec<EventRecord> = events
-            .iter()
-            .filter(|e| e.id > last_id)
-            .cloned()
-            .collect();
+        let mut filtered: Vec<EventRecord> =
+            events.iter().filter(|e| e.id > last_id).cloned().collect();
         filtered.sort_by_key(|e| e.id);
         if filtered.len() > limit {
             filtered.split_off(filtered.len() - limit)

@@ -201,6 +201,8 @@ pub fn register_worker(config: &VolunteerConfig) -> Result<()> {
         "has_gpu": has_gpu(),
         "gpu_model": gpu_model(),
         "gpu_vram_gb": gpu_vram_gb(),
+        "worker_version": env!("CARGO_PKG_VERSION"),
+        "update_channel": std::env::var("DARKREACH_UPDATE_CHANNEL").unwrap_or_else(|_| "stable".to_string()),
     });
     ureq::post(&url)
         .header("Authorization", &auth_header(config))

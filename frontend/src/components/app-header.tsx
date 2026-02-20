@@ -19,7 +19,7 @@ import { useAuth } from "@/contexts/auth-context";
 import { useTheme } from "@/hooks/use-theme";
 import { useBrowserNotifications } from "@/hooks/use-notifications";
 import { cn } from "@/lib/utils";
-import { relativeTime } from "@/lib/format";
+import { API_BASE, relativeTime } from "@/lib/format";
 import { DarkReachLogo } from "@/components/darkreach-logo";
 import {
   DropdownMenu,
@@ -87,12 +87,78 @@ export function AppHeader() {
   const activeAgentCount = agentTasks.filter(
     (t) => t.status === "in_progress"
   ).length;
+  const errorBudgetErrorsPerHour =
+    Number(process.env.NEXT_PUBLIC_ERROR_BUDGET_ERRORS_PER_HOUR) || 10;
+  const errorBudgetWarningsPerHour =
+    Number(process.env.NEXT_PUBLIC_ERROR_BUDGET_WARNINGS_PER_HOUR) || 50;
+  const [budgetStatus, setBudgetStatus] = useState<"Healthy" | "Risk" | "Breached">(
+    "Healthy"
+  );
+
+  useEffect(() => {
+    let active = true;
+    async function fetchBudget() {
+      try {
+        const to = new Date();
+        const from = new Date(Date.now() - 60 * 60 * 1000);
+        const params = new URLSearchParams({
+          from: from.toISOString(),
+          to: to.toISOString(),
+        });
+        const res = await fetch(`${API_BASE}/api/observability/report?${params}`);
+        if (!res.ok) return;
+        const data = (await res.json()) as {
+          budget?: { status?: string };
+          logs?: { by_level?: Array<[string, number]> };
+        };
+        const reportStatus = data.budget?.status;
+        if (reportStatus === "breached") {
+          if (active) setBudgetStatus("Breached");
+          return;
+        }
+        if (reportStatus === "risk") {
+          if (active) setBudgetStatus("Risk");
+          return;
+        }
+        if (reportStatus === "healthy") {
+          if (active) setBudgetStatus("Healthy");
+          return;
+        }
+
+        const byLevel = data.logs?.by_level ?? [];
+        const errorCount =
+          byLevel.find(([level]) => level === "error")?.[1] ?? 0;
+        const warnCount =
+          byLevel.find(([level]) => level === "warning" || level === "warn")?.[1] ??
+          0;
+        const errorsPerHour = errorCount;
+        const warningsPerHour = warnCount;
+        const nextStatus =
+          errorsPerHour > errorBudgetErrorsPerHour
+            ? "Breached"
+            : warningsPerHour > errorBudgetWarningsPerHour
+              ? "Risk"
+              : "Healthy";
+        if (active) setBudgetStatus(nextStatus);
+      } catch {
+        // ignore
+      }
+    }
+    fetchBudget();
+    const timer = setInterval(fetchBudget, 60000);
+    return () => {
+      active = false;
+      clearInterval(timer);
+    };
+  }, [errorBudgetErrorsPerHour, errorBudgetWarningsPerHour]);
 
   const navItems = [
     { title: "Dashboard", href: "/", count: undefined },
     { title: "Projects", href: "/projects", count: undefined },
     { title: "Searches", href: "/searches", count: runningCount || undefined },
     { title: "Observability", href: "/performance", count: undefined },
+    { title: "Logs", href: "/logs", count: undefined },
+    { title: "Releases", href: "/releases", count: undefined },
     { title: "Agents", href: "/agents", count: activeAgentCount || undefined },
     { title: "Fleet", href: "/fleet", count: undefined },
     { title: "Browse", href: "/browse", count: undefined },
@@ -153,6 +219,18 @@ export function AppHeader() {
             )}
             title={connected ? "Connected" : "Disconnected"}
           />
+          {budgetStatus !== "Healthy" && (
+            <span
+              className={cn(
+                "px-2 py-0.5 rounded-full text-[11px] font-semibold border",
+                budgetStatus === "Breached"
+                  ? "bg-red-500/20 text-red-400 border-red-500/30"
+                  : "bg-amber-500/20 text-amber-300 border-amber-500/30"
+              )}
+            >
+              Budget {budgetStatus}
+            </span>
+          )}
           {/* Notification bell with in-app notifications */}
           <DropdownMenu onOpenChange={handleNotifOpenChange}>
             <DropdownMenuTrigger asChild>

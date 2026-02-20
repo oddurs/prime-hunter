@@ -106,6 +106,33 @@ Additional optimization opportunities:
 
 ---
 
+## Observability Defaults
+
+The coordinator persists system logs and time-series metrics for long-term dashboards.
+
+- **Metric sampling:** every 60s for coordinator/fleet, every 120s for per-worker samples
+- **Raw retention:** 7 days (metrics)
+- **Hourly rollups:** 365 days
+- **Daily rollups:** 1825 days
+- **Log retention:** 30 days
+
+Environment overrides (optional):
+- `OBS_LOG_RETENTION_DAYS`
+- `OBS_METRIC_RETENTION_DAYS`
+- `OBS_ROLLUP_RETENTION_DAYS`
+- `OBS_DAILY_ROLLUP_RETENTION_DAYS`
+- `OBS_ERROR_BUDGET_ERRORS_PER_HOUR`
+- `OBS_ERROR_BUDGET_WARNINGS_PER_HOUR`
+- `NEXT_PUBLIC_ERROR_BUDGET_ERRORS_PER_HOUR`
+- `NEXT_PUBLIC_ERROR_BUDGET_WARNINGS_PER_HOUR`
+
+API endpoints:
+- `GET /api/observability/metrics`
+- `GET /api/observability/logs`
+- `GET /api/observability/report`
+
+---
+
 ## Fleet Deployment
 
 ### Current Architecture

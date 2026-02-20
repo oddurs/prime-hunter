@@ -13,11 +13,7 @@
 
 fn main() {
     // Search for gwnum.a in standard locations
-    let search_paths = [
-        "/usr/local/lib",
-        "/usr/lib",
-        "/opt/gwnum/lib",
-    ];
+    let search_paths = ["/usr/local/lib", "/usr/lib", "/opt/gwnum/lib"];
 
     let mut found = false;
     for path in &search_paths {

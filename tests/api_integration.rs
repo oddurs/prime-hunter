@@ -213,12 +213,43 @@ async fn releases_rollout_and_latest_from_db() {
     assert_eq!(json["channel"]["version"], "9.9.9-test");
 
     let (status, json) = get(
-        router,
+        router.clone(),
         "/api/volunteer/worker/latest?channel=stable&worker_id=abc",
     )
     .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(json["version"], "9.9.9-test");
+
+    let (status, json) = get(
+        router.clone(),
+        "/api/releases/events?channel=stable&limit=10",
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(json["events"].is_array());
+
+    let (status, json) = get(router, "/api/releases/health?active_hours=24").await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(json["adoption"].is_array());
+    assert!(json["channels"].is_array());
+}
+
+#[tokio::test]
+async fn releases_upsert_rejects_non_array_artifacts() {
+    require_db!();
+    let router = app().await;
+
+    let (status, json) = post_json(
+        router,
+        "/api/releases/worker",
+        serde_json::json!({
+            "version": "bad-artifacts-test",
+            "artifacts": { "os": "linux" }
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(json["error"], "artifacts must be a JSON array");
 }
 
 // --- Worker API ---

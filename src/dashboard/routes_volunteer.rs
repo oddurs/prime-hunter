@@ -234,6 +234,10 @@ pub(super) struct WorkerRegisterPayload {
     gpu_model: Option<String>,
     #[serde(default)]
     gpu_vram_gb: Option<i32>,
+    #[serde(default)]
+    worker_version: Option<String>,
+    #[serde(default)]
+    update_channel: Option<String>,
 }
 
 pub(super) async fn handler_v1_worker_register(
@@ -260,6 +264,8 @@ pub(super) async fn handler_v1_worker_register(
             payload.has_gpu,
             payload.gpu_model.as_deref(),
             payload.gpu_vram_gb,
+            payload.worker_version.as_deref(),
+            payload.update_channel.as_deref(),
         )
         .await
     {

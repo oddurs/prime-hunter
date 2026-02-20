@@ -127,6 +127,16 @@ const restEndpoints: Endpoint[] = [
     path: "/api/releases/rollback",
     description: "Rollback a channel to the previous version in rollout history.",
   },
+  {
+    method: "GET",
+    path: "/api/releases/events?channel=stable&limit=100",
+    description: "List rollout/rollback events for audit trail.",
+  },
+  {
+    method: "GET",
+    path: "/api/releases/health?active_hours=24",
+    description: "Release adoption summary by worker version and channel targets.",
+  },
 ];
 
 const wsEvents = [

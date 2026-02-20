@@ -16,7 +16,7 @@
 #![allow(non_camel_case_types)]
 #![allow(non_snake_case)]
 
-use std::os::raw::{c_char, c_double, c_int, c_long, c_ulong, c_uint};
+use std::os::raw::{c_char, c_double, c_int, c_long, c_uint, c_ulong};
 
 /// Opaque gwhandle structure. Must be allocated on the stack or heap.
 /// Each thread MUST have its own gwhandle — gwnums are not transferable between handles.
@@ -56,13 +56,7 @@ extern "C" {
 
     /// Configure gwhandle for modular arithmetic mod k*b^n+c.
     /// Returns 0 on success.
-    pub fn gwsetup(
-        gwdata: *mut gwhandle,
-        k: c_double,
-        b: c_ulong,
-        n: c_ulong,
-        c: c_long,
-    ) -> c_int;
+    pub fn gwsetup(gwdata: *mut gwhandle, k: c_double, b: c_ulong, n: c_ulong, c: c_long) -> c_int;
 
     /// Clean up gwhandle (frees all gwnums and internal state).
     pub fn gwdone(gwdata: *mut gwhandle);
@@ -78,48 +72,20 @@ extern "C" {
 
     /// Multiply: d = s1 * s2 mod N.
     /// Use options to control FFT behavior (e.g., GWMUL_STARTNEXTFFT).
-    pub fn gwmul3(
-        gwdata: *mut gwhandle,
-        s1: gwnum,
-        s2: gwnum,
-        d: gwnum,
-        options: c_int,
-    );
+    pub fn gwmul3(gwdata: *mut gwhandle, s1: gwnum, s2: gwnum, d: gwnum, options: c_int);
 
     /// Add: d = s1 + s2.
-    pub fn gwadd3o(
-        gwdata: *mut gwhandle,
-        s1: gwnum,
-        s2: gwnum,
-        d: gwnum,
-        options: c_int,
-    );
+    pub fn gwadd3o(gwdata: *mut gwhandle, s1: gwnum, s2: gwnum, d: gwnum, options: c_int);
 
     /// Subtract: d = s1 - s2.
-    pub fn gwsub3o(
-        gwdata: *mut gwhandle,
-        s1: gwnum,
-        s2: gwnum,
-        d: gwnum,
-        options: c_int,
-    );
+    pub fn gwsub3o(gwdata: *mut gwhandle, s1: gwnum, s2: gwnum, d: gwnum, options: c_int);
 
     /// Convert binary array (little-endian 32-bit words) to gwnum.
-    pub fn binarytogw(
-        gwdata: *mut gwhandle,
-        array: *const c_uint,
-        len: c_int,
-        g: gwnum,
-    );
+    pub fn binarytogw(gwdata: *mut gwhandle, array: *const c_uint, len: c_int, g: gwnum);
 
     /// Convert gwnum to binary array (little-endian 32-bit words).
     /// Returns the number of words written.
-    pub fn gwtobinary(
-        gwdata: *mut gwhandle,
-        g: gwnum,
-        array: *mut c_uint,
-        len: c_int,
-    ) -> c_int;
+    pub fn gwtobinary(gwdata: *mut gwhandle, g: gwnum, array: *mut c_uint, len: c_int) -> c_int;
 
     /// Set a gwnum to a small integer value.
     pub fn dbltogw(gwdata: *mut gwhandle, val: c_double, g: gwnum);

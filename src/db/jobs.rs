@@ -74,6 +74,33 @@ impl Database {
         Ok(rows)
     }
 
+    /// List recent or active search jobs, capped by limit.
+    ///
+    /// Includes any running/paused/pending jobs plus those stopped within
+    /// the last `hours` hours.
+    pub async fn get_recent_search_jobs(
+        &self,
+        hours: i64,
+        limit: i64,
+    ) -> Result<Vec<SearchJobRow>> {
+        let rows = sqlx::query_as::<_, SearchJobRow>(
+            "SELECT id, search_type, params, status, error,
+                    created_at, started_at, stopped_at,
+                    range_start, range_end, block_size,
+                    total_tested, total_found
+             FROM search_jobs
+             WHERE status IN ('running','paused','pending')
+                OR stopped_at > NOW() - ($1 || ' hours')::interval
+             ORDER BY id DESC
+             LIMIT $2",
+        )
+        .bind(hours.to_string())
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows)
+    }
+
     /// Get a single search job by ID.
     pub async fn get_search_job(&self, job_id: i64) -> Result<Option<SearchJobRow>> {
         let row = sqlx::query_as::<_, SearchJobRow>(

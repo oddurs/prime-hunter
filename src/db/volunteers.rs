@@ -107,13 +107,16 @@ impl Database {
         has_gpu: Option<bool>,
         gpu_model: Option<&str>,
         gpu_vram_gb: Option<i32>,
+        worker_version: Option<&str>,
+        update_channel: Option<&str>,
     ) -> Result<()> {
         sqlx::query(
             "INSERT INTO volunteer_workers (
                volunteer_id, worker_id, hostname, cores, cpu_model,
-               os, arch, ram_gb, has_gpu, gpu_model, gpu_vram_gb
+               os, arch, ram_gb, has_gpu, gpu_model, gpu_vram_gb,
+               worker_version, update_channel
              )
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
              ON CONFLICT (worker_id) DO UPDATE SET
                hostname = EXCLUDED.hostname,
                cores = EXCLUDED.cores,
@@ -124,6 +127,8 @@ impl Database {
                has_gpu = EXCLUDED.has_gpu,
                gpu_model = EXCLUDED.gpu_model,
                gpu_vram_gb = EXCLUDED.gpu_vram_gb,
+               worker_version = EXCLUDED.worker_version,
+               update_channel = EXCLUDED.update_channel,
                last_heartbeat = NOW()",
         )
         .bind(volunteer_id)
@@ -137,6 +142,8 @@ impl Database {
         .bind(has_gpu)
         .bind(gpu_model)
         .bind(gpu_vram_gb)
+        .bind(worker_version)
+        .bind(update_channel)
         .execute(&self.pool)
         .await?;
         Ok(())

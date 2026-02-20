@@ -238,6 +238,10 @@ pub fn build_router(state: Arc<AppState>, static_dir: Option<&Path>) -> Router {
             get(routes_observability::handler_report),
         )
         .route(
+            "/api/observability/workers/top",
+            get(routes_observability::handler_top_workers),
+        )
+        .route(
             "/api/agents/tasks",
             get(routes_agents::handler_api_agent_tasks)
                 .post(routes_agents::handler_api_agent_task_create),
@@ -335,6 +339,14 @@ pub fn build_router(state: Arc<AppState>, static_dir: Option<&Path>) -> Router {
                 .post(routes_releases::handler_releases_upsert),
         )
         .route(
+            "/api/releases/events",
+            get(routes_releases::handler_releases_events),
+        )
+        .route(
+            "/api/releases/health",
+            get(routes_releases::handler_releases_health),
+        )
+        .route(
             "/api/releases/rollout",
             post(routes_releases::handler_releases_rollout),
         )
@@ -421,6 +433,8 @@ pub async fn run(
         let mut last_worker_sample = std::time::Instant::now() - Duration::from_secs(120);
         let mut last_housekeeping = std::time::Instant::now() - Duration::from_secs(3600);
         let mut last_event_id: u64 = 0;
+        let mut last_tick = std::time::Instant::now();
+        let mut event_counts = std::collections::HashMap::<String, i64>::new();
         let log_retention_days: i64 = std::env::var("OBS_LOG_RETENTION_DAYS")
             .ok()
             .and_then(|v| v.parse().ok())
@@ -433,8 +447,19 @@ pub async fn run(
             .ok()
             .and_then(|v| v.parse().ok())
             .unwrap_or(365);
+        let daily_rollup_retention_days: i64 = std::env::var("OBS_DAILY_ROLLUP_RETENTION_DAYS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(1825);
         loop {
             interval.tick().await;
+            let tick_now = std::time::Instant::now();
+            let tick_interval_ms = tick_now
+                .duration_since(last_tick)
+                .as_millis()
+                .min(i64::MAX as u128) as i64;
+            let tick_drift_ms = tick_interval_ms - 30_000;
+            last_tick = tick_now;
             lock_or_recover(&prune_state.fleet).prune_stale(60);
             if let Err(e) = prune_state.db.prune_stale_workers(120).await {
                 eprintln!("Warning: failed to prune stale PG workers: {}", e);
@@ -477,6 +502,9 @@ pub async fn run(
                     last_event_id = last.id;
                 }
                 if !events.is_empty() {
+                    for e in &events {
+                        *event_counts.entry(e.kind.clone()).or_insert(0) += 1;
+                    }
                     let logs: Vec<db::SystemLogEntry> = events
                         .into_iter()
                         .map(|e| {
@@ -559,6 +587,20 @@ pub async fn run(
                 samples.push(db::MetricSample {
                     ts: now,
                     scope: "coordinator".to_string(),
+                    metric: "coordinator.tick_interval_ms".to_string(),
+                    value: tick_interval_ms as f64,
+                    labels: None,
+                });
+                samples.push(db::MetricSample {
+                    ts: now,
+                    scope: "coordinator".to_string(),
+                    metric: "coordinator.tick_drift_ms".to_string(),
+                    value: tick_drift_ms as f64,
+                    labels: None,
+                });
+                samples.push(db::MetricSample {
+                    ts: now,
+                    scope: "coordinator".to_string(),
                     metric: "coordinator.memory_usage_percent".to_string(),
                     value: hw.memory_usage_percent as f64,
                     labels: None,
@@ -588,6 +630,20 @@ pub async fn run(
                 let total_cores: i64 = fleet_workers.iter().map(|w| w.cores as i64).sum();
                 let total_tested: i64 = fleet_workers.iter().map(|w| w.tested as i64).sum();
                 let total_found: i64 = fleet_workers.iter().map(|w| w.found as i64).sum();
+                let max_heartbeat_age: i64 = fleet_workers
+                    .iter()
+                    .map(|w| w.last_heartbeat_secs_ago as i64)
+                    .max()
+                    .unwrap_or(0);
+                let avg_heartbeat_age: f64 = if fleet_workers.is_empty() {
+                    0.0
+                } else {
+                    fleet_workers
+                        .iter()
+                        .map(|w| w.last_heartbeat_secs_ago as f64)
+                        .sum::<f64>()
+                        / fleet_workers.len() as f64
+                };
 
                 samples.push(db::MetricSample {
                     ts: now,
@@ -617,6 +673,20 @@ pub async fn run(
                     value: total_found as f64,
                     labels: None,
                 });
+                samples.push(db::MetricSample {
+                    ts: now,
+                    scope: "fleet".to_string(),
+                    metric: "fleet.max_heartbeat_age_secs".to_string(),
+                    value: max_heartbeat_age as f64,
+                    labels: None,
+                });
+                samples.push(db::MetricSample {
+                    ts: now,
+                    scope: "fleet".to_string(),
+                    metric: "fleet.avg_heartbeat_age_secs".to_string(),
+                    value: avg_heartbeat_age,
+                    labels: None,
+                });
 
                 if let Some(summary) = &block_summary {
                     samples.push(db::MetricSample {
@@ -633,6 +703,34 @@ pub async fn run(
                         value: summary.claimed as f64,
                         labels: None,
                     });
+                    samples.push(db::MetricSample {
+                        ts: now,
+                        scope: "fleet".to_string(),
+                        metric: "fleet.work_blocks_completed".to_string(),
+                        value: summary.completed as f64,
+                        labels: None,
+                    });
+                    samples.push(db::MetricSample {
+                        ts: now,
+                        scope: "fleet".to_string(),
+                        metric: "fleet.work_blocks_failed".to_string(),
+                        value: summary.failed as f64,
+                        labels: None,
+                    });
+                    samples.push(db::MetricSample {
+                        ts: now,
+                        scope: "fleet".to_string(),
+                        metric: "fleet.block_total_tested".to_string(),
+                        value: summary.total_tested as f64,
+                        labels: None,
+                    });
+                    samples.push(db::MetricSample {
+                        ts: now,
+                        scope: "fleet".to_string(),
+                        metric: "fleet.block_total_found".to_string(),
+                        value: summary.total_found as f64,
+                        labels: None,
+                    });
                 }
 
                 {
@@ -645,6 +743,137 @@ pub async fn run(
                         labels: None,
                     });
                 }
+
+                if let Ok(jobs) = prune_state.db.get_recent_search_jobs(24, 50).await {
+                    for job in jobs {
+                        let summary = match prune_state.db.get_job_block_summary(job.id).await {
+                            Ok(s) => s,
+                            Err(_) => continue,
+                        };
+                        let total_blocks = summary.available
+                            + summary.claimed
+                            + summary.completed
+                            + summary.failed;
+                        let completion_pct = if total_blocks > 0 {
+                            (summary.completed as f64 / total_blocks as f64) * 100.0
+                        } else {
+                            0.0
+                        };
+                        let labels = serde_json::json!({
+                            "job_id": job.id.to_string(),
+                            "search_type": job.search_type,
+                            "status": job.status,
+                        });
+
+                        samples.push(db::MetricSample {
+                            ts: now,
+                            scope: "search_job".to_string(),
+                            metric: "search_job.blocks_available".to_string(),
+                            value: summary.available as f64,
+                            labels: Some(labels.clone()),
+                        });
+                        samples.push(db::MetricSample {
+                            ts: now,
+                            scope: "search_job".to_string(),
+                            metric: "search_job.blocks_claimed".to_string(),
+                            value: summary.claimed as f64,
+                            labels: Some(labels.clone()),
+                        });
+                        samples.push(db::MetricSample {
+                            ts: now,
+                            scope: "search_job".to_string(),
+                            metric: "search_job.blocks_completed".to_string(),
+                            value: summary.completed as f64,
+                            labels: Some(labels.clone()),
+                        });
+                        samples.push(db::MetricSample {
+                            ts: now,
+                            scope: "search_job".to_string(),
+                            metric: "search_job.blocks_failed".to_string(),
+                            value: summary.failed as f64,
+                            labels: Some(labels.clone()),
+                        });
+                        samples.push(db::MetricSample {
+                            ts: now,
+                            scope: "search_job".to_string(),
+                            metric: "search_job.completion_pct".to_string(),
+                            value: completion_pct,
+                            labels: Some(labels.clone()),
+                        });
+                        samples.push(db::MetricSample {
+                            ts: now,
+                            scope: "search_job".to_string(),
+                            metric: "search_job.total_tested".to_string(),
+                            value: summary.total_tested as f64,
+                            labels: Some(labels.clone()),
+                        });
+                        samples.push(db::MetricSample {
+                            ts: now,
+                            scope: "search_job".to_string(),
+                            metric: "search_job.total_found".to_string(),
+                            value: summary.total_found as f64,
+                            labels: Some(labels.clone()),
+                        });
+                    }
+                }
+
+                let error_count = *event_counts.get("error").unwrap_or(&0) as f64;
+                let warning_count = *event_counts.get("warning").unwrap_or(&0) as f64;
+                let prime_count = *event_counts.get("prime").unwrap_or(&0) as f64;
+                let milestone_count = *event_counts.get("milestone").unwrap_or(&0) as f64;
+                let search_start_count = *event_counts.get("search_start").unwrap_or(&0) as f64;
+                let search_done_count = *event_counts.get("search_done").unwrap_or(&0) as f64;
+                let total_events: f64 = event_counts.values().copied().sum::<i64>() as f64;
+                samples.push(db::MetricSample {
+                    ts: now,
+                    scope: "events".to_string(),
+                    metric: "events.total_count".to_string(),
+                    value: total_events,
+                    labels: None,
+                });
+                samples.push(db::MetricSample {
+                    ts: now,
+                    scope: "events".to_string(),
+                    metric: "events.error_count".to_string(),
+                    value: error_count,
+                    labels: None,
+                });
+                samples.push(db::MetricSample {
+                    ts: now,
+                    scope: "events".to_string(),
+                    metric: "events.warning_count".to_string(),
+                    value: warning_count,
+                    labels: None,
+                });
+                samples.push(db::MetricSample {
+                    ts: now,
+                    scope: "events".to_string(),
+                    metric: "events.prime_count".to_string(),
+                    value: prime_count,
+                    labels: None,
+                });
+                samples.push(db::MetricSample {
+                    ts: now,
+                    scope: "events".to_string(),
+                    metric: "events.milestone_count".to_string(),
+                    value: milestone_count,
+                    labels: None,
+                });
+                samples.push(db::MetricSample {
+                    ts: now,
+                    scope: "events".to_string(),
+                    metric: "events.search_start_count".to_string(),
+                    value: search_start_count,
+                    labels: None,
+                });
+                samples.push(db::MetricSample {
+                    ts: now,
+                    scope: "events".to_string(),
+                    metric: "events.search_done_count".to_string(),
+                    value: search_done_count,
+                    labels: None,
+                });
+                event_counts.clear();
 
                 if last_worker_sample.elapsed() >= Duration::from_secs(120) {
                     last_worker_sample = std::time::Instant::now();
@@ -716,6 +945,16 @@ pub async fn run(
                 if let Err(e) = prune_state.db.rollup_metrics_hour(prev_hour).await {
                     eprintln!("Warning: failed to roll up metrics: {}", e);
                 }
+                let day_start = now
+                    .with_hour(0)
+                    .and_then(|t| t.with_minute(0))
+                    .and_then(|t| t.with_second(0))
+                    .and_then(|t| t.with_nanosecond(0))
+                    .unwrap_or(now);
+                let prev_day = day_start - chrono::Duration::days(1);
+                if let Err(e) = prune_state.db.rollup_metrics_day(prev_day).await {
+                    eprintln!("Warning: failed to roll up daily metrics: {}", e);
+                }
                 if let Err(e) = prune_state
                     .db
                     .prune_metric_samples(metric_retention_days)
@@ -729,6 +968,13 @@ pub async fn run(
                     .await
                 {
                     eprintln!("Warning: failed to prune metric rollups: {}", e);
+                }
+                if let Err(e) = prune_state
+                    .db
+                    .prune_metric_rollups_daily(daily_rollup_retention_days)
+                    .await
+                {
+                    eprintln!("Warning: failed to prune daily rollups: {}", e);
                 }
                 if let Err(e) = prune_state.db.prune_system_logs(log_retention_days).await {
                     eprintln!("Warning: failed to prune system logs: {}", e);
