@@ -120,6 +120,9 @@ impl AppState {
 pub(super) fn gethostname() -> String {
     std::env::var("HOSTNAME")
         .or_else(|_| std::env::var("HOST"))
+        .or_else(|_| {
+            sysinfo::System::host_name().ok_or(std::env::VarError::NotPresent)
+        })
         .unwrap_or_else(|_| "unknown".to_string())
 }
 
