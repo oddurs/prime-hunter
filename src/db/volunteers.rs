@@ -164,11 +164,11 @@ impl Database {
         let row = sqlx::query_as::<_, VolunteerWorkBlock>(
             "UPDATE work_blocks SET
                status = 'claimed',
-               worker_id = $1::text,
+               claimed_by = $1::text,
                volunteer_id = $2,
                claimed_at = NOW()
-             WHERE block_id = (
-               SELECT wb.block_id
+             WHERE id = (
+               SELECT wb.id
                FROM work_blocks wb
                JOIN search_jobs sj ON sj.id = wb.search_job_id
                WHERE wb.status = 'available'
@@ -199,11 +199,11 @@ impl Database {
                    NOT (sj.params ? 'required_arch')
                    OR ($7 IS NOT NULL AND lower(sj.params->>'required_arch') = lower($7))
                  )
-               ORDER BY wb.block_id
+               ORDER BY wb.id
                FOR UPDATE SKIP LOCKED
                LIMIT 1
              )
-             RETURNING block_id, search_job_id, block_start, block_end",
+             RETURNING id AS block_id, search_job_id, block_start, block_end",
         )
         .bind(volunteer_id.to_string())
         .bind(volunteer_id)
@@ -251,10 +251,10 @@ impl Database {
         sqlx::query(
             "UPDATE work_blocks SET
                status = 'completed',
-               candidates_tested = $2,
-               primes_found = $3,
+               tested = $2,
+               found = $3,
                completed_at = NOW()
-             WHERE block_id = $1",
+             WHERE id = $1",
         )
         .bind(block_id)
         .bind(tested)
@@ -390,7 +390,7 @@ impl Database {
 
     /// Set the minimum quorum for a work block based on volunteer trust.
     pub async fn set_block_quorum(&self, block_id: i32, min_quorum: i16) -> Result<()> {
-        sqlx::query("UPDATE work_blocks SET min_quorum = $2 WHERE block_id = $1")
+        sqlx::query("UPDATE work_blocks SET min_quorum = $2 WHERE id = $1")
             .bind(block_id)
             .bind(min_quorum)
             .execute(&self.pool)
@@ -400,7 +400,7 @@ impl Database {
 
     /// Mark a work block as verified after quorum is met.
     pub async fn mark_block_verified(&self, block_id: i32) -> Result<()> {
-        sqlx::query("UPDATE work_blocks SET verified = TRUE WHERE block_id = $1")
+        sqlx::query("UPDATE work_blocks SET verified = TRUE WHERE id = $1")
             .bind(block_id)
             .execute(&self.pool)
             .await?;
@@ -413,14 +413,14 @@ impl Database {
         limit: i64,
     ) -> Result<Vec<UnverifiedBlock>> {
         let rows = sqlx::query_as::<_, UnverifiedBlock>(
-            "SELECT wb.block_id, wb.search_job_id, wb.volunteer_id,
+            "SELECT wb.id AS block_id, wb.search_job_id, wb.volunteer_id,
                     wb.min_quorum, sj.search_type
              FROM work_blocks wb
              JOIN search_jobs sj ON sj.id = wb.search_job_id
              WHERE wb.status = 'completed'
                AND wb.volunteer_id IS NOT NULL
                AND wb.verified = FALSE
-             ORDER BY wb.block_id
+             ORDER BY wb.id
              LIMIT $1",
         )
         .bind(limit)
@@ -434,7 +434,7 @@ impl Database {
         let result = sqlx::query(
             "UPDATE work_blocks SET
                status = 'available',
-               worker_id = NULL,
+               claimed_by = NULL,
                volunteer_id = NULL,
                claimed_at = NULL
              WHERE status = 'claimed'
