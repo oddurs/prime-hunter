@@ -94,7 +94,8 @@ const restEndpoints: Endpoint[] = [
   {
     method: "GET",
     path: "/api/volunteer/worker/latest?channel=stable",
-    description: "Get latest downloadable worker release metadata for a channel.",
+    description:
+      "Get latest downloadable worker release metadata for a channel (optionally worker-specific via worker_id for canary rollout).",
     response: `{
   "channel": "stable",
   "version": "0.1.0",
@@ -105,10 +106,26 @@ const restEndpoints: Endpoint[] = [
       "os": "linux",
       "arch": "x86_64",
       "url": "https://downloads.darkreach.example/worker/v0.1.0/darkreach-worker-linux-x86_64.tar.gz",
-      "sha256": "..."
+      "sha256": "...",
+      "sig_url": "https://downloads.darkreach.example/worker/v0.1.0/darkreach-worker-linux-x86_64.tar.gz.sig"
     }
   ]
 }`,
+  },
+  {
+    method: "POST",
+    path: "/api/releases/worker",
+    description: "Upsert a worker release record in the rollout control plane.",
+  },
+  {
+    method: "POST",
+    path: "/api/releases/rollout",
+    description: "Set release channel target version and rollout percent (canary/ramp).",
+  },
+  {
+    method: "POST",
+    path: "/api/releases/rollback",
+    description: "Rollback a channel to the previous version in rollout history.",
   },
 ];
 

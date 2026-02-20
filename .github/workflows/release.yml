@@ -103,6 +103,20 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           path: artifacts/
+      - name: Sign worker artifacts
+        env:
+          WORKER_RELEASE_SIGNING_KEY_PEM: ${{ secrets.WORKER_RELEASE_SIGNING_KEY_PEM }}
+        run: |
+          if [[ -n "${WORKER_RELEASE_SIGNING_KEY_PEM}" ]]; then
+            printf "%s" "${WORKER_RELEASE_SIGNING_KEY_PEM}" > worker-signing.key
+          else
+            echo "WORKER_RELEASE_SIGNING_KEY_PEM not set; generating ephemeral signing key for this release"
+            openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:3072 -out worker-signing.key
+          fi
+          openssl pkey -in worker-signing.key -pubout -out worker-signing.pub
+          for f in artifacts/*/*.tar.gz; do
+            openssl dgst -sha256 -sign worker-signing.key -out "${f}.sig" "${f}"
+          done
       - name: Derive release metadata
         id: meta
         run: |
@@ -131,8 +145,11 @@ jobs:
           files: |
             artifacts/darkreach-worker-linux-x86_64/darkreach-worker-linux-x86_64.tar.gz
             artifacts/darkreach-worker-linux-x86_64/darkreach-worker-linux-x86_64.tar.gz.sha256
+            artifacts/darkreach-worker-linux-x86_64/darkreach-worker-linux-x86_64.tar.gz.sig
             artifacts/darkreach-worker-linux-aarch64/darkreach-worker-linux-aarch64.tar.gz
             artifacts/darkreach-worker-linux-aarch64/darkreach-worker-linux-aarch64.tar.gz.sha256
+            artifacts/darkreach-worker-linux-aarch64/darkreach-worker-linux-aarch64.tar.gz.sig
+            worker-signing.pub
             worker-manifest.json
 
   docker-release:

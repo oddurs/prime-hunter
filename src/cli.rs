@@ -1136,6 +1136,12 @@ pub fn run_volunteer(cli: &Cli) -> Result<()> {
     volunteer::register_worker(&config)?;
     let update_channel =
         std::env::var("DARKREACH_UPDATE_CHANNEL").unwrap_or_else(|_| "stable".to_string());
+    let auto_update = std::env::var("DARKREACH_AUTO_UPDATE")
+        .ok()
+        .is_some_and(|v| v == "1" || v.eq_ignore_ascii_case("true"));
+    let apply_update = std::env::var("DARKREACH_AUTO_UPDATE_APPLY")
+        .ok()
+        .is_some_and(|v| v == "1" || v.eq_ignore_ascii_case("true"));
     match volunteer::check_for_update(&config, &update_channel) {
         Ok(Some(rel)) => {
             info!(
@@ -1145,6 +1151,21 @@ pub fn run_volunteer(cli: &Cli) -> Result<()> {
                 published_at = %rel.published_at,
                 "Worker update available"
             );
+            if auto_update {
+                match volunteer::stage_or_apply_update(&rel, apply_update) {
+                    Ok(res) => {
+                        info!(
+                            version = %res.version,
+                            staged_binary = %res.staged_binary.display(),
+                            applied = res.applied,
+                            "Worker update staged"
+                        );
+                    }
+                    Err(e) => {
+                        warn!(error = %e, "Worker update staging failed");
+                    }
+                }
+            }
         }
         Ok(None) => {
             info!(

@@ -122,6 +122,105 @@ async fn get_volunteer_worker_latest_returns_channel_release() {
     assert!(json["artifacts"].is_array());
 }
 
+#[tokio::test]
+async fn releases_rollout_and_latest_from_db() {
+    require_db!();
+    let router = app().await;
+
+    let artifacts = serde_json::json!([{
+        "os": "linux",
+        "arch": "x86_64",
+        "url": "https://example.invalid/darkreach-worker-linux-x86_64.tar.gz",
+        "sha256": "deadbeef"
+    }]);
+
+    let (status, json) = post_json(
+        router.clone(),
+        "/api/releases/worker",
+        serde_json::json!({
+            "version": "9.9.8-test",
+            "artifacts": artifacts,
+            "notes": "test release old"
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(json["release"]["version"], "9.9.8-test");
+
+    let (status, json) = post_json(
+        router.clone(),
+        "/api/releases/worker",
+        serde_json::json!({
+            "version": "9.9.9-test",
+            "artifacts": serde_json::json!([{
+                "os": "linux",
+                "arch": "x86_64",
+                "url": "https://example.invalid/darkreach-worker-linux-x86_64-v2.tar.gz",
+                "sha256": "beefdead"
+            }]),
+            "notes": "test release new"
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(json["release"]["version"], "9.9.9-test");
+
+    let (status, json) = post_json(
+        router.clone(),
+        "/api/releases/rollout",
+        serde_json::json!({
+            "channel": "stable",
+            "version": "9.9.8-test",
+            "rollout_percent": 100
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(json["channel"]["version"], "9.9.8-test");
+
+    let (status, json) = post_json(
+        router.clone(),
+        "/api/releases/rollout",
+        serde_json::json!({
+            "channel": "stable",
+            "version": "9.9.9-test",
+            "rollout_percent": 0
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(json["channel"]["version"], "9.9.9-test");
+
+    let (status, json) = get(
+        router.clone(),
+        "/api/volunteer/worker/latest?channel=stable&worker_id=abc",
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(json["version"], "9.9.8-test");
+
+    let (status, json) = post_json(
+        router.clone(),
+        "/api/releases/rollout",
+        serde_json::json!({
+            "channel": "stable",
+            "version": "9.9.9-test",
+            "rollout_percent": 100
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(json["channel"]["version"], "9.9.9-test");
+
+    let (status, json) = get(
+        router,
+        "/api/volunteer/worker/latest?channel=stable&worker_id=abc",
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(json["version"], "9.9.9-test");
+}
+
 // --- Worker API ---
 
 #[tokio::test]

@@ -148,12 +148,11 @@ impl Database {
     }
 
     pub async fn prune_metric_samples(&self, days: i64) -> Result<u64> {
-        let result = sqlx::query(
-            "DELETE FROM metric_samples WHERE ts < NOW() - ($1 || ' days')::interval",
-        )
-        .bind(days.to_string())
-        .execute(&self.pool)
-        .await?;
+        let result =
+            sqlx::query("DELETE FROM metric_samples WHERE ts < NOW() - ($1 || ' days')::interval")
+                .bind(days.to_string())
+                .execute(&self.pool)
+                .await?;
         Ok(result.rows_affected())
     }
 
@@ -168,12 +167,11 @@ impl Database {
     }
 
     pub async fn prune_system_logs(&self, days: i64) -> Result<u64> {
-        let result = sqlx::query(
-            "DELETE FROM system_logs WHERE ts < NOW() - ($1 || ' days')::interval",
-        )
-        .bind(days.to_string())
-        .execute(&self.pool)
-        .await?;
+        let result =
+            sqlx::query("DELETE FROM system_logs WHERE ts < NOW() - ($1 || ' days')::interval")
+                .bind(days.to_string())
+                .execute(&self.pool)
+                .await?;
         Ok(result.rows_affected())
     }
 

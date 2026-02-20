@@ -12,6 +12,7 @@ mod routes_jobs;
 mod routes_notifications;
 mod routes_observability;
 mod routes_projects;
+mod routes_releases;
 mod routes_searches;
 mod routes_status;
 mod routes_verify;
@@ -120,9 +121,7 @@ impl AppState {
 pub(super) fn gethostname() -> String {
     std::env::var("HOSTNAME")
         .or_else(|_| std::env::var("HOST"))
-        .or_else(|_| {
-            sysinfo::System::host_name().ok_or(std::env::VarError::NotPresent)
-        })
+        .or_else(|_| sysinfo::System::host_name().ok_or(std::env::VarError::NotPresent))
         .unwrap_or_else(|_| "unknown".to_string())
 }
 
@@ -329,6 +328,19 @@ pub fn build_router(state: Arc<AppState>, static_dir: Option<&Path>) -> Router {
         .route(
             "/api/projects/{slug}/cost",
             get(routes_projects::handler_api_project_cost),
+        )
+        .route(
+            "/api/releases/worker",
+            get(routes_releases::handler_releases_list)
+                .post(routes_releases::handler_releases_upsert),
+        )
+        .route(
+            "/api/releases/rollout",
+            post(routes_releases::handler_releases_rollout),
+        )
+        .route(
+            "/api/releases/rollback",
+            post(routes_releases::handler_releases_rollback),
         )
         .route("/api/records", get(routes_projects::handler_api_records))
         .route(

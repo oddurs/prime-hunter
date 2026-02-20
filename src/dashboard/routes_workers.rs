@@ -185,7 +185,9 @@ pub(super) async fn handler_worker_prime(
                 worker_id: None,
                 search_job_id: None,
                 search_id: None,
-                context: Some(serde_json::json!({"form": payload.form, "search_params": payload.search_params})),
+                context: Some(
+                    serde_json::json!({"form": payload.form, "search_params": payload.search_params}),
+                ),
             };
             if let Err(e) = state.db.insert_system_log(&log).await {
                 eprintln!("Warning: failed to log prime receipt: {}", e);

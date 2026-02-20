@@ -77,7 +77,11 @@ pub(super) fn build_fleet_data(
             worker_ids: host_workers.iter().map(|w| w.worker_id.clone()).collect(),
             total_tested: host_workers.iter().map(|w| w.tested).sum(),
             total_found: host_workers.iter().map(|w| w.found).sum(),
-            uptime_secs: host_workers.iter().map(|w| w.uptime_secs).max().unwrap_or(0),
+            uptime_secs: host_workers
+                .iter()
+                .map(|w| w.uptime_secs)
+                .max()
+                .unwrap_or(0),
         });
     }
 

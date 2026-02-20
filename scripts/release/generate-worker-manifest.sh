@@ -14,13 +14,29 @@ entries=()
 if [[ -f "${ARTIFACT_ROOT}/darkreach-worker-linux-x86_64/darkreach-worker-linux-x86_64.tar.gz" ]]; then
   hash="$(cut -d' ' -f1 "${ARTIFACT_ROOT}/darkreach-worker-linux-x86_64/darkreach-worker-linux-x86_64.tar.gz.sha256")"
   url="https://github.com/${REPO}/releases/download/${TAG}/darkreach-worker-linux-x86_64.tar.gz"
-  entries+=("{\"os\":\"linux\",\"arch\":\"x86_64\",\"url\":\"${url}\",\"sha256\":\"${hash}\"}")
+  sig_url=""
+  if [[ -f "${ARTIFACT_ROOT}/darkreach-worker-linux-x86_64/darkreach-worker-linux-x86_64.tar.gz.sig" ]]; then
+    sig_url="https://github.com/${REPO}/releases/download/${TAG}/darkreach-worker-linux-x86_64.tar.gz.sig"
+  fi
+  if [[ -n "${sig_url}" ]]; then
+    entries+=("{\"os\":\"linux\",\"arch\":\"x86_64\",\"url\":\"${url}\",\"sha256\":\"${hash}\",\"sig_url\":\"${sig_url}\"}")
+  else
+    entries+=("{\"os\":\"linux\",\"arch\":\"x86_64\",\"url\":\"${url}\",\"sha256\":\"${hash}\"}")
+  fi
 fi
 
 if [[ -f "${ARTIFACT_ROOT}/darkreach-worker-linux-aarch64/darkreach-worker-linux-aarch64.tar.gz" ]]; then
   hash="$(cut -d' ' -f1 "${ARTIFACT_ROOT}/darkreach-worker-linux-aarch64/darkreach-worker-linux-aarch64.tar.gz.sha256")"
   url="https://github.com/${REPO}/releases/download/${TAG}/darkreach-worker-linux-aarch64.tar.gz"
-  entries+=("{\"os\":\"linux\",\"arch\":\"aarch64\",\"url\":\"${url}\",\"sha256\":\"${hash}\"}")
+  sig_url=""
+  if [[ -f "${ARTIFACT_ROOT}/darkreach-worker-linux-aarch64/darkreach-worker-linux-aarch64.tar.gz.sig" ]]; then
+    sig_url="https://github.com/${REPO}/releases/download/${TAG}/darkreach-worker-linux-aarch64.tar.gz.sig"
+  fi
+  if [[ -n "${sig_url}" ]]; then
+    entries+=("{\"os\":\"linux\",\"arch\":\"aarch64\",\"url\":\"${url}\",\"sha256\":\"${hash}\",\"sig_url\":\"${sig_url}\"}")
+  else
+    entries+=("{\"os\":\"linux\",\"arch\":\"aarch64\",\"url\":\"${url}\",\"sha256\":\"${hash}\"}")
+  fi
 fi
 
 if [[ "${#entries[@]}" -eq 0 ]]; then

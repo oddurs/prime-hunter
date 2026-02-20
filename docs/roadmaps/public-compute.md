@@ -29,7 +29,24 @@ Build a volunteer-grade public compute offering for darkreach.
 - Added startup update check in volunteer mode using:
   - `GET /api/v1/worker/latest?channel=...`
   - `DARKREACH_UPDATE_CHANNEL` (default `stable`)
+- Added worker update execution path:
+  - download + SHA-256 verify + unpack + stage binary
+  - optional auto-apply with `DARKREACH_AUTO_UPDATE_APPLY=1` (Unix)
+  - enable staging with `DARKREACH_AUTO_UPDATE=1`
+- Added optional artifact signature verification in updater:
+  - set `DARKREACH_VERIFY_WORKER_SIG=1`
+  - provide `DARKREACH_WORKER_PUBKEY_PATH=/path/to/worker-signing.pub`
 - Added release workflow artifact packaging + checksums + generated `worker-manifest.json` for tagged releases
+- Added DB-backed release control plane:
+  - `POST /api/releases/worker` (upsert version metadata)
+  - `POST /api/releases/rollout` (channel -> version + rollout percent)
+  - `POST /api/releases/rollback` (channel rollback to previous version)
+  - `GET /api/releases/worker` (list versions + channel mappings)
+- `GET /api/volunteer/worker/latest` now resolves channel from DB first, then manifest fallback
+- Rollout percent now affects selection deterministically by `worker_id`:
+  - `GET /api/volunteer/worker/latest?channel=stable&worker_id=<id>`
+  - `rollout_percent=0` keeps all workers on previous version
+  - `rollout_percent=100` sends all workers to channel target version
 
 Manifest path can be overridden with `DARKREACH_WORKER_RELEASE_MANIFEST`.
 

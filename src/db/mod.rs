@@ -41,11 +41,13 @@ mod observability;
 mod primes;
 mod projects;
 mod records;
+mod releases;
 mod roles;
 mod schedules;
 pub mod volunteers;
 mod workers;
 pub use observability::{MetricPoint, MetricSample, MetricSeries, SystemLogEntry, SystemLogRow};
+pub use releases::{WorkerReleaseChannelRow, WorkerReleaseRow};
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};

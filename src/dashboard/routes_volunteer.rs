@@ -23,6 +23,8 @@ use crate::db::volunteers::{VolunteerRow, WorkerCapabilities};
 pub(super) struct LatestWorkerQuery {
     #[serde(default)]
     channel: Option<String>,
+    #[serde(default)]
+    worker_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -63,9 +65,27 @@ fn load_worker_manifest() -> anyhow::Result<WorkerReleaseManifest> {
 }
 
 pub(super) async fn handler_worker_latest(
+    State(state): State<Arc<AppState>>,
     Query(query): Query<LatestWorkerQuery>,
 ) -> impl IntoResponse {
     let channel = query.channel.unwrap_or_else(|| "stable".to_string());
+    if let Ok(Some(row)) = state
+        .db
+        .resolve_worker_release_for_channel(&channel, query.worker_id.as_deref())
+        .await
+    {
+        return (
+            StatusCode::OK,
+            Json(serde_json::json!({
+                "channel": channel,
+                "version": row.version,
+                "published_at": row.published_at,
+                "notes": row.notes,
+                "artifacts": row.artifacts,
+            })),
+        );
+    }
+
     let manifest = match load_worker_manifest() {
         Ok(v) => v,
         Err(e) => {
