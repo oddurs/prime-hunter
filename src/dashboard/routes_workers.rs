@@ -24,6 +24,7 @@ pub(super) async fn handler_worker_register(
     Json(payload): Json<WorkerRegisterPayload>,
 ) -> impl IntoResponse {
     let worker_id = payload.worker_id.clone();
+    let search_type_log = payload.search_type.clone();
     eprintln!(
         "Worker registered: {} ({}, {} cores, {})",
         payload.worker_id, payload.hostname, payload.cores, payload.search_type
@@ -55,7 +56,7 @@ pub(super) async fn handler_worker_register(
         component: "worker_register".to_string(),
         message: format!(
             "Worker registered: {} ({} cores, {})",
-            worker_id, payload.cores, payload.search_type
+            worker_id, payload.cores, search_type_log
         ),
         worker_id: Some(worker_id),
         search_job_id: None,
@@ -184,7 +185,7 @@ pub(super) async fn handler_worker_prime(
                 worker_id: None,
                 search_job_id: None,
                 search_id: None,
-                context: Some(serde_json::json!({\"form\": payload.form, \"search_params\": payload.search_params})),
+                context: Some(serde_json::json!({"form": payload.form, "search_params": payload.search_params})),
             };
             if let Err(e) = state.db.insert_system_log(&log).await {
                 eprintln!("Warning: failed to log prime receipt: {}", e);

@@ -348,12 +348,20 @@ pub fn build_router(state: Arc<AppState>, static_dir: Option<&Path>) -> Router {
             "/api/v1/worker/heartbeat",
             post(routes_volunteer::handler_v1_worker_heartbeat),
         )
+        .route(
+            "/api/v1/worker/latest",
+            get(routes_volunteer::handler_worker_latest),
+        )
         .route("/api/v1/work", get(routes_volunteer::handler_v1_work))
         .route("/api/v1/result", post(routes_volunteer::handler_v1_result))
         .route("/api/v1/stats", get(routes_volunteer::handler_v1_stats))
         .route(
             "/api/v1/leaderboard",
             get(routes_volunteer::handler_v1_leaderboard),
+        )
+        .route(
+            "/api/volunteer/worker/latest",
+            get(routes_volunteer::handler_worker_latest),
         );
 
     if let Some(dir) = static_dir {
@@ -398,6 +406,18 @@ pub async fn run(
         let mut last_worker_sample = std::time::Instant::now() - Duration::from_secs(120);
         let mut last_housekeeping = std::time::Instant::now() - Duration::from_secs(3600);
         let mut last_event_id: u64 = 0;
+        let log_retention_days: i64 = std::env::var("OBS_LOG_RETENTION_DAYS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(30);
+        let metric_retention_days: i64 = std::env::var("OBS_METRIC_RETENTION_DAYS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(7);
+        let rollup_retention_days: i64 = std::env::var("OBS_ROLLUP_RETENTION_DAYS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(365);
         loop {
             interval.tick().await;
             lock_or_recover(&prune_state.fleet).prune_stale(60);
@@ -459,7 +479,7 @@ pub async fn run(
                                 worker_id: None,
                                 search_job_id: None,
                                 search_id: None,
-                                context: Some(serde_json::json!({\"kind\": e.kind, \"elapsed_secs\": e.elapsed_secs})),
+                                context: Some(serde_json::json!({"kind": e.kind, "elapsed_secs": e.elapsed_secs})),
                             }
                         })
                         .collect();
@@ -505,7 +525,7 @@ pub async fn run(
                 block_summary = Some(summary);
             }
 
-            *lock_or_recover(&prune_state.coordinator_metrics) = Some(hw);
+            *lock_or_recover(&prune_state.coordinator_metrics) = Some(hw.clone());
 
             if last_metrics_sample.elapsed() >= Duration::from_secs(60) {
                 last_metrics_sample = std::time::Instant::now();
@@ -614,48 +634,48 @@ pub async fn run(
                     for w in &fleet_workers {
                         if let Some(m) = &w.metrics {
                             let labels = serde_json::json!({
-                                \"worker_id\": w.worker_id,
-                                \"hostname\": w.hostname,
-                                \"search_type\": w.search_type,
+                                "worker_id": w.worker_id,
+                                "hostname": w.hostname,
+                                "search_type": w.search_type,
                             });
                             samples.push(db::MetricSample {
                                 ts: now,
-                                scope: \"worker\".to_string(),
-                                metric: \"worker.cpu_usage_percent\".to_string(),
+                                scope: "worker".to_string(),
+                                metric: "worker.cpu_usage_percent".to_string(),
                                 value: m.cpu_usage_percent as f64,
                                 labels: Some(labels.clone()),
                             });
                             samples.push(db::MetricSample {
                                 ts: now,
-                                scope: \"worker\".to_string(),
-                                metric: \"worker.memory_usage_percent\".to_string(),
+                                scope: "worker".to_string(),
+                                metric: "worker.memory_usage_percent".to_string(),
                                 value: m.memory_usage_percent as f64,
                                 labels: Some(labels.clone()),
                             });
                             samples.push(db::MetricSample {
                                 ts: now,
-                                scope: \"worker\".to_string(),
-                                metric: \"worker.disk_usage_percent\".to_string(),
+                                scope: "worker".to_string(),
+                                metric: "worker.disk_usage_percent".to_string(),
                                 value: m.disk_usage_percent as f64,
                                 labels: Some(labels.clone()),
                             });
                         }
                         let labels = serde_json::json!({
-                            \"worker_id\": w.worker_id,
-                            \"hostname\": w.hostname,
-                            \"search_type\": w.search_type,
+                            "worker_id": w.worker_id,
+                            "hostname": w.hostname,
+                            "search_type": w.search_type,
                         });
                         samples.push(db::MetricSample {
                             ts: now,
-                            scope: \"worker\".to_string(),
-                            metric: \"worker.tested\".to_string(),
+                            scope: "worker".to_string(),
+                            metric: "worker.tested".to_string(),
                             value: w.tested as f64,
                             labels: Some(labels.clone()),
                         });
                         samples.push(db::MetricSample {
                             ts: now,
-                            scope: \"worker\".to_string(),
-                            metric: \"worker.found\".to_string(),
+                            scope: "worker".to_string(),
+                            metric: "worker.found".to_string(),
                             value: w.found as f64,
                             labels: Some(labels.clone()),
                         });
@@ -679,13 +699,13 @@ pub async fn run(
                 if let Err(e) = prune_state.db.rollup_metrics_hour(prev_hour).await {
                     eprintln!("Warning: failed to roll up metrics: {}", e);
                 }
-                if let Err(e) = prune_state.db.prune_metric_samples(7).await {
+                if let Err(e) = prune_state.db.prune_metric_samples(metric_retention_days).await {
                     eprintln!("Warning: failed to prune metric samples: {}", e);
                 }
-                if let Err(e) = prune_state.db.prune_metric_rollups(365).await {
+                if let Err(e) = prune_state.db.prune_metric_rollups(rollup_retention_days).await {
                     eprintln!("Warning: failed to prune metric rollups: {}", e);
                 }
-                if let Err(e) = prune_state.db.prune_system_logs(30).await {
+                if let Err(e) = prune_state.db.prune_system_logs(log_retention_days).await {
                     eprintln!("Warning: failed to prune system logs: {}", e);
                 }
             }
