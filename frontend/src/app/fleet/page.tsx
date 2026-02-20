@@ -3,10 +3,9 @@
 /**
  * @module fleet/page
  *
- * Fleet monitoring page. Shows all server nodes grouped by hostname,
- * each with hardware metrics (CPU/memory/disk), running workers,
- * active searches, and remote deployments. Provides controls to add
- * new servers, deploy searches, and stop workers.
+ * Fleet monitoring page. Shows servers grouped by role (service vs compute),
+ * with hardware metrics, workers nested under their host servers, active
+ * searches, and remote deployments.
  *
  * Data comes from the WebSocket (fleet heartbeats, not Supabase).
  */
@@ -47,7 +46,7 @@ import {
 } from "@/components/ui/select";
 import { API_BASE, formatTime, numberWithCommas } from "@/lib/format";
 import { ViewHeader } from "@/components/view-header";
-import type { Deployment, WorkerStatus } from "@/hooks/use-websocket";
+import type { Deployment, ServerInfo, WorkerStatus } from "@/hooks/use-websocket";
 
 type WorkerHealth = "healthy" | "stale" | "offline";
 
@@ -102,6 +101,31 @@ function deploymentPillClass(status: string): string {
   return "border-border bg-muted/30 text-muted-foreground";
 }
 
+function roleBadgeClass(role: string): string {
+  if (role === "service") return "border-blue-500/40 bg-blue-500/10 text-blue-400";
+  return "border-emerald-500/40 bg-emerald-500/10 text-emerald-400";
+}
+
+/** Derive server status from metrics or workers */
+function serverStatus(server: ServerInfo, workers: WorkerStatus[]): "online" | "degraded" | "offline" {
+  if (server.role === "service") {
+    // Service server is online if we have metrics for it (we're connected to it)
+    return server.metrics ? "online" : "degraded";
+  }
+  const hostWorkers = workers.filter((w) => server.worker_ids.includes(w.worker_id));
+  if (hostWorkers.length === 0) return "offline";
+  const allHealthy = hostWorkers.every((w) => workerHealth(w) === "healthy");
+  if (allHealthy) return "online";
+  const anyHealthy = hostWorkers.some((w) => workerHealth(w) === "healthy");
+  return anyHealthy ? "degraded" : "offline";
+}
+
+function statusDotClass(status: "online" | "degraded" | "offline"): string {
+  if (status === "online") return "bg-green-500";
+  if (status === "degraded") return "bg-yellow-500";
+  return "bg-red-500";
+}
+
 export default function FleetPage() {
   const { fleet, coordinator, deployments, searches } = useWs();
   const [addServerOpen, setAddServerOpen] = useState(false);
@@ -125,36 +149,48 @@ export default function FleetPage() {
     }, 0);
   }, [workers]);
 
-  const healthCounts = useMemo(() => {
-    return workers.reduce(
-      (acc, w) => {
-        const h = workerHealth(w);
-        acc[h] += 1;
-        return acc;
-      },
-      { healthy: 0, stale: 0, offline: 0 }
-    );
-  }, [workers]);
+  // Compute servers from backend data, falling back to client-side grouping
+  const servers = useMemo((): ServerInfo[] => {
+    if (fleet?.servers && fleet.servers.length > 0) return fleet.servers;
+    // Fallback: group workers by hostname (no coordinator info available)
+    const hostMap = new Map<string, WorkerStatus[]>();
+    for (const w of workers) {
+      const list = hostMap.get(w.hostname) ?? [];
+      list.push(w);
+      hostMap.set(w.hostname, list);
+    }
+    return Array.from(hostMap.entries()).map(([hostname, hw]) => ({
+      hostname,
+      role: "compute" as const,
+      metrics: hw[0]?.metrics ?? null,
+      worker_count: hw.length,
+      cores: hw.reduce((s, w) => s + w.cores, 0),
+      worker_ids: hw.map((w) => w.worker_id),
+      total_tested: hw.reduce((s, w) => s + w.tested, 0),
+      total_found: hw.reduce((s, w) => s + w.found, 0),
+      uptime_secs: Math.max(...hw.map((w) => w.uptime_secs), 0),
+    }));
+  }, [fleet, workers]);
 
-  const filteredWorkers = useMemo(() => {
+  const serviceServers = useMemo(() => servers.filter((s) => s.role === "service"), [servers]);
+  const computeServers = useMemo(() => servers.filter((s) => s.role === "compute"), [servers]);
+  const totalComputeWorkers = useMemo(() => computeServers.reduce((s, c) => s + c.worker_count, 0), [computeServers]);
+
+  // Filter workers for display inside compute server cards
+  const filteredWorkerIds = useMemo(() => {
     const query = searchFilter.trim().toLowerCase();
-    return workers
-      .filter((w) => {
-        if (healthFilter !== "all" && workerHealth(w) !== healthFilter) return false;
-        if (typeFilter !== "all" && w.search_type !== typeFilter) return false;
-        if (!query) return true;
-        return (
-          w.worker_id.toLowerCase().includes(query) ||
-          w.hostname.toLowerCase().includes(query) ||
-          w.current.toLowerCase().includes(query)
-        );
-      })
-      .sort((a, b) => {
-        if (a.last_heartbeat_secs_ago !== b.last_heartbeat_secs_ago) {
-          return a.last_heartbeat_secs_ago - b.last_heartbeat_secs_ago;
-        }
-        return b.tested - a.tested;
-      });
+    const set = new Set<string>();
+    for (const w of workers) {
+      if (healthFilter !== "all" && workerHealth(w) !== healthFilter) continue;
+      if (typeFilter !== "all" && w.search_type !== typeFilter) continue;
+      if (query && !(
+        w.worker_id.toLowerCase().includes(query) ||
+        w.hostname.toLowerCase().includes(query) ||
+        w.current.toLowerCase().includes(query)
+      )) continue;
+      set.add(w.worker_id);
+    }
+    return set;
   }, [workers, healthFilter, typeFilter, searchFilter]);
 
   const activeDeployments = useMemo(
@@ -242,11 +278,67 @@ export default function FleetPage() {
     }
   }
 
+  function renderWorkerRow(worker: WorkerStatus) {
+    const health = workerHealth(worker);
+    const throughput =
+      worker.uptime_secs > 0
+        ? (worker.tested / worker.uptime_secs).toFixed(1)
+        : "0.0";
+    const params = parseJsonObject(worker.search_params);
+    return (
+      <div key={worker.worker_id} className="flex flex-wrap items-center gap-2 justify-between py-2 px-3 rounded bg-muted/20">
+        <div className="flex items-center gap-2 min-w-0">
+          <div
+            className={`w-2 h-2 rounded-full flex-shrink-0 ${
+              health === "healthy"
+                ? "bg-green-500"
+                : health === "stale"
+                  ? "bg-yellow-500"
+                  : "bg-red-500"
+            }`}
+          />
+          <span className="font-mono text-xs truncate">{worker.worker_id}</span>
+          <Badge variant="outline" className="font-mono text-xs">{worker.search_type}</Badge>
+          <span className={`text-xs px-1.5 py-0.5 rounded-full border ${healthPillClass(health)}`}>
+            {health}
+          </span>
+        </div>
+        <div className="flex items-center gap-2 text-xs text-muted-foreground font-mono">
+          <span>{params ? formatWorkerParams(worker.search_type, params) : worker.search_params}</span>
+          <span>{numberWithCommas(worker.tested)} tested</span>
+          <span>{throughput}/s</span>
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-6 text-xs"
+            onClick={() => {
+              setSelectedWorker(worker);
+              setWorkerDetailOpen(true);
+            }}
+          >
+            Inspect
+          </Button>
+          {health === "healthy" && (
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-6 text-xs text-red-600 hover:text-red-700"
+              disabled={stoppingWorkerId === worker.worker_id}
+              onClick={() => void stopWorker(worker.worker_id)}
+            >
+              {stoppingWorkerId === worker.worker_id ? "Stopping..." : "Stop"}
+            </Button>
+          )}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <>
       <ViewHeader
         title="Fleet"
-        subtitle="Worker health, deployment lifecycle, and distributed search operations."
+        subtitle="Server roles, worker health, deployment lifecycle, and distributed search operations."
         actions={
           <>
             <Button variant="outline" size="sm" onClick={() => setNewSearchOpen(true)}>
@@ -258,7 +350,8 @@ export default function FleetPage() {
         className="mb-5"
       />
 
-      <div className="grid grid-cols-2 lg:grid-cols-5 gap-3 mb-5">
+      <div className="grid grid-cols-2 lg:grid-cols-6 gap-3 mb-5">
+        <StatCard label="Servers" value={numberWithCommas(servers.length)} />
         <StatCard label="Workers" value={numberWithCommas(fleet?.total_workers ?? 0)} />
         <StatCard label="Cores" value={numberWithCommas(fleet?.total_cores ?? 0)} />
         <StatCard label="Fleet Throughput" value={`${numberWithCommas(Math.round(fleetRate))}/s`} />
@@ -266,176 +359,154 @@ export default function FleetPage() {
         <StatCard label="Found" value={numberWithCommas(fleet?.total_found ?? 0)} />
       </div>
 
-      <div className="grid grid-cols-1 xl:grid-cols-3 gap-5 mb-5">
-        <Card className="xl:col-span-2 rounded-md shadow-none">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-base">Workers</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
-              <Input
-                placeholder="Filter by worker, host, or candidate..."
-                value={searchFilter}
-                onChange={(e) => setSearchFilter(e.target.value)}
-              />
-              <Select
-                value={healthFilter}
-                onValueChange={(v) => setHealthFilter(v as "all" | WorkerHealth)}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="Health" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All health</SelectItem>
-                  <SelectItem value="healthy">Healthy</SelectItem>
-                  <SelectItem value="stale">Stale</SelectItem>
-                  <SelectItem value="offline">Offline</SelectItem>
-                </SelectContent>
-              </Select>
-              <Select
-                value={typeFilter}
-                onValueChange={(v) =>
-                  setTypeFilter(v as "all" | "kbn" | "factorial" | "palindromic")
-                }
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="Search type" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All search types</SelectItem>
-                  <SelectItem value="kbn">KBN</SelectItem>
-                  <SelectItem value="factorial">Factorial</SelectItem>
-                  <SelectItem value="palindromic">Palindromic</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
+      {/* Filters */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-2 mb-5">
+        <Input
+          placeholder="Filter by worker, host, or candidate..."
+          value={searchFilter}
+          onChange={(e) => setSearchFilter(e.target.value)}
+        />
+        <Select
+          value={healthFilter}
+          onValueChange={(v) => setHealthFilter(v as "all" | WorkerHealth)}
+        >
+          <SelectTrigger>
+            <SelectValue placeholder="Health" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All health</SelectItem>
+            <SelectItem value="healthy">Healthy</SelectItem>
+            <SelectItem value="stale">Stale</SelectItem>
+            <SelectItem value="offline">Offline</SelectItem>
+          </SelectContent>
+        </Select>
+        <Select
+          value={typeFilter}
+          onValueChange={(v) =>
+            setTypeFilter(v as "all" | "kbn" | "factorial" | "palindromic")
+          }
+        >
+          <SelectTrigger>
+            <SelectValue placeholder="Search type" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All search types</SelectItem>
+            <SelectItem value="kbn">KBN</SelectItem>
+            <SelectItem value="factorial">Factorial</SelectItem>
+            <SelectItem value="palindromic">Palindromic</SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
 
-            {filteredWorkers.length === 0 ? (
-              <EmptyState message="No workers match current filters." />
-            ) : (
-              <div className="space-y-2">
-                {filteredWorkers.map((worker) => {
-                  const health = workerHealth(worker);
-                  const throughput =
-                    worker.uptime_secs > 0
-                      ? (worker.tested / worker.uptime_secs).toFixed(1)
-                      : "0.0";
-                  const params = parseJsonObject(worker.search_params);
-                  return (
-                    <Card key={worker.worker_id} className="py-3 rounded-md shadow-none bg-card/40">
-                      <CardContent className="p-0 px-4">
-                        <div className="flex flex-wrap items-center gap-2 justify-between">
-                          <div className="flex items-center gap-2 min-w-0">
-                            <div
-                              className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${
-                                health === "healthy"
-                                  ? "bg-green-500"
-                                  : health === "stale"
-                                    ? "bg-yellow-500"
-                                    : "bg-red-500"
-                              }`}
-                            />
-                            <span className="font-medium truncate">{worker.hostname}</span>
-                            <span className="text-xs text-muted-foreground font-mono truncate">
-                              {worker.worker_id}
-                            </span>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <Badge variant="outline" className="font-mono text-xs">{worker.search_type}</Badge>
-                            <span className={`text-xs px-2 py-0.5 rounded-full border ${healthPillClass(health)}`}>
-                              {health}
-                            </span>
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              className="h-7"
-                              onClick={() => {
-                                setSelectedWorker(worker);
-                                setWorkerDetailOpen(true);
-                              }}
-                            >
-                              Inspect
-                            </Button>
-                            {health === "healthy" && (
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                className="h-7 text-red-600 hover:text-red-700"
-                                disabled={stoppingWorkerId === worker.worker_id}
-                                onClick={() => void stopWorker(worker.worker_id)}
-                              >
-                                {stoppingWorkerId === worker.worker_id ? "Stopping..." : "Stop"}
-                              </Button>
-                            )}
-                          </div>
+      {/* Service Servers */}
+      {serviceServers.length > 0 && (
+        <div className="mb-5">
+          <h2 className="text-sm font-medium text-muted-foreground mb-3">
+            Service ({serviceServers.length} server{serviceServers.length !== 1 ? "s" : ""})
+          </h2>
+          <div className="space-y-3">
+            {serviceServers.map((server) => {
+              const status = serverStatus(server, workers);
+              return (
+                <Card key={server.hostname} className="rounded-md shadow-none">
+                  <CardContent className="p-4">
+                    <div className="flex items-center gap-2 mb-2">
+                      <div className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${statusDotClass(status)}`} />
+                      <span className="font-medium">{server.hostname}</span>
+                      <Badge variant="outline" className={`text-xs uppercase ${roleBadgeClass(server.role)}`}>
+                        Service
+                      </Badge>
+                    </div>
+                    <div className="text-xs text-muted-foreground mb-3">
+                      Coordinator, Dashboard, API, WebSocket
+                    </div>
+                    {server.metrics && (
+                      <div className="space-y-2">
+                        <MetricsBar label="CPU" percent={server.metrics.cpu_usage_percent} />
+                        <MetricsBar
+                          label="Memory"
+                          percent={server.metrics.memory_usage_percent}
+                          detail={`${server.metrics.memory_used_gb} / ${server.metrics.memory_total_gb} GB`}
+                        />
+                        <MetricsBar
+                          label="Disk"
+                          percent={server.metrics.disk_usage_percent}
+                          detail={`${server.metrics.disk_used_gb} / ${server.metrics.disk_total_gb} GB`}
+                        />
+                        <div className="text-xs text-muted-foreground">
+                          Load: {server.metrics.load_avg_1m} / {server.metrics.load_avg_5m} / {server.metrics.load_avg_15m}
                         </div>
-                        <div className="mt-2 text-xs text-muted-foreground truncate font-mono">
-                          {params ? formatWorkerParams(worker.search_type, params) : worker.search_params}
-                        </div>
-                        <div className="mt-2 grid grid-cols-2 md:grid-cols-5 gap-2 text-xs text-muted-foreground font-mono">
-                          <span>{worker.cores} cores</span>
-                          <span>{numberWithCommas(worker.tested)} tested</span>
-                          <span>{worker.found} found</span>
-                          <span>{throughput}/s</span>
-                          <span>
-                            hb{" "}
-                            {worker.last_heartbeat_secs_ago < 5
-                              ? "now"
-                              : `${worker.last_heartbeat_secs_ago}s`}
-                          </span>
-                        </div>
-                        {worker.metrics && (
-                          <div className="mt-3 space-y-2">
-                            <MetricsBar label="CPU" percent={worker.metrics.cpu_usage_percent} />
-                            <MetricsBar
-                              label="Memory"
-                              percent={worker.metrics.memory_usage_percent}
-                              detail={`${worker.metrics.memory_used_gb} / ${worker.metrics.memory_total_gb} GB`}
-                            />
-                          </div>
-                        )}
-                      </CardContent>
-                    </Card>
-                  );
-                })}
-              </div>
-            )}
-          </CardContent>
-        </Card>
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
-        <Card className="rounded-md shadow-none">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-base">Health Summary</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            <div className="flex items-center justify-between text-sm">
-              <span className="text-muted-foreground">Healthy</span>
-              <Badge variant="default">{healthCounts.healthy}</Badge>
-            </div>
-            <div className="flex items-center justify-between text-sm">
-              <span className="text-muted-foreground">Stale</span>
-              <Badge variant="secondary">{healthCounts.stale}</Badge>
-            </div>
-            <div className="flex items-center justify-between text-sm">
-              <span className="text-muted-foreground">Offline</span>
-              <Badge variant="destructive">{healthCounts.offline}</Badge>
-            </div>
-            <div className="pt-3 border-t space-y-2">
-              <div className="text-xs font-medium text-muted-foreground">
-                Active Deployments
-              </div>
-              <div className="text-2xl font-semibold">{activeDeployments.length}</div>
-            </div>
-            <div className="pt-3 border-t space-y-2">
-              <div className="text-xs font-medium text-muted-foreground">
-                Running Searches
-              </div>
-              <div className="text-2xl font-semibold">
-                {searches.filter((s) => s.status === "running").length}
-              </div>
-            </div>
-          </CardContent>
-        </Card>
+      {/* Compute Servers */}
+      <div className="mb-5">
+        <h2 className="text-sm font-medium text-muted-foreground mb-3">
+          Compute ({computeServers.length} server{computeServers.length !== 1 ? "s" : ""}, {totalComputeWorkers} worker{totalComputeWorkers !== 1 ? "s" : ""})
+        </h2>
+        {computeServers.length === 0 ? (
+          <EmptyState message="No compute servers online." />
+        ) : (
+          <div className="space-y-3">
+            {computeServers.map((server) => {
+              const status = serverStatus(server, workers);
+              const serverWorkers = workers
+                .filter((w) => server.worker_ids.includes(w.worker_id) && filteredWorkerIds.has(w.worker_id))
+                .sort((a, b) => a.worker_id.localeCompare(b.worker_id));
+              const throughput = server.uptime_secs > 0
+                ? (server.total_tested / server.uptime_secs).toFixed(1)
+                : "0.0";
+              return (
+                <Card key={server.hostname} className="rounded-md shadow-none">
+                  <CardContent className="p-4">
+                    <div className="flex flex-wrap items-center gap-2 justify-between mb-2">
+                      <div className="flex items-center gap-2">
+                        <div className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${statusDotClass(status)}`} />
+                        <span className="font-medium">{server.hostname}</span>
+                        <Badge variant="outline" className={`text-xs uppercase ${roleBadgeClass(server.role)}`}>
+                          Compute
+                        </Badge>
+                      </div>
+                      <div className="flex items-center gap-3 text-xs text-muted-foreground font-mono">
+                        <span>{server.worker_count} worker{server.worker_count !== 1 ? "s" : ""}</span>
+                        <span>{server.cores} core{server.cores !== 1 ? "s" : ""}</span>
+                        <span>{numberWithCommas(server.total_tested)} tested</span>
+                        <span>{throughput}/s</span>
+                      </div>
+                    </div>
+                    {server.metrics && (
+                      <div className="space-y-2 mb-3">
+                        <MetricsBar label="CPU" percent={server.metrics.cpu_usage_percent} />
+                        <MetricsBar
+                          label="Memory"
+                          percent={server.metrics.memory_usage_percent}
+                          detail={`${server.metrics.memory_used_gb} / ${server.metrics.memory_total_gb} GB`}
+                        />
+                      </div>
+                    )}
+                    {serverWorkers.length > 0 && (
+                      <div className="space-y-1.5 mt-2">
+                        {serverWorkers.map(renderWorkerRow)}
+                      </div>
+                    )}
+                    {serverWorkers.length === 0 && server.worker_count > 0 && (
+                      <div className="text-xs text-muted-foreground mt-2">
+                        No workers match current filters.
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       <Card className="mb-5 rounded-md shadow-none">
@@ -554,30 +625,6 @@ export default function FleetPage() {
           )}
         </CardContent>
       </Card>
-
-      {coordinator && (
-        <Card className="mt-5 rounded-md shadow-none">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-base">Coordinator Metrics</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-2">
-            <MetricsBar label="CPU" percent={coordinator.cpu_usage_percent} />
-            <MetricsBar
-              label="Memory"
-              percent={coordinator.memory_usage_percent}
-              detail={`${coordinator.memory_used_gb} / ${coordinator.memory_total_gb} GB`}
-            />
-            <MetricsBar
-              label="Disk"
-              percent={coordinator.disk_usage_percent}
-              detail={`${coordinator.disk_used_gb} / ${coordinator.disk_total_gb} GB`}
-            />
-            <div className="text-xs text-muted-foreground">
-              Load: {coordinator.load_avg_1m} / {coordinator.load_avg_5m} / {coordinator.load_avg_15m}
-            </div>
-          </CardContent>
-        </Card>
-      )}
 
       <AddServerDialog
         open={addServerOpen}

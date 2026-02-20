@@ -37,6 +37,7 @@ mod agents;
 mod calibrations;
 mod jobs;
 mod memory;
+mod observability;
 mod primes;
 mod projects;
 mod records;
@@ -44,6 +45,7 @@ mod roles;
 mod schedules;
 pub mod volunteers;
 mod workers;
+pub use observability::{MetricPoint, MetricSample, MetricSeries, SystemLogEntry, SystemLogRow};
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};

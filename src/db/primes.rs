@@ -320,4 +320,36 @@ impl Database {
         .await?;
         Ok(row)
     }
+
+    /// Count primes discovered within a time range.
+    pub async fn count_primes_in_range(
+        &self,
+        from: chrono::DateTime<chrono::Utc>,
+        to: chrono::DateTime<chrono::Utc>,
+    ) -> Result<i64> {
+        let count = sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*)::BIGINT FROM primes WHERE found_at BETWEEN $1 AND $2",
+        )
+        .bind(from)
+        .bind(to)
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(count)
+    }
+
+    /// Count primes per form within a time range.
+    pub async fn count_primes_by_form_in_range(
+        &self,
+        from: chrono::DateTime<chrono::Utc>,
+        to: chrono::DateTime<chrono::Utc>,
+    ) -> Result<Vec<(String, i64)>> {
+        let rows = sqlx::query_as::<_, (String, i64)>(
+            "SELECT form, COUNT(*)::BIGINT FROM primes WHERE found_at BETWEEN $1 AND $2 GROUP BY form ORDER BY form",
+        )
+        .bind(from)
+        .bind(to)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows)
+    }
 }

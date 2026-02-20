@@ -3,6 +3,7 @@
 use axum::extract::State;
 use axum::response::IntoResponse;
 use axum::Json;
+use chrono::Utc;
 use serde::Deserialize;
 use std::sync::Arc;
 
@@ -22,6 +23,7 @@ pub(super) async fn handler_worker_register(
     State(state): State<Arc<AppState>>,
     Json(payload): Json<WorkerRegisterPayload>,
 ) -> impl IntoResponse {
+    let worker_id = payload.worker_id.clone();
     eprintln!(
         "Worker registered: {} ({}, {} cores, {})",
         payload.worker_id, payload.hostname, payload.cores, payload.search_type
@@ -46,6 +48,23 @@ pub(super) async fn handler_worker_register(
         payload.search_type,
         payload.search_params,
     );
+    let log = crate::db::SystemLogEntry {
+        ts: Utc::now(),
+        level: "info".to_string(),
+        source: "coordinator".to_string(),
+        component: "worker_register".to_string(),
+        message: format!(
+            "Worker registered: {} ({} cores, {})",
+            worker_id, payload.cores, payload.search_type
+        ),
+        worker_id: Some(worker_id),
+        search_job_id: None,
+        search_id: None,
+        context: None,
+    };
+    if let Err(e) = state.db.insert_system_log(&log).await {
+        eprintln!("Warning: failed to log worker register: {}", e);
+    }
     Json(serde_json::json!({"ok": true}))
 }
 
@@ -101,6 +120,20 @@ pub(super) async fn handler_worker_heartbeat(
         }
         Json(resp)
     } else {
+        let log = crate::db::SystemLogEntry {
+            ts: Utc::now(),
+            level: "warn".to_string(),
+            source: "coordinator".to_string(),
+            component: "worker_heartbeat".to_string(),
+            message: format!("Heartbeat from unknown worker: {}", payload.worker_id),
+            worker_id: Some(payload.worker_id),
+            search_job_id: None,
+            search_id: None,
+            context: None,
+        };
+        if let Err(e) = state.db.insert_system_log(&log).await {
+            eprintln!("Warning: failed to log heartbeat warning: {}", e);
+        }
         Json(serde_json::json!({"ok": false, "error": "unknown worker, re-register"}))
     }
 }
@@ -138,7 +171,26 @@ pub(super) async fn handler_worker_prime(
         )
         .await
     {
-        Ok(_) => Json(serde_json::json!({"ok": true})),
+        Ok(_) => {
+            let log = crate::db::SystemLogEntry {
+                ts: Utc::now(),
+                level: "info".to_string(),
+                source: "coordinator".to_string(),
+                component: "worker_prime".to_string(),
+                message: format!(
+                    "Prime received: {} ({} digits, {})",
+                    payload.expression, payload.digits, payload.proof_method
+                ),
+                worker_id: None,
+                search_job_id: None,
+                search_id: None,
+                context: Some(serde_json::json!({\"form\": payload.form, \"search_params\": payload.search_params})),
+            };
+            if let Err(e) = state.db.insert_system_log(&log).await {
+                eprintln!("Warning: failed to log prime receipt: {}", e);
+            }
+            Json(serde_json::json!({"ok": true}))
+        }
         Err(e) => Json(serde_json::json!({"ok": false, "error": e.to_string()})),
     }
 }
@@ -157,5 +209,19 @@ pub(super) async fn handler_worker_deregister(
         eprintln!("Warning: failed to delete worker from PG: {}", e);
     }
     lock_or_recover(&state.fleet).deregister(&payload.worker_id);
+    let log = crate::db::SystemLogEntry {
+        ts: Utc::now(),
+        level: "info".to_string(),
+        source: "coordinator".to_string(),
+        component: "worker_deregister".to_string(),
+        message: format!("Worker deregistered: {}", payload.worker_id),
+        worker_id: Some(payload.worker_id),
+        search_job_id: None,
+        search_id: None,
+        context: None,
+    };
+    if let Err(e) = state.db.insert_system_log(&log).await {
+        eprintln!("Warning: failed to log worker deregister: {}", e);
+    }
     Json(serde_json::json!({"ok": true}))
 }

@@ -83,15 +83,18 @@ pub struct EventBus {
     last_flush: Mutex<Instant>,
     notifications: Mutex<VecDeque<Notification>>,
     next_id: AtomicU64,
+    next_event_id: AtomicU64,
     ws_sender: Mutex<Option<tokio::sync::broadcast::Sender<String>>>,
     start: Instant,
 }
 
 #[derive(Clone, Debug, Serialize)]
 pub struct EventRecord {
+    pub id: u64,
     pub kind: String,
     pub message: String,
     pub elapsed_secs: f64,
+    pub timestamp_ms: u64,
 }
 
 #[derive(Clone, Debug)]
@@ -135,6 +138,7 @@ impl EventBus {
             last_flush: Mutex::new(Instant::now()),
             notifications: Mutex::new(VecDeque::with_capacity(NOTIFICATIONS_CAP)),
             next_id: AtomicU64::new(1),
+            next_event_id: AtomicU64::new(1),
             ws_sender: Mutex::new(None),
             start: Instant::now(),
         }
@@ -339,15 +343,35 @@ impl EventBus {
         events.iter().rev().take(limit).cloned().collect()
     }
 
+    /// Get events with id greater than `last_id`, in ascending order.
+    pub fn recent_events_since(&self, last_id: u64, limit: usize) -> Vec<EventRecord> {
+        let events = self.recent.lock().unwrap();
+        let mut filtered: Vec<EventRecord> = events
+            .iter()
+            .filter(|e| e.id > last_id)
+            .cloned()
+            .collect();
+        filtered.sort_by_key(|e| e.id);
+        if filtered.len() > limit {
+            filtered.split_off(filtered.len() - limit)
+        } else {
+            filtered
+        }
+    }
+
     fn push_record(&self, kind: &str, message: &str, elapsed: f64) {
         let mut recent = self.recent.lock().unwrap();
         if recent.len() >= RECENT_EVENTS_CAP {
             recent.pop_front();
         }
+        let id = self.next_event_id.fetch_add(1, Ordering::Relaxed);
+        let timestamp_ms = now_ms();
         recent.push_back(EventRecord {
+            id,
             kind: kind.into(),
             message: message.into(),
             elapsed_secs: elapsed,
+            timestamp_ms,
         });
     }
 

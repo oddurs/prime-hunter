@@ -77,8 +77,21 @@ export interface Deployment {
   started_at: string;
 }
 
+export interface ServerInfo {
+  hostname: string;
+  role: "service" | "compute";
+  metrics: HardwareMetrics | null;
+  worker_count: number;
+  cores: number;
+  worker_ids: string[];
+  total_tested: number;
+  total_found: number;
+  uptime_secs: number;
+}
+
 export interface FleetData {
   workers: WorkerStatus[];
+  servers?: ServerInfo[];
   total_workers: number;
   total_cores: number;
   total_tested: number;

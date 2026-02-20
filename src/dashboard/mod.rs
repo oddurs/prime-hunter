@@ -10,6 +10,7 @@ mod routes_fleet;
 mod routes_health;
 mod routes_jobs;
 mod routes_notifications;
+mod routes_observability;
 mod routes_projects;
 mod routes_searches;
 mod routes_status;
@@ -25,6 +26,7 @@ use anyhow::Result;
 use axum::http::StatusCode;
 use axum::routing::{get, post};
 use axum::Router;
+use chrono::{DateTime, Timelike, Utc};
 use std::path::PathBuf;
 use std::sync::{Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
@@ -46,6 +48,7 @@ pub struct AppState {
     pub db: db::Database,
     pub database_url: String,
     pub checkpoint_path: PathBuf,
+    pub coordinator_hostname: String,
     pub fleet: Mutex<fleet::Fleet>,
     pub searches: Mutex<search_manager::SearchManager>,
     pub deployments: Mutex<deploy::DeploymentManager>,
@@ -102,6 +105,7 @@ impl AppState {
             db,
             database_url: database_url.to_string(),
             checkpoint_path,
+            coordinator_hostname: gethostname(),
             fleet: Mutex::new(fleet::Fleet::new()),
             searches: Mutex::new(search_manager::SearchManager::new(port, database_url)),
             deployments: Mutex::new(deploy::DeploymentManager::new()),
@@ -219,6 +223,18 @@ pub fn build_router(state: Arc<AppState>, static_dir: Option<&Path>) -> Router {
             get(routes_notifications::handler_api_notifications),
         )
         .route("/api/events", get(routes_notifications::handler_api_events))
+        .route(
+            "/api/observability/metrics",
+            get(routes_observability::handler_metrics),
+        )
+        .route(
+            "/api/observability/logs",
+            get(routes_observability::handler_logs),
+        )
+        .route(
+            "/api/observability/report",
+            get(routes_observability::handler_report),
+        )
         .route(
             "/api/agents/tasks",
             get(routes_agents::handler_api_agent_tasks)
@@ -378,6 +394,10 @@ pub async fn run(
     tokio::spawn(async move {
         let mut sys = sysinfo::System::new();
         let mut interval = tokio::time::interval(Duration::from_secs(30));
+        let mut last_metrics_sample = std::time::Instant::now() - Duration::from_secs(60);
+        let mut last_worker_sample = std::time::Instant::now() - Duration::from_secs(120);
+        let mut last_housekeeping = std::time::Instant::now() - Duration::from_secs(3600);
+        let mut last_event_id: u64 = 0;
         loop {
             interval.tick().await;
             lock_or_recover(&prune_state.fleet).prune_stale(60);
@@ -400,8 +420,8 @@ pub async fn run(
                 Err(e) => eprintln!("Warning: failed to reclaim stale volunteer blocks: {}", e),
                 _ => {}
             }
+            let fleet_workers = prune_state.get_workers_from_pg().await;
             {
-                let fleet_workers = prune_state.get_workers_from_pg().await;
                 let worker_stats: Vec<(String, u64, u64)> = fleet_workers
                     .iter()
                     .map(|w| (w.worker_id.clone(), w.tested, w.found))
@@ -414,6 +434,40 @@ pub async fn run(
                 eprintln!("Warning: project orchestration tick failed: {}", e);
             }
             prune_state.event_bus.flush();
+            {
+                let events = prune_state.event_bus.recent_events_since(last_event_id, 200);
+                if let Some(last) = events.last() {
+                    last_event_id = last.id;
+                }
+                if !events.is_empty() {
+                    let logs: Vec<db::SystemLogEntry> = events
+                        .into_iter()
+                        .map(|e| {
+                            let level = match e.kind.as_str() {
+                                "error" => "error",
+                                "warning" => "warn",
+                                _ => "info",
+                            };
+                            let ts = std::time::SystemTime::UNIX_EPOCH
+                                + std::time::Duration::from_millis(e.timestamp_ms);
+                            db::SystemLogEntry {
+                                ts: DateTime::<Utc>::from(ts),
+                                level: level.to_string(),
+                                source: "coordinator".to_string(),
+                                component: "event_bus".to_string(),
+                                message: e.message,
+                                worker_id: None,
+                                search_job_id: None,
+                                search_id: None,
+                                context: Some(serde_json::json!({\"kind\": e.kind, \"elapsed_secs\": e.elapsed_secs})),
+                            }
+                        })
+                        .collect();
+                    if let Err(e) = prune_state.db.insert_system_logs(&logs).await {
+                        eprintln!("Warning: failed to persist event logs: {}", e);
+                    }
+                }
+            }
             sys.refresh_cpu_all();
             sys.refresh_memory();
             let hw = metrics::collect(&sys);
@@ -427,13 +481,10 @@ pub async fn run(
                 .prom_metrics
                 .memory_usage_percent
                 .set(hw.memory_usage_percent as f64);
-            {
-                let fleet_workers = prune_state.get_workers_from_pg().await;
-                prune_state
-                    .prom_metrics
-                    .workers_connected
-                    .set(fleet_workers.len() as i64);
-            }
+            prune_state
+                .prom_metrics
+                .workers_connected
+                .set(fleet_workers.len() as i64);
             {
                 let mgr = lock_or_recover(&prune_state.searches);
                 prune_state
@@ -441,6 +492,7 @@ pub async fn run(
                     .search_jobs_active
                     .set(mgr.active_count() as i64);
             }
+            let mut block_summary = None;
             if let Ok(summary) = prune_state.db.get_all_block_summary().await {
                 prune_state
                     .prom_metrics
@@ -450,9 +502,193 @@ pub async fn run(
                     .prom_metrics
                     .work_blocks_claimed
                     .set(summary.claimed);
+                block_summary = Some(summary);
             }
 
             *lock_or_recover(&prune_state.coordinator_metrics) = Some(hw);
+
+            if last_metrics_sample.elapsed() >= Duration::from_secs(60) {
+                last_metrics_sample = std::time::Instant::now();
+                let now = Utc::now();
+                let mut samples: Vec<db::MetricSample> = Vec::new();
+
+                samples.push(db::MetricSample {
+                    ts: now,
+                    scope: "coordinator".to_string(),
+                    metric: "coordinator.cpu_usage_percent".to_string(),
+                    value: hw.cpu_usage_percent as f64,
+                    labels: None,
+                });
+                samples.push(db::MetricSample {
+                    ts: now,
+                    scope: "coordinator".to_string(),
+                    metric: "coordinator.memory_usage_percent".to_string(),
+                    value: hw.memory_usage_percent as f64,
+                    labels: None,
+                });
+                samples.push(db::MetricSample {
+                    ts: now,
+                    scope: "coordinator".to_string(),
+                    metric: "coordinator.load_avg_1m".to_string(),
+                    value: hw.load_avg_1m,
+                    labels: None,
+                });
+                samples.push(db::MetricSample {
+                    ts: now,
+                    scope: "coordinator".to_string(),
+                    metric: "coordinator.load_avg_5m".to_string(),
+                    value: hw.load_avg_5m,
+                    labels: None,
+                });
+                samples.push(db::MetricSample {
+                    ts: now,
+                    scope: "coordinator".to_string(),
+                    metric: "coordinator.load_avg_15m".to_string(),
+                    value: hw.load_avg_15m,
+                    labels: None,
+                });
+
+                let total_cores: i64 = fleet_workers.iter().map(|w| w.cores as i64).sum();
+                let total_tested: i64 = fleet_workers.iter().map(|w| w.tested as i64).sum();
+                let total_found: i64 = fleet_workers.iter().map(|w| w.found as i64).sum();
+
+                samples.push(db::MetricSample {
+                    ts: now,
+                    scope: "fleet".to_string(),
+                    metric: "fleet.workers_connected".to_string(),
+                    value: fleet_workers.len() as f64,
+                    labels: None,
+                });
+                samples.push(db::MetricSample {
+                    ts: now,
+                    scope: "fleet".to_string(),
+                    metric: "fleet.total_cores".to_string(),
+                    value: total_cores as f64,
+                    labels: None,
+                });
+                samples.push(db::MetricSample {
+                    ts: now,
+                    scope: "fleet".to_string(),
+                    metric: "fleet.total_tested".to_string(),
+                    value: total_tested as f64,
+                    labels: None,
+                });
+                samples.push(db::MetricSample {
+                    ts: now,
+                    scope: "fleet".to_string(),
+                    metric: "fleet.total_found".to_string(),
+                    value: total_found as f64,
+                    labels: None,
+                });
+
+                if let Some(summary) = &block_summary {
+                    samples.push(db::MetricSample {
+                        ts: now,
+                        scope: "fleet".to_string(),
+                        metric: "fleet.work_blocks_available".to_string(),
+                        value: summary.available as f64,
+                        labels: None,
+                    });
+                    samples.push(db::MetricSample {
+                        ts: now,
+                        scope: "fleet".to_string(),
+                        metric: "fleet.work_blocks_claimed".to_string(),
+                        value: summary.claimed as f64,
+                        labels: None,
+                    });
+                }
+
+                {
+                    let mgr = lock_or_recover(&prune_state.searches);
+                    samples.push(db::MetricSample {
+                        ts: now,
+                        scope: "fleet".to_string(),
+                        metric: "fleet.search_jobs_active".to_string(),
+                        value: mgr.active_count() as f64,
+                        labels: None,
+                    });
+                }
+
+                if last_worker_sample.elapsed() >= Duration::from_secs(120) {
+                    last_worker_sample = std::time::Instant::now();
+                    for w in &fleet_workers {
+                        if let Some(m) = &w.metrics {
+                            let labels = serde_json::json!({
+                                \"worker_id\": w.worker_id,
+                                \"hostname\": w.hostname,
+                                \"search_type\": w.search_type,
+                            });
+                            samples.push(db::MetricSample {
+                                ts: now,
+                                scope: \"worker\".to_string(),
+                                metric: \"worker.cpu_usage_percent\".to_string(),
+                                value: m.cpu_usage_percent as f64,
+                                labels: Some(labels.clone()),
+                            });
+                            samples.push(db::MetricSample {
+                                ts: now,
+                                scope: \"worker\".to_string(),
+                                metric: \"worker.memory_usage_percent\".to_string(),
+                                value: m.memory_usage_percent as f64,
+                                labels: Some(labels.clone()),
+                            });
+                            samples.push(db::MetricSample {
+                                ts: now,
+                                scope: \"worker\".to_string(),
+                                metric: \"worker.disk_usage_percent\".to_string(),
+                                value: m.disk_usage_percent as f64,
+                                labels: Some(labels.clone()),
+                            });
+                        }
+                        let labels = serde_json::json!({
+                            \"worker_id\": w.worker_id,
+                            \"hostname\": w.hostname,
+                            \"search_type\": w.search_type,
+                        });
+                        samples.push(db::MetricSample {
+                            ts: now,
+                            scope: \"worker\".to_string(),
+                            metric: \"worker.tested\".to_string(),
+                            value: w.tested as f64,
+                            labels: Some(labels.clone()),
+                        });
+                        samples.push(db::MetricSample {
+                            ts: now,
+                            scope: \"worker\".to_string(),
+                            metric: \"worker.found\".to_string(),
+                            value: w.found as f64,
+                            labels: Some(labels.clone()),
+                        });
+                    }
+                }
+
+                if let Err(e) = prune_state.db.insert_metric_samples(&samples).await {
+                    eprintln!("Warning: failed to persist metric samples: {}", e);
+                }
+            }
+
+            if last_housekeeping.elapsed() >= Duration::from_secs(3600) {
+                last_housekeeping = std::time::Instant::now();
+                let now = Utc::now();
+                let hour_start = now
+                    .with_minute(0)
+                    .and_then(|t| t.with_second(0))
+                    .and_then(|t| t.with_nanosecond(0))
+                    .unwrap_or(now);
+                let prev_hour = hour_start - chrono::Duration::hours(1);
+                if let Err(e) = prune_state.db.rollup_metrics_hour(prev_hour).await {
+                    eprintln!("Warning: failed to roll up metrics: {}", e);
+                }
+                if let Err(e) = prune_state.db.prune_metric_samples(7).await {
+                    eprintln!("Warning: failed to prune metric samples: {}", e);
+                }
+                if let Err(e) = prune_state.db.prune_metric_rollups(365).await {
+                    eprintln!("Warning: failed to prune metric rollups: {}", e);
+                }
+                if let Err(e) = prune_state.db.prune_system_logs(30).await {
+                    eprintln!("Warning: failed to prune system logs: {}", e);
+                }
+            }
         }
     });
 
