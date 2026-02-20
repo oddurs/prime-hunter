@@ -1,3 +1,5 @@
+import { Section } from "./ui/section";
+
 const discoveries = [
   {
     form: "Factorial",
@@ -73,47 +75,60 @@ const discoveries = [
 
 export function Discoveries() {
   return (
-    <section id="discoveries" className="py-24 px-6">
-      <div className="mx-auto max-w-6xl">
-        <h2 className="text-3xl font-bold text-text mb-4 text-center">
-          Recent Discoveries
-        </h2>
-        <p className="text-text-muted text-center max-w-2xl mx-auto mb-12">
-          A sample of primes found by the Darkreach network.
-        </p>
-
-        <div className="overflow-x-auto rounded-lg border border-border">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="bg-bg-secondary text-text-muted text-left">
-                <th className="px-4 py-3 font-medium">Form</th>
-                <th className="px-4 py-3 font-medium">Expression</th>
-                <th className="px-4 py-3 font-medium text-right">Digits</th>
-                <th className="px-4 py-3 font-medium">Proof</th>
-                <th className="px-4 py-3 font-medium">Date</th>
-              </tr>
-            </thead>
-            <tbody>
-              {discoveries.map((d, i) => (
-                <tr
-                  key={i}
-                  className="border-t border-border hover:bg-bg-secondary/50 transition-colors"
-                >
-                  <td className="px-4 py-3 text-text">{d.form}</td>
-                  <td className="px-4 py-3 font-mono text-accent-purple">
-                    {d.expression}
-                  </td>
-                  <td className="px-4 py-3 font-mono text-text text-right">
-                    {d.digits}
-                  </td>
-                  <td className="px-4 py-3 text-text-muted">{d.proof}</td>
-                  <td className="px-4 py-3 text-text-muted">{d.date}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+    <Section id="discoveries">
+      <div className="flex items-center justify-between mb-4">
+        <h2 className="text-3xl font-bold text-text">Recent Discoveries</h2>
+        <a
+          href="https://app.darkreach.ai/browse"
+          className="text-sm text-primary hover:underline hidden sm:block"
+        >
+          View all →
+        </a>
       </div>
-    </section>
+      <p className="text-text-muted mb-12">
+        A sample of primes found by the darkreach network.
+      </p>
+
+      <div className="overflow-x-auto rounded-lg border border-border">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="bg-bg-secondary text-text-muted text-left">
+              <th className="px-4 py-3 font-medium">Form</th>
+              <th className="px-4 py-3 font-medium">Expression</th>
+              <th className="px-4 py-3 font-medium text-right">Digits</th>
+              <th className="px-4 py-3 font-medium">Proof</th>
+              <th className="px-4 py-3 font-medium">Date</th>
+            </tr>
+          </thead>
+          <tbody>
+            {discoveries.map((d, i) => (
+              <tr
+                key={i}
+                className="border-t border-border hover:bg-bg-secondary/50 transition-colors"
+              >
+                <td className="px-4 py-3 text-text">{d.form}</td>
+                <td className="px-4 py-3 font-mono text-accent-purple">
+                  {d.expression}
+                </td>
+                <td className="px-4 py-3 font-mono text-text text-right">
+                  {d.digits}
+                </td>
+                <td className="px-4 py-3 text-text-muted">{d.proof}</td>
+                <td className="px-4 py-3 text-text-muted">{d.date}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <div className="mt-4 text-center sm:hidden">
+        <a
+          href="https://app.darkreach.ai/browse"
+          className="text-sm text-primary hover:underline"
+        >
+          View all discoveries →
+        </a>
+      </div>
+    </Section>
   );
 }

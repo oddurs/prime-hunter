@@ -1,12 +1,31 @@
 import type { Metadata } from "next";
+import { Navbar } from "@/components/navbar";
+import { Footer } from "@/components/footer";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Darkreach — Distributed Prime Discovery",
+  title: {
+    default: "darkreach — AI-Driven Distributed Computing",
+    template: "%s — darkreach",
+  },
   description:
-    "Hunt special-form primes across CPU clusters. 12 algorithms. Deterministic proofs. Open source.",
+    "AI-driven distributed computing platform. Autonomously researches, optimizes, and orchestrates scientific discoveries. Currently hunting primes.",
   icons: {
     icon: "/favicon.svg",
+  },
+  openGraph: {
+    title: "darkreach — AI-Driven Distributed Computing",
+    description:
+      "AI-driven distributed computing platform. Autonomously researches, optimizes, and orchestrates scientific discoveries. Currently hunting primes.",
+    url: "https://darkreach.ai",
+    siteName: "darkreach",
+    type: "website",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "darkreach — AI-Driven Distributed Computing",
+    description:
+      "AI-driven distributed computing platform. Currently hunting primes.",
   },
 };
 
@@ -17,7 +36,11 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body>{children}</body>
+      <body>
+        <Navbar />
+        <main className="pt-16">{children}</main>
+        <Footer />
+      </body>
     </html>
   );
 }

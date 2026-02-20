@@ -5,14 +5,17 @@
   --color-bg-secondary: #161b22;
   --color-border: #30363d;
   --color-text: #e6edf3;
-  --color-text-muted: #7d8590;
-  --color-accent: #58a6ff;
-  --color-accent-green: #3fb950;
+  --color-text-muted: #8b949e;
+  --color-primary: #2f81f7;
   --color-accent-purple: #bc8cff;
+  --color-accent-green: #3fb950;
+  --color-accent-orange: #f78166;
+  --color-destructive: #f85149;
 
-  --font-sans: system-ui, -apple-system, "Segoe UI", sans-serif;
-  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, "SF Mono",
-    Menlo, Consolas, monospace;
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans",
+    Helvetica, Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
+    "Liberation Mono", monospace;
 }
 
 * {
@@ -86,4 +89,109 @@ body {
   font-family: var(--font-mono);
   font-size: 0.875rem;
   line-height: 1.5;
+}
+
+/* Prose styling for docs */
+.prose-docs {
+  color: var(--color-text);
+  font-size: 1rem;
+  line-height: 1.7;
+}
+
+.prose-docs h1,
+.prose-docs h2,
+.prose-docs h3,
+.prose-docs h4 {
+  color: var(--color-text);
+  font-weight: 600;
+  line-height: 1.25;
+  margin-top: 2rem;
+  margin-bottom: 1rem;
+}
+
+.prose-docs h1 {
+  font-size: 2em;
+  padding-bottom: 0.3em;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.prose-docs h2 {
+  font-size: 1.5em;
+  padding-bottom: 0.3em;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.prose-docs h3 {
+  font-size: 1.25em;
+}
+
+.prose-docs p {
+  margin-bottom: 1rem;
+}
+
+.prose-docs ul,
+.prose-docs ol {
+  padding-left: 2em;
+  margin-bottom: 1rem;
+}
+
+.prose-docs li {
+  margin-top: 0.25em;
+}
+
+.prose-docs a {
+  color: var(--color-primary);
+  text-decoration: none;
+}
+
+.prose-docs a:hover {
+  text-decoration: underline;
+}
+
+.prose-docs code {
+  font-size: 85%;
+  background: var(--color-bg-secondary);
+  border-radius: 4px;
+  padding: 0.2em 0.4em;
+}
+
+.prose-docs pre {
+  font-size: 85%;
+  line-height: 1.45;
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  padding: 1rem;
+  overflow-x: auto;
+  margin-bottom: 1rem;
+}
+
+.prose-docs pre code {
+  background: transparent;
+  padding: 0;
+  font-size: inherit;
+}
+
+.prose-docs blockquote {
+  color: var(--color-text-muted);
+  border-left: 0.25em solid var(--color-border);
+  padding: 0 1em;
+  margin: 0 0 1rem 0;
+}
+
+.prose-docs table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: 1rem;
+}
+
+.prose-docs th,
+.prose-docs td {
+  border: 1px solid var(--color-border);
+  padding: 6px 13px;
+}
+
+.prose-docs th {
+  font-weight: 600;
+  background: var(--color-bg-secondary);
 }

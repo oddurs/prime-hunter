@@ -1,1 +1,14 @@
-{}
+{
+  "rewrites": [
+    {
+      "source": "/(.*)",
+      "has": [{ "type": "host", "value": "docs.darkreach.ai" }],
+      "destination": "/docs/$1"
+    },
+    {
+      "source": "/(.*)",
+      "has": [{ "type": "host", "value": "status.darkreach.ai" }],
+      "destination": "/status/$1"
+    }
+  ]
+}
