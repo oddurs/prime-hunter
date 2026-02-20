@@ -33,12 +33,17 @@ jobs:
           RUSTFLAGS: "-C target-cpu=x86-64-v3"
       - name: Package binary
         run: |
-          cp target/release/darkreach darkreach-linux-x86_64
-          chmod +x darkreach-linux-x86_64
+          mkdir -p package
+          cp target/release/darkreach package/darkreach
+          chmod +x package/darkreach
+          tar -C package -czf darkreach-worker-linux-x86_64.tar.gz darkreach
+          sha256sum darkreach-worker-linux-x86_64.tar.gz > darkreach-worker-linux-x86_64.tar.gz.sha256
       - uses: actions/upload-artifact@v4
         with:
-          name: darkreach-linux-x86_64
-          path: darkreach-linux-x86_64
+          name: darkreach-worker-linux-x86_64
+          path: |
+            darkreach-worker-linux-x86_64.tar.gz
+            darkreach-worker-linux-x86_64.tar.gz.sha256
 
   build-linux-arm64:
     name: Build Linux aarch64
@@ -75,12 +80,17 @@ jobs:
           PKG_CONFIG_SYSROOT_DIR: /usr/aarch64-linux-gnu
       - name: Package binary
         run: |
-          cp target/aarch64-unknown-linux-gnu/release/darkreach darkreach-linux-aarch64
-          chmod +x darkreach-linux-aarch64
+          mkdir -p package
+          cp target/aarch64-unknown-linux-gnu/release/darkreach package/darkreach
+          chmod +x package/darkreach
+          tar -C package -czf darkreach-worker-linux-aarch64.tar.gz darkreach
+          sha256sum darkreach-worker-linux-aarch64.tar.gz > darkreach-worker-linux-aarch64.tar.gz.sha256
       - uses: actions/upload-artifact@v4
         with:
-          name: darkreach-linux-aarch64
-          path: darkreach-linux-aarch64
+          name: darkreach-worker-linux-aarch64
+          path: |
+            darkreach-worker-linux-aarch64.tar.gz
+            darkreach-worker-linux-aarch64.tar.gz.sha256
 
   release:
     name: Create Release
@@ -93,13 +103,37 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           path: artifacts/
+      - name: Derive release metadata
+        id: meta
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          version="${tag#v}"
+          channel="stable"
+          if [[ "${version}" == *"-"* ]]; then
+            channel="beta"
+          fi
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "channel=${channel}" >> "$GITHUB_OUTPUT"
+      - name: Generate worker manifest
+        run: |
+          ./scripts/release/generate-worker-manifest.sh \
+            artifacts \
+            worker-manifest.json \
+            "${{ steps.meta.outputs.channel }}" \
+            "${{ steps.meta.outputs.version }}" \
+            "${{ steps.meta.outputs.tag }}" \
+            "${{ github.repository }}"
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
           files: |
-            artifacts/darkreach-linux-x86_64/darkreach-linux-x86_64
-            artifacts/darkreach-linux-aarch64/darkreach-linux-aarch64
+            artifacts/darkreach-worker-linux-x86_64/darkreach-worker-linux-x86_64.tar.gz
+            artifacts/darkreach-worker-linux-x86_64/darkreach-worker-linux-x86_64.tar.gz.sha256
+            artifacts/darkreach-worker-linux-aarch64/darkreach-worker-linux-aarch64.tar.gz
+            artifacts/darkreach-worker-linux-aarch64/darkreach-worker-linux-aarch64.tar.gz.sha256
+            worker-manifest.json
 
   docker-release:
     name: Docker Release

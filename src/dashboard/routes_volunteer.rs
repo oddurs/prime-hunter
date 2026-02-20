@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use super::AppState;
-use crate::db::volunteers::VolunteerRow;
+use crate::db::volunteers::{VolunteerRow, WorkerCapabilities};
 
 // ── GET /api/volunteer/worker/latest ─────────────────────────────
 
@@ -202,6 +202,18 @@ pub(super) struct WorkerRegisterPayload {
     cores: i32,
     #[serde(default)]
     cpu_model: String,
+    #[serde(default)]
+    os: Option<String>,
+    #[serde(default)]
+    arch: Option<String>,
+    #[serde(default)]
+    ram_gb: Option<i32>,
+    #[serde(default)]
+    has_gpu: Option<bool>,
+    #[serde(default)]
+    gpu_model: Option<String>,
+    #[serde(default)]
+    gpu_vram_gb: Option<i32>,
 }
 
 pub(super) async fn handler_v1_worker_register(
@@ -222,6 +234,12 @@ pub(super) async fn handler_v1_worker_register(
             &payload.hostname,
             payload.cores,
             &payload.cpu_model,
+            payload.os.as_deref(),
+            payload.arch.as_deref(),
+            payload.ram_gb,
+            payload.has_gpu,
+            payload.gpu_model.as_deref(),
+            payload.gpu_vram_gb,
         )
         .await
     {
@@ -268,24 +286,36 @@ pub(super) async fn handler_v1_worker_heartbeat(
 #[derive(Deserialize)]
 pub(super) struct WorkQuery {
     #[serde(default)]
-    #[allow(dead_code)]
     cores: Option<usize>,
     #[serde(default)]
-    #[allow(dead_code)]
     ram_gb: Option<u64>,
+    #[serde(default)]
+    has_gpu: Option<bool>,
+    #[serde(default)]
+    os: Option<String>,
+    #[serde(default)]
+    arch: Option<String>,
 }
 
 pub(super) async fn handler_v1_work(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
-    Query(_query): Query<WorkQuery>,
+    Query(query): Query<WorkQuery>,
 ) -> impl IntoResponse {
     let vol = match authenticate(&state, &headers).await {
         Ok(v) => v,
         Err(e) => return e,
     };
 
-    match state.db.claim_volunteer_block(vol.id).await {
+    let caps = WorkerCapabilities {
+        cores: query.cores.unwrap_or(1).clamp(1, i32::MAX as usize) as i32,
+        ram_gb: query.ram_gb.unwrap_or(0).min(i32::MAX as u64) as i32,
+        has_gpu: query.has_gpu.unwrap_or(false),
+        os: query.os.filter(|v| !v.trim().is_empty()),
+        arch: query.arch.filter(|v| !v.trim().is_empty()),
+    };
+
+    match state.db.claim_volunteer_block(vol.id, &caps).await {
         Ok(Some(block)) => {
             // Set quorum based on volunteer trust level and search form
             if let Some(ref search_type) = block.search_type {

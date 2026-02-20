@@ -15,6 +15,9 @@
 
 - [GIMPS](https://www.mersenne.org/) — Great Internet Mersenne Prime Search
 - [PrimeGrid](https://www.primegrid.com/) — BOINC distributed computing
+- [BOINC Overview](https://boinc.berkeley.edu/trac/wiki/BoincOverview) — volunteer compute architecture
+- [BOINC App Versioning](https://github.com/BOINC/boinc/wiki/App-Versioning) — server-managed client app rollout
+- [BOINC Sign Executable](https://github.com/BOINC/boinc/wiki/Sign_executable) — binary signing model
 - [Seventeen or Bust](https://en.wikipedia.org/wiki/Seventeen_or_Bust) — Sierpinski problem (now part of PrimeGrid)
 - [Riesel Problem](http://www.prothsearch.com/rieselprob.html)
 - [Fermatsearch.org](http://fermatsearch.org/)

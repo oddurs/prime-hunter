@@ -112,6 +112,16 @@ async fn get_docs_returns_200() {
     assert!(json.get("docs").is_some());
 }
 
+#[tokio::test]
+async fn get_volunteer_worker_latest_returns_channel_release() {
+    require_db!();
+    let (status, json) = get(app().await, "/api/volunteer/worker/latest?channel=stable").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(json["channel"], "stable");
+    assert!(json["version"].is_string());
+    assert!(json["artifacts"].is_array());
+}
+
 // --- Worker API ---
 
 #[tokio::test]

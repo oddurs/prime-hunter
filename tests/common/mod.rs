@@ -123,6 +123,8 @@ async fn run_migrations(pool: &sqlx::PgPool) {
         "supabase/migrations/013_agent_roles.sql",
         "supabase/migrations/014_agent_schedules.sql",
         "supabase/migrations/018_agent_observability.sql",
+        "supabase/migrations/019_volunteers.sql",
+        "supabase/migrations/021_volunteer_worker_capabilities.sql",
     ];
 
     for file in &migration_files {

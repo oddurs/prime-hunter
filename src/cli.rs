@@ -1134,6 +1134,29 @@ pub fn run_volunteer(cli: &Cli) -> Result<()> {
 
     let config = volunteer::load_config()?;
     volunteer::register_worker(&config)?;
+    let update_channel =
+        std::env::var("DARKREACH_UPDATE_CHANNEL").unwrap_or_else(|_| "stable".to_string());
+    match volunteer::check_for_update(&config, &update_channel) {
+        Ok(Some(rel)) => {
+            info!(
+                current_version = env!("CARGO_PKG_VERSION"),
+                latest_version = %rel.version,
+                channel = %rel.channel,
+                published_at = %rel.published_at,
+                "Worker update available"
+            );
+        }
+        Ok(None) => {
+            info!(
+                current_version = env!("CARGO_PKG_VERSION"),
+                channel = %update_channel,
+                "Worker is up to date"
+            );
+        }
+        Err(e) => {
+            warn!(error = %e, channel = %update_channel, "Worker update check failed");
+        }
+    }
 
     let database_url = cli.database_url.as_deref().ok_or_else(|| {
         anyhow::anyhow!(

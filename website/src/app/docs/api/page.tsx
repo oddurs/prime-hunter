@@ -91,6 +91,25 @@ const restEndpoints: Endpoint[] = [
   "workers_online": 38
 }`,
   },
+  {
+    method: "GET",
+    path: "/api/volunteer/worker/latest?channel=stable",
+    description: "Get latest downloadable worker release metadata for a channel.",
+    response: `{
+  "channel": "stable",
+  "version": "0.1.0",
+  "published_at": "2026-02-20T00:00:00Z",
+  "notes": "Initial public worker release channel",
+  "artifacts": [
+    {
+      "os": "linux",
+      "arch": "x86_64",
+      "url": "https://downloads.darkreach.example/worker/v0.1.0/darkreach-worker-linux-x86_64.tar.gz",
+      "sha256": "..."
+    }
+  ]
+}`,
+  },
 ];
 
 const wsEvents = [

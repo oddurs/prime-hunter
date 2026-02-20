@@ -92,7 +92,7 @@ export function AppHeader() {
     { title: "Dashboard", href: "/", count: undefined },
     { title: "Projects", href: "/projects", count: undefined },
     { title: "Searches", href: "/searches", count: runningCount || undefined },
-    { title: "Performance", href: "/performance", count: undefined },
+    { title: "Observability", href: "/performance", count: undefined },
     { title: "Agents", href: "/agents", count: activeAgentCount || undefined },
     { title: "Fleet", href: "/fleet", count: undefined },
     { title: "Browse", href: "/browse", count: undefined },

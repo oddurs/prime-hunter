@@ -2,7 +2,7 @@
 
 Discovery strategy, competitive analysis, publication pipeline, and references.
 
-**Key files:** `docs/`
+**Key files:** `docs/`, `docs/roadmaps/competitive-analysis.md`, `docs/roadmaps/public-compute.md`
 
 ---
 

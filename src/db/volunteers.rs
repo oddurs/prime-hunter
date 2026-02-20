@@ -101,14 +101,29 @@ impl Database {
         hostname: &str,
         cores: i32,
         cpu_model: &str,
+        os: Option<&str>,
+        arch: Option<&str>,
+        ram_gb: Option<i32>,
+        has_gpu: Option<bool>,
+        gpu_model: Option<&str>,
+        gpu_vram_gb: Option<i32>,
     ) -> Result<()> {
         sqlx::query(
-            "INSERT INTO volunteer_workers (volunteer_id, worker_id, hostname, cores, cpu_model)
-             VALUES ($1, $2, $3, $4, $5)
+            "INSERT INTO volunteer_workers (
+               volunteer_id, worker_id, hostname, cores, cpu_model,
+               os, arch, ram_gb, has_gpu, gpu_model, gpu_vram_gb
+             )
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
              ON CONFLICT (worker_id) DO UPDATE SET
                hostname = EXCLUDED.hostname,
                cores = EXCLUDED.cores,
                cpu_model = EXCLUDED.cpu_model,
+               os = EXCLUDED.os,
+               arch = EXCLUDED.arch,
+               ram_gb = EXCLUDED.ram_gb,
+               has_gpu = EXCLUDED.has_gpu,
+               gpu_model = EXCLUDED.gpu_model,
+               gpu_vram_gb = EXCLUDED.gpu_vram_gb,
                last_heartbeat = NOW()",
         )
         .bind(volunteer_id)
@@ -116,6 +131,12 @@ impl Database {
         .bind(hostname)
         .bind(cores)
         .bind(cpu_model)
+        .bind(os)
+        .bind(arch)
+        .bind(ram_gb)
+        .bind(has_gpu)
+        .bind(gpu_model)
+        .bind(gpu_vram_gb)
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -138,6 +159,7 @@ impl Database {
     pub async fn claim_volunteer_block(
         &self,
         volunteer_id: uuid::Uuid,
+        caps: &WorkerCapabilities,
     ) -> Result<Option<VolunteerWorkBlock>> {
         let row = sqlx::query_as::<_, VolunteerWorkBlock>(
             "UPDATE work_blocks SET
@@ -146,9 +168,38 @@ impl Database {
                volunteer_id = $2,
                claimed_at = NOW()
              WHERE block_id = (
-               SELECT block_id FROM work_blocks
-               WHERE status = 'available'
-               ORDER BY block_id
+               SELECT wb.block_id
+               FROM work_blocks wb
+               JOIN search_jobs sj ON sj.id = wb.search_job_id
+               WHERE wb.status = 'available'
+                 AND (
+                   NOT (sj.params ? 'min_cores')
+                   OR (
+                     jsonb_typeof(sj.params->'min_cores') = 'number'
+                     AND (sj.params->>'min_cores')::int <= $3
+                   )
+                 )
+                 AND (
+                   NOT (sj.params ? 'min_ram_gb')
+                   OR (
+                     jsonb_typeof(sj.params->'min_ram_gb') = 'number'
+                     AND (sj.params->>'min_ram_gb')::int <= $4
+                   )
+                 )
+                 AND (
+                   NOT (sj.params ? 'requires_gpu')
+                   OR lower(sj.params->>'requires_gpu') <> 'true'
+                   OR $5 = TRUE
+                 )
+                 AND (
+                   NOT (sj.params ? 'required_os')
+                   OR ($6 IS NOT NULL AND lower(sj.params->>'required_os') = lower($6))
+                 )
+                 AND (
+                   NOT (sj.params ? 'required_arch')
+                   OR ($7 IS NOT NULL AND lower(sj.params->>'required_arch') = lower($7))
+                 )
+               ORDER BY wb.block_id
                FOR UPDATE SKIP LOCKED
                LIMIT 1
              )
@@ -156,6 +207,11 @@ impl Database {
         )
         .bind(volunteer_id.to_string())
         .bind(volunteer_id)
+        .bind(caps.cores)
+        .bind(caps.ram_gb)
+        .bind(caps.has_gpu)
+        .bind(caps.os.as_deref())
+        .bind(caps.arch.as_deref())
         .fetch_optional(&self.pool)
         .await?;
 
@@ -390,6 +446,15 @@ impl Database {
         .await?;
         Ok(result.rows_affected() as i64)
     }
+}
+
+#[derive(Debug, Clone)]
+pub struct WorkerCapabilities {
+    pub cores: i32,
+    pub ram_gb: i32,
+    pub has_gpu: bool,
+    pub os: Option<String>,
+    pub arch: Option<String>,
 }
 
 /// Work block assigned to a volunteer (subset of work_blocks columns).

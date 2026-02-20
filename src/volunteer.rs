@@ -101,6 +101,16 @@ pub struct LeaderboardEntry {
     pub worker_count: i64,
 }
 
+/// Latest worker release metadata from `/api/v1/worker/latest`.
+#[derive(Debug, Deserialize)]
+pub struct WorkerReleaseInfo {
+    pub channel: String,
+    pub version: String,
+    pub published_at: String,
+    #[allow(dead_code)]
+    pub notes: Option<String>,
+}
+
 /// Load volunteer config from `~/.darkreach/config.toml`.
 pub fn load_config() -> Result<VolunteerConfig> {
     let path = config_path()?;
@@ -162,6 +172,12 @@ pub fn register_worker(config: &VolunteerConfig) -> Result<()> {
         "hostname": hostname(),
         "cores": rayon::current_num_threads(),
         "cpu_model": cpu_model(),
+        "os": worker_os(),
+        "arch": worker_arch(),
+        "ram_gb": sys_ram_gb().min(i32::MAX as u64) as i32,
+        "has_gpu": has_gpu(),
+        "gpu_model": gpu_model(),
+        "gpu_vram_gb": gpu_vram_gb(),
     });
     ureq::post(&url)
         .header("Authorization", &auth_header(config))
@@ -187,10 +203,13 @@ pub fn heartbeat(config: &VolunteerConfig) -> Result<()> {
 /// Claim a work block from the coordinator.
 pub fn claim_work(config: &VolunteerConfig, cores: usize) -> Result<Option<WorkAssignment>> {
     let url = format!(
-        "{}/api/v1/work?cores={}&ram_gb={}",
+        "{}/api/v1/work?cores={}&ram_gb={}&has_gpu={}&os={}&arch={}",
         config.server.trim_end_matches('/'),
         cores,
         sys_ram_gb(),
+        has_gpu(),
+        worker_os(),
+        worker_arch(),
     );
     let mut resp = ureq::get(&url)
         .header("Authorization", &auth_header(config))
@@ -227,6 +246,30 @@ pub fn get_leaderboard(server: &str) -> Result<Vec<LeaderboardEntry>> {
     let url = format!("{}/api/v1/leaderboard", server.trim_end_matches('/'));
     let entries: Vec<LeaderboardEntry> = ureq::get(&url).call()?.body_mut().read_json()?;
     Ok(entries)
+}
+
+/// Fetch latest worker release metadata for a release channel.
+pub fn get_latest_worker_release(server: &str, channel: &str) -> Result<WorkerReleaseInfo> {
+    let url = format!(
+        "{}/api/v1/worker/latest?channel={}",
+        server.trim_end_matches('/'),
+        channel
+    );
+    let info: WorkerReleaseInfo = ureq::get(&url).call()?.body_mut().read_json()?;
+    Ok(info)
+}
+
+/// Return latest release info when current binary differs from channel version.
+pub fn check_for_update(
+    config: &VolunteerConfig,
+    channel: &str,
+) -> Result<Option<WorkerReleaseInfo>> {
+    let latest = get_latest_worker_release(&config.server, channel)?;
+    let current = env!("CARGO_PKG_VERSION");
+    if latest.version != current {
+        return Ok(Some(latest));
+    }
+    Ok(None)
 }
 
 // ── Utility ──────────────────────────────────────────────────────
@@ -273,6 +316,35 @@ fn cpu_model() -> String {
             })
             .unwrap_or_else(|| "unknown".to_string())
     }
+}
+
+fn worker_os() -> &'static str {
+    std::env::consts::OS
+}
+
+fn worker_arch() -> &'static str {
+    std::env::consts::ARCH
+}
+
+fn has_gpu() -> bool {
+    std::env::var("DARKREACH_HAS_GPU")
+        .ok()
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false)
+}
+
+fn gpu_model() -> Option<String> {
+    std::env::var("DARKREACH_GPU_MODEL")
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
+fn gpu_vram_gb() -> Option<i32> {
+    std::env::var("DARKREACH_GPU_VRAM_GB")
+        .ok()
+        .and_then(|v| v.parse::<i32>().ok())
+        .filter(|v| *v > 0)
 }
 
 fn sys_ram_gb() -> u64 {

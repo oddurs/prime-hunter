@@ -460,6 +460,26 @@ darkreach's twin module exists. Need:
 
 ---
 
+### Public Compute Release Parity (new track)
+
+To directly match competitor public-compute operations, darkreach now tracks a dedicated roadmap:
+
+- `docs/roadmaps/public-compute.md`
+
+This track covers:
+
+- Volunteer worker packaging and signed distribution
+- Auto-update channels (`stable`/`beta`) with rollback
+- Assignment expiry/reclaim policies
+- Quorum validation + host reputation
+- Release canary/ramp controls
+- Volunteer credits, teams, and challenge cadence
+
+This is intentionally separated from engine optimization because release lifecycle and trust
+controls are now the main bottleneck for scaling beyond private clusters.
+
+---
+
 ## 4. Priority Matrix
 
 Items ordered by (impact × feasibility / effort):
@@ -585,7 +605,13 @@ Reference table showing current records and darkreach's competitive position.
 - [PrimeGrid Main](https://www.primegrid.com/)
 - [PrimeGrid Server Status](https://www.primegrid.com/server_status.php)
 - [PrimeGrid Wiki](https://primegrid.fandom.com/wiki/PrimeGrid_Wiki)
-- [PrimeGrid Challenge Series 2026](https://forums.anandtech.com/threads/primegrid-challenge-series-2026.2633419/)
+- [PrimeGrid Forums (News)](https://www.primegrid.com/forum_forum.php?id=1)
+
+### BOINC / Release Infrastructure
+- [BOINC Overview](https://boinc.berkeley.edu/trac/wiki/BoincOverview)
+- [BOINC App Versioning](https://github.com/BOINC/boinc/wiki/App-Versioning)
+- [BOINC Sign Executable](https://github.com/BOINC/boinc/wiki/Sign_executable)
+- [BOINC Releases](https://github.com/BOINC/boinc/releases)
 
 ### Software
 - [PRST (GitHub)](https://github.com/patnashev/prst)

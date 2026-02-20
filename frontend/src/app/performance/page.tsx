@@ -3,461 +3,494 @@
 /**
  * @module performance/page
  *
- * Performance monitoring page with real-time charts for fleet throughput,
- * per-worker rates, and algorithm-level metrics. Shows rolling time-series
- * data from WebSocket heartbeats — not persisted to Supabase.
- *
- * Charts: throughput over time (line), per-worker comparison (bar),
- * sieve efficiency ratios, and hardware utilization trends.
+ * Grafana-style observability view for coordinator + fleet metrics,
+ * long-term trends, and stored system logs.
  */
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   LineChart,
   Line,
   ResponsiveContainer,
-  BarChart,
-  Bar,
   XAxis,
   YAxis,
   Tooltip,
 } from "recharts";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { MetricsBar } from "@/components/metrics-bar";
-import { useWs } from "@/contexts/websocket-context";
-import { numberWithCommas, formatUptime } from "@/lib/format";
-import type { WorkerStatus } from "@/hooks/use-websocket";
-import { Activity, Cpu, HardDrive, MemoryStick, Gauge } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { ViewHeader } from "@/components/view-header";
+import { useWs } from "@/contexts/websocket-context";
+import { API_BASE, formatTime, numberWithCommas, relativeTime } from "@/lib/format";
+import { StatCard } from "@/components/stat-card";
 
-const MAX_HISTORY = 60;
+const ranges = [
+  { label: "6h", hours: 6 },
+  { label: "24h", hours: 24 },
+  { label: "7d", hours: 24 * 7 },
+  { label: "30d", hours: 24 * 30 },
+];
 
-interface ThroughputSample {
-  time: number;
-  rate: number;
+interface MetricPoint {
+  ts: string;
+  value: number;
 }
 
-interface WorkerRate {
-  worker_id: string;
-  hostname: string;
-  search_type: string;
-  rate: number;
-  tested: number;
-  found: number;
-  uptime_secs: number;
-  cores: number;
-  cpu: number;
+interface MetricSeriesResponse {
+  metric: string;
+  scope?: string;
+  worker_id?: string;
+  points: MetricPoint[];
 }
 
-function estimateEta(
-  tested: number,
-  uptimeSecs: number,
-  totalRange: number | null
-): string | null {
-  if (!totalRange || totalRange <= 0 || tested <= 0 || uptimeSecs <= 0)
-    return null;
-  const rate = tested / uptimeSecs;
-  const remaining = totalRange - tested;
-  if (remaining <= 0) return "Complete";
-  const etaSecs = remaining / rate;
-  if (etaSecs < 60) return `~${Math.ceil(etaSecs)}s`;
-  if (etaSecs < 3600) return `~${Math.ceil(etaSecs / 60)}m`;
-  if (etaSecs < 86400) {
-    const h = Math.floor(etaSecs / 3600);
-    const m = Math.ceil((etaSecs % 3600) / 60);
-    return `~${h}h ${m}m`;
+interface LogsResponse {
+  logs: Array<{
+    id: number;
+    ts: string;
+    level: string;
+    source: string;
+    component: string;
+    message: string;
+    worker_id?: string | null;
+    context?: Record<string, unknown> | null;
+  }>;
+}
+
+interface ReportResponse {
+  from: string;
+  to: string;
+  primes: { total: number; by_form: Array<[string, number]> };
+  logs: { by_level: Array<[string, number]> };
+  fleet: {
+    workers_peak?: number | null;
+    tested_delta?: number | null;
+    found_delta?: number | null;
+  };
+  coordinator: {
+    avg_cpu_usage_percent?: number | null;
+  };
+}
+
+function toIsoRange(hours: number) {
+  const to = new Date();
+  const from = new Date(Date.now() - hours * 3600 * 1000);
+  return { from: from.toISOString(), to: to.toISOString() };
+}
+
+async function fetchMetrics(
+  metrics: string[],
+  scope: string,
+  from: string,
+  to: string,
+  worker_id?: string
+) {
+  const params = new URLSearchParams({
+    metrics: metrics.join(","),
+    scope,
+    from,
+    to,
+  });
+  if (worker_id) params.set("worker_id", worker_id);
+  const res = await fetch(`${API_BASE}/api/observability/metrics?${params}`);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const data = (await res.json()) as { series: MetricSeriesResponse[] };
+  return data.series;
+}
+
+async function fetchLogs(from: string, to: string) {
+  const params = new URLSearchParams({ from, to, limit: "200" });
+  const res = await fetch(`${API_BASE}/api/observability/logs?${params}`);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return (await res.json()) as LogsResponse;
+}
+
+async function fetchReport(from: string, to: string) {
+  const params = new URLSearchParams({ from, to });
+  const res = await fetch(`${API_BASE}/api/observability/report?${params}`);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return (await res.json()) as ReportResponse;
+}
+
+function buildRateSeries(points: MetricPoint[]) {
+  const out: Array<{ ts: string; rate: number }> = [];
+  for (let i = 1; i < points.length; i += 1) {
+    const prev = points[i - 1];
+    const curr = points[i];
+    const dt = (new Date(curr.ts).getTime() - new Date(prev.ts).getTime()) / 1000;
+    if (dt <= 0) continue;
+    out.push({ ts: curr.ts, rate: (curr.value - prev.value) / dt });
   }
-  const d = Math.floor(etaSecs / 86400);
-  const h = Math.ceil((etaSecs % 86400) / 3600);
-  return `~${d}d ${h}h`;
-}
-
-function estimateTotalRange(worker: WorkerStatus): number | null {
-  // Try to parse search_params JSON for range info
-  try {
-    const params = JSON.parse(worker.search_params);
-    if (params.min_n != null && params.max_n != null) {
-      // kbn, twin, sophie_germain, cullen_woodall, carol_kynea forms
-      // Both +1 and -1 tested, so range * 2
-      return (params.max_n - params.min_n + 1) * 2;
-    }
-    if (params.start != null && params.end != null) {
-      // factorial, primorial — each n tests +1 and -1
-      return (params.end - params.start + 1) * 2;
-    }
-    if (params.min_exp != null && params.max_exp != null) {
-      // wagstaff
-      return params.max_exp - params.min_exp + 1;
-    }
-    if (params.min_digits != null && params.max_digits != null) {
-      // palindromic, near_repdigit — hard to estimate, return null
-      return null;
-    }
-  } catch {
-    // not JSON, ignore
-  }
-  return null;
+  return out;
 }
 
 export default function PerformancePage() {
-  const { fleet, coordinator, searches } = useWs();
-  const workers = useMemo(() => fleet?.workers ?? [], [fleet]);
-  const prevRef = useRef<{ tested: number; time: number } | null>(null);
-  const [currentRate, setCurrentRate] = useState(0);
-  const [peakRate, setPeakRate] = useState(0);
-  const [history, setHistory] = useState<ThroughputSample[]>([]);
+  const { fleet, coordinator, connected } = useWs();
+  const [range, setRange] = useState(ranges[0]);
+  const [series, setSeries] = useState<MetricSeriesResponse[]>([]);
+  const [logs, setLogs] = useState<LogsResponse["logs"]>([]);
+  const [report, setReport] = useState<ReportResponse | null>(null);
+  const [loading, setLoading] = useState(false);
 
-  // Track per-worker rates
-  const workerPrevRef = useRef<Map<string, { tested: number; time: number }>>(
-    new Map()
-  );
-  const [workerRates, setWorkerRates] = useState<WorkerRate[]>([]);
+  const refresh = useCallback(async () => {
+    const { from, to } = toIsoRange(range.hours);
+    setLoading(true);
+    try {
+      const metrics = await fetchMetrics(
+        [
+          "fleet.total_tested",
+          "fleet.workers_connected",
+          "fleet.work_blocks_available",
+          "fleet.work_blocks_claimed",
+          "fleet.search_jobs_active",
+        ],
+        "fleet",
+        from,
+        to
+      );
+      const coordMetrics = await fetchMetrics(
+        ["coordinator.cpu_usage_percent", "coordinator.memory_usage_percent"],
+        "coordinator",
+        from,
+        to
+      );
+      setSeries([...metrics, ...coordMetrics]);
 
-  // Update aggregate throughput
-  useEffect(() => {
-    if (!fleet) return;
-    const now = Date.now();
-    const prev = prevRef.current;
+      const logsResp = await fetchLogs(from, to);
+      setLogs(logsResp.logs ?? []);
 
-    if (prev && fleet.total_tested >= prev.tested) {
-      const dtSec = (now - prev.time) / 1000;
-      if (dtSec > 0.5) {
-        const r = Math.round((fleet.total_tested - prev.tested) / dtSec);
-        setCurrentRate(r);
-        setPeakRate((p) => Math.max(p, r));
-        setHistory((h) => {
-          const next = [...h, { time: now, rate: r }];
-          return next.length > MAX_HISTORY ? next.slice(-MAX_HISTORY) : next;
-        });
-      }
+      const reportResp = await fetchReport(from, to);
+      setReport(reportResp);
+    } catch {
+      setSeries([]);
+      setLogs([]);
+      setReport(null);
+    } finally {
+      setLoading(false);
     }
-    prevRef.current = { tested: fleet.total_tested, time: now };
-  }, [fleet?.total_tested, fleet]);
+  }, [range]);
 
-  // Update per-worker rates
   useEffect(() => {
-    const now = Date.now();
-    const prevMap = workerPrevRef.current;
-    const rates: WorkerRate[] = [];
+    refresh();
+  }, [refresh]);
 
-    for (const w of workers) {
-      const prev = prevMap.get(w.worker_id);
-      let rate = 0;
-      if (prev && w.tested >= prev.tested) {
-        const dtSec = (now - prev.time) / 1000;
-        if (dtSec > 0.5) {
-          rate = Math.round((w.tested - prev.tested) / dtSec);
-        }
-      }
-      prevMap.set(w.worker_id, { tested: w.tested, time: now });
-      rates.push({
-        worker_id: w.worker_id,
-        hostname: w.hostname,
-        search_type: w.search_type,
-        rate,
-        tested: w.tested,
-        found: w.found,
-        uptime_secs: w.uptime_secs,
-        cores: w.cores,
-        cpu: w.metrics?.cpu_usage_percent ?? 0,
+  const throughputSeries = useMemo(() => {
+    const s = series.find((m) => m.metric === "fleet.total_tested");
+    return s ? buildRateSeries(s.points) : [];
+  }, [series]);
+
+  const workersSeries = useMemo(() => {
+    const s = series.find((m) => m.metric === "fleet.workers_connected");
+    return s ? s.points : [];
+  }, [series]);
+
+  const workBlocksSeries = useMemo(() => {
+    const available = series.find((m) => m.metric === "fleet.work_blocks_available");
+    const claimed = series.find((m) => m.metric === "fleet.work_blocks_claimed");
+    const merged: Array<{ ts: string; available: number; claimed: number }> = [];
+    if (!available || !claimed) return merged;
+    const map = new Map<string, { available?: number; claimed?: number }>();
+    for (const p of available.points) {
+      map.set(p.ts, { available: p.value });
+    }
+    for (const p of claimed.points) {
+      const prev = map.get(p.ts) ?? {};
+      map.set(p.ts, { ...prev, claimed: p.value });
+    }
+    for (const [ts, vals] of map.entries()) {
+      merged.push({
+        ts,
+        available: vals.available ?? 0,
+        claimed: vals.claimed ?? 0,
       });
     }
+    merged.sort((a, b) => new Date(a.ts).getTime() - new Date(b.ts).getTime());
+    return merged;
+  }, [series]);
 
-    rates.sort((a, b) => b.rate - a.rate);
-    setWorkerRates(rates);
-  }, [workers]);
+  const searchJobsSeries = useMemo(() => {
+    const s = series.find((m) => m.metric === "fleet.search_jobs_active");
+    return s ? s.points : [];
+  }, [series]);
 
-  // Compute search ETAs
-  const searchEtas = useMemo(() => {
-    return workers
-      .filter((w) => w.tested > 0 && w.uptime_secs > 0)
-      .map((w) => {
-        const totalRange = estimateTotalRange(w);
-        const eta = estimateEta(w.tested, w.uptime_secs, totalRange);
-        const pctDone = totalRange
-          ? Math.min(100, (w.tested / totalRange) * 100)
-          : null;
-        return {
-          worker_id: w.worker_id,
-          search_type: w.search_type,
-          current: w.current,
-          tested: w.tested,
-          totalRange,
-          eta,
-          pctDone,
-        };
-      })
-      .filter((e) => e.eta !== null || e.pctDone !== null);
-  }, [workers]);
+  const coordCpuSeries = useMemo(() => {
+    const s = series.find((m) => m.metric === "coordinator.cpu_usage_percent");
+    return s ? s.points : [];
+  }, [series]);
 
-  const totalTested = fleet?.total_tested ?? 0;
-  const totalFound = fleet?.total_found ?? 0;
-  const totalWorkers = fleet?.total_workers ?? 0;
-  const totalCores = fleet?.total_cores ?? 0;
+  const coordMemSeries = useMemo(() => {
+    const s = series.find((m) => m.metric === "coordinator.memory_usage_percent");
+    return s ? s.points : [];
+  }, [series]);
 
-  // Build bar chart data from worker rates
-  const workerBarData = useMemo(
-    () =>
-      workerRates
-        .filter((w) => w.rate > 0)
-        .map((w) => ({
-          name: w.hostname || w.worker_id.slice(0, 8),
-          rate: w.rate,
-        })),
-    [workerRates]
-  );
+  const primeByForm = report?.primes.by_form ?? [];
+  const logByLevel = report?.logs.by_level ?? [];
+
+  const onDownloadReport = useCallback(() => {
+    if (!report) return;
+    const blob = new Blob([JSON.stringify(report, null, 2)], {
+      type: "application/json",
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `observability-report-${new Date().toISOString()}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }, [report]);
 
   return (
     <>
       <ViewHeader
-        title="Performance"
-        subtitle={`${totalWorkers} workers · ${totalCores} cores · ${numberWithCommas(totalTested)} tested · ${totalFound} found`}
+        title="Observability"
+        subtitle="Grafana-style metrics, long-term trends, and system logs"
+        metadata={
+          <div className="flex flex-wrap gap-2">
+            <Badge variant="outline">{connected ? "Live" : "Offline"}</Badge>
+            <Badge variant="outline">
+              {fleet?.total_workers ?? 0} workers · {fleet?.total_cores ?? 0} cores
+            </Badge>
+            {coordinator && (
+              <Badge variant="outline">
+                Coordinator CPU {Math.round(coordinator.cpu_usage_percent)}%
+              </Badge>
+            )}
+          </div>
+        }
+        actions={
+          <div className="flex items-center gap-2">
+            <div className="flex items-center gap-1">
+              {ranges.map((r) => (
+                <Button
+                  key={r.label}
+                  size="sm"
+                  variant={r.label === range.label ? "default" : "outline"}
+                  onClick={() => setRange(r)}
+                >
+                  {r.label}
+                </Button>
+              ))}
+            </div>
+            <Button size="sm" variant="outline" onClick={refresh}>
+              Refresh
+            </Button>
+            <Button size="sm" onClick={onDownloadReport} disabled={!report}>
+              Export Report
+            </Button>
+          </div>
+        }
       />
 
-      {/* Throughput hero */}
+      <div className="grid grid-cols-1 lg:grid-cols-4 gap-4 mb-6">
+        <StatCard
+          label="Primes found"
+          value={numberWithCommas(report?.primes.total ?? 0)}
+        />
+        <StatCard
+          label="Tested (range)"
+          value={numberWithCommas(Math.max(0, Math.floor(report?.fleet.tested_delta ?? 0)))}
+        />
+        <StatCard
+          label="Peak workers"
+          value={numberWithCommas(Math.floor(report?.fleet.workers_peak ?? 0))}
+        />
+        <StatCard
+          label="Errors"
+          value={numberWithCommas(logByLevel.find(([lvl]) => lvl === "error")?.[1] ?? 0)}
+        />
+      </div>
+
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
         <Card className="lg:col-span-2">
           <CardHeader className="pb-2">
-            <CardTitle className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
-              <Gauge className="size-3.5" />
-              Aggregate throughput
+            <CardTitle className="text-xs font-medium text-muted-foreground">
+              Throughput (candidates/sec)
             </CardTitle>
           </CardHeader>
-          <CardContent>
-            <div className="flex items-end gap-6 mb-3">
-              <div>
-                <div className="text-4xl font-semibold text-foreground tabular-nums">
-                  {numberWithCommas(currentRate)}
-                </div>
-                <div className="text-sm text-muted-foreground">
-                  candidates/sec
-                </div>
-              </div>
-              <div className="text-right space-y-0.5">
-                <div className="text-xs text-muted-foreground">
-                  peak{" "}
-                  <span className="tabular-nums font-medium text-foreground">
-                    {numberWithCommas(peakRate)}
-                  </span>
-                </div>
-                <div className="text-xs text-muted-foreground">
-                  per-core{" "}
-                  <span className="tabular-nums font-medium text-foreground">
-                    {totalCores > 0
-                      ? numberWithCommas(Math.round(currentRate / totalCores))
-                      : "—"}
-                  </span>
-                </div>
-              </div>
-            </div>
-            {history.length > 1 && (
-              <div className="h-[100px]">
-                <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={history}>
-                    <Line
-                      type="monotone"
-                      dataKey="rate"
-                      stroke="var(--chart-1)"
-                      strokeWidth={1.5}
-                      dot={false}
-                      isAnimationActive={false}
-                    />
-                  </LineChart>
-                </ResponsiveContainer>
-              </div>
-            )}
+          <CardContent className="h-56">
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={throughputSeries}>
+                <XAxis dataKey="ts" tickFormatter={(v) => new Date(v).toLocaleTimeString()} />
+                <YAxis tickFormatter={(v) => numberWithCommas(Math.round(v))} />
+                <Tooltip
+                  formatter={(v: number | undefined) => [numberWithCommas(Math.round(v ?? 0)), "c/s"]}
+                  labelFormatter={(v) => formatTime(v)}
+                />
+                <Line type="monotone" dataKey="rate" stroke="#f78166" dot={false} />
+              </LineChart>
+            </ResponsiveContainer>
           </CardContent>
         </Card>
-
-        {/* Resource utilization */}
         <Card>
           <CardHeader className="pb-2">
-            <CardTitle className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
-              <Activity className="size-3.5" />
-              Coordinator resources
+            <CardTitle className="text-xs font-medium text-muted-foreground">
+              Worker count
             </CardTitle>
           </CardHeader>
-          <CardContent className="space-y-3">
-            {coordinator ? (
-              <>
-                <MetricsBar
-                  label="CPU"
-                  percent={coordinator.cpu_usage_percent}
-                />
-                <MetricsBar
-                  label="Memory"
-                  percent={coordinator.memory_usage_percent}
-                  detail={`${coordinator.memory_used_gb.toFixed(1)} / ${coordinator.memory_total_gb.toFixed(1)} GB`}
-                />
-                <MetricsBar
-                  label="Disk"
-                  percent={coordinator.disk_usage_percent}
-                  detail={`${coordinator.disk_used_gb.toFixed(1)} / ${coordinator.disk_total_gb.toFixed(1)} GB`}
-                />
-                <div className="pt-1 text-xs text-muted-foreground space-y-0.5">
-                  <div className="flex justify-between">
-                    <span>Load (1m / 5m / 15m)</span>
-                  </div>
-                  <div className="font-mono tabular-nums text-foreground">
-                    {coordinator.load_avg_1m.toFixed(2)} /{" "}
-                    {coordinator.load_avg_5m.toFixed(2)} /{" "}
-                    {coordinator.load_avg_15m.toFixed(2)}
-                  </div>
-                </div>
-              </>
-            ) : (
-              <p className="text-xs text-muted-foreground">
-                No coordinator metrics available
-              </p>
-            )}
+          <CardContent className="h-56">
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={workersSeries}>
+                <XAxis dataKey="ts" tickFormatter={(v) => new Date(v).toLocaleTimeString()} />
+                <YAxis allowDecimals={false} />
+                <Tooltip labelFormatter={(v) => formatTime(v)} />
+                <Line type="monotone" dataKey="value" stroke="#7dd3fc" dot={false} />
+              </LineChart>
+            </ResponsiveContainer>
           </CardContent>
         </Card>
       </div>
 
-      {/* Per-worker throughput */}
-      {workerRates.length > 0 && (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
-                <Cpu className="size-3.5" />
-                Per-worker throughput
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              {workerBarData.length > 0 ? (
-                <div className="h-[200px]">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={workerBarData} layout="vertical">
-                      <XAxis type="number" hide />
-                      <YAxis
-                        dataKey="name"
-                        type="category"
-                        width={80}
-                        tick={{ fontSize: 11, fill: "var(--muted-foreground)" }}
-                      />
-                      <Tooltip
-                        contentStyle={{
-                          background: "var(--card)",
-                          border: "1px solid var(--border)",
-                          borderRadius: 8,
-                          fontSize: 12,
-                        }}
-                        formatter={(value) => [
-                          `${numberWithCommas(Number(value))} cand/s`,
-                          "Rate",
-                        ]}
-                      />
-                      <Bar
-                        dataKey="rate"
-                        fill="var(--chart-1)"
-                        radius={[0, 4, 4, 0]}
-                      />
-                    </BarChart>
-                  </ResponsiveContainer>
-                </div>
-              ) : (
-                <p className="text-xs text-muted-foreground">
-                  Waiting for throughput data...
-                </p>
-              )}
-            </CardContent>
-          </Card>
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-xs font-medium text-muted-foreground">
+              Work blocks
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="h-52">
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={workBlocksSeries}>
+                <XAxis dataKey="ts" tickFormatter={(v) => new Date(v).toLocaleTimeString()} />
+                <YAxis allowDecimals={false} />
+                <Tooltip labelFormatter={(v) => formatTime(v)} />
+                <Line type="monotone" dataKey="available" stroke="#86efac" dot={false} />
+                <Line type="monotone" dataKey="claimed" stroke="#fbbf24" dot={false} />
+              </LineChart>
+            </ResponsiveContainer>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-xs font-medium text-muted-foreground">
+              Active search jobs
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="h-52">
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={searchJobsSeries}>
+                <XAxis dataKey="ts" tickFormatter={(v) => new Date(v).toLocaleTimeString()} />
+                <YAxis allowDecimals={false} />
+                <Tooltip labelFormatter={(v) => formatTime(v)} />
+                <Line type="step" dataKey="value" stroke="#c084fc" dot={false} />
+              </LineChart>
+            </ResponsiveContainer>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-xs font-medium text-muted-foreground">
+              Coordinator load
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="h-52">
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={coordCpuSeries}>
+                <XAxis dataKey="ts" tickFormatter={(v) => new Date(v).toLocaleTimeString()} />
+                <YAxis domain={[0, 100]} />
+                <Tooltip labelFormatter={(v) => formatTime(v)} />
+                <Line type="monotone" dataKey="value" stroke="#f472b6" dot={false} />
+              </LineChart>
+            </ResponsiveContainer>
+          </CardContent>
+        </Card>
+      </div>
 
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
-                <MemoryStick className="size-3.5" />
-                Worker details
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-2 max-h-[200px] overflow-y-auto">
-                {workerRates.map((w) => (
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-xs font-medium text-muted-foreground">
+              Coordinator memory
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="h-48">
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={coordMemSeries}>
+                <XAxis dataKey="ts" tickFormatter={(v) => new Date(v).toLocaleTimeString()} />
+                <YAxis domain={[0, 100]} />
+                <Tooltip labelFormatter={(v) => formatTime(v)} />
+                <Line type="monotone" dataKey="value" stroke="#38bdf8" dot={false} />
+              </LineChart>
+            </ResponsiveContainer>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-xs font-medium text-muted-foreground">
+              Prime mix (range)
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2">
+            {primeByForm.length === 0 && (
+              <div className="text-sm text-muted-foreground">No primes in range.</div>
+            )}
+            {primeByForm.map(([form, count]) => (
+              <div key={form} className="flex items-center justify-between text-sm">
+                <span className="capitalize">{form.replace(/_/g, " ")}</span>
+                <span className="tabular-nums font-medium">{numberWithCommas(count)}</span>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <Card className="lg:col-span-2">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-xs font-medium text-muted-foreground">
+              Recent logs
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="max-h-[360px] overflow-y-auto">
+            {logs.length === 0 ? (
+              <div className="text-sm text-muted-foreground">No logs in range.</div>
+            ) : (
+              <div className="space-y-2">
+                {logs.map((log) => (
                   <div
-                    key={w.worker_id}
-                    className="flex items-center justify-between text-xs"
+                    key={log.id}
+                    className="rounded-md border border-border/60 p-2 text-xs"
                   >
-                    <div className="flex items-center gap-2 min-w-0">
-                      <span className="font-mono truncate max-w-[100px]">
-                        {w.hostname || w.worker_id.slice(0, 8)}
-                      </span>
-                      <span className="text-muted-foreground truncate">
-                        {w.search_type}
-                      </span>
-                    </div>
-                    <div className="flex items-center gap-3 flex-shrink-0 tabular-nums">
-                      <span>{numberWithCommas(w.rate)} c/s</span>
-                      <span className="text-muted-foreground">
-                        {w.cores}c &middot; {w.cpu.toFixed(0)}%
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-medium">
+                        {log.level.toUpperCase()} · {log.component}
                       </span>
                       <span className="text-muted-foreground">
-                        {formatUptime(w.uptime_secs)}
+                        {relativeTime(log.ts)}
                       </span>
                     </div>
+                    <div className="text-muted-foreground">{log.message}</div>
+                    {log.worker_id && (
+                      <div className="text-muted-foreground">
+                        worker: {log.worker_id}
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>
-            </CardContent>
-          </Card>
-        </div>
-      )}
-
-      {/* Search progress & ETA */}
-      {searchEtas.length > 0 && (
-        <Card className="mb-6">
+            )}
+          </CardContent>
+        </Card>
+        <Card>
           <CardHeader className="pb-2">
-            <CardTitle className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
-              <HardDrive className="size-3.5" />
-              Search progress & ETA
+            <CardTitle className="text-xs font-medium text-muted-foreground">
+              Log levels
             </CardTitle>
           </CardHeader>
-          <CardContent>
-            <div className="space-y-3">
-              {searchEtas.map((s) => (
-                <div key={s.worker_id} className="space-y-1">
-                  <div className="flex items-center justify-between text-xs">
-                    <div className="flex items-center gap-2 min-w-0">
-                      <span className="font-medium text-foreground">
-                        {s.search_type}
-                      </span>
-                      <span className="text-muted-foreground truncate max-w-[300px]">
-                        {s.current}
-                      </span>
-                    </div>
-                    <div className="flex items-center gap-3 flex-shrink-0 tabular-nums text-muted-foreground">
-                      {s.pctDone !== null && (
-                        <span className="font-medium text-foreground">
-                          {s.pctDone.toFixed(1)}%
-                        </span>
-                      )}
-                      {s.eta && <span>ETA {s.eta}</span>}
-                      <span>{numberWithCommas(s.tested)} tested</span>
-                    </div>
-                  </div>
-                  {s.pctDone !== null && (
-                    <div className="h-1.5 bg-muted rounded-full overflow-hidden">
-                      <div
-                        className="h-full bg-primary rounded-full transition-all duration-1000"
-                        style={{ width: `${Math.min(100, s.pctDone)}%` }}
-                      />
-                    </div>
-                  )}
-                </div>
-              ))}
-            </div>
+          <CardContent className="space-y-2">
+            {logByLevel.length === 0 && (
+              <div className="text-sm text-muted-foreground">No logs in range.</div>
+            )}
+            {logByLevel.map(([level, count]) => (
+              <div key={level} className="flex items-center justify-between text-sm">
+                <span className="uppercase">{level}</span>
+                <span className="tabular-nums font-medium">{count}</span>
+              </div>
+            ))}
+            {loading && (
+              <div className="text-xs text-muted-foreground">Refreshing...</div>
+            )}
           </CardContent>
         </Card>
-      )}
-
-      {/* Empty state */}
-      {totalWorkers === 0 && (
-        <Card className="py-8 border-dashed">
-          <CardContent className="p-0 px-4 text-center text-muted-foreground text-sm">
-            No workers connected. Start a search to see performance metrics.
-          </CardContent>
-        </Card>
-      )}
+      </div>
     </>
   );
 }

@@ -1,0 +1,54 @@
+{
+  "channels": {
+    "stable": {
+      "version": "0.1.0",
+      "published_at": "2026-02-20T00:00:00Z",
+      "notes": "Initial public worker release channel",
+      "artifacts": [
+        {
+          "os": "linux",
+          "arch": "x86_64",
+          "url": "https://downloads.darkreach.example/worker/v0.1.0/darkreach-worker-linux-x86_64.tar.gz",
+          "sha256": "TODO_REPLACE_WITH_REAL_SHA256"
+        },
+        {
+          "os": "macos",
+          "arch": "aarch64",
+          "url": "https://downloads.darkreach.example/worker/v0.1.0/darkreach-worker-macos-aarch64.tar.gz",
+          "sha256": "TODO_REPLACE_WITH_REAL_SHA256"
+        },
+        {
+          "os": "windows",
+          "arch": "x86_64",
+          "url": "https://downloads.darkreach.example/worker/v0.1.0/darkreach-worker-windows-x86_64.zip",
+          "sha256": "TODO_REPLACE_WITH_REAL_SHA256"
+        }
+      ]
+    },
+    "beta": {
+      "version": "0.2.0-beta.1",
+      "published_at": "2026-02-20T00:00:00Z",
+      "notes": "Canary channel for staged rollout",
+      "artifacts": [
+        {
+          "os": "linux",
+          "arch": "x86_64",
+          "url": "https://downloads.darkreach.example/worker/v0.2.0-beta.1/darkreach-worker-linux-x86_64.tar.gz",
+          "sha256": "TODO_REPLACE_WITH_REAL_SHA256"
+        },
+        {
+          "os": "macos",
+          "arch": "aarch64",
+          "url": "https://downloads.darkreach.example/worker/v0.2.0-beta.1/darkreach-worker-macos-aarch64.tar.gz",
+          "sha256": "TODO_REPLACE_WITH_REAL_SHA256"
+        },
+        {
+          "os": "windows",
+          "arch": "x86_64",
+          "url": "https://downloads.darkreach.example/worker/v0.2.0-beta.1/darkreach-worker-windows-x86_64.zip",
+          "sha256": "TODO_REPLACE_WITH_REAL_SHA256"
+        }
+      ]
+    }
+  }
+}

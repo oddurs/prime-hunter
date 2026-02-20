@@ -17,6 +17,7 @@ Based on research into GIMPS, PrimeGrid, PFGW, LLR, mtsieve, and the current com
 | **Research** | Discovery strategy, publication pipeline, competitive analysis | [docs/roadmaps/research.md](docs/roadmaps/research.md) |
 | **Agents** | AI agent execution, orchestration, tools, budgets, automation | [docs/roadmaps/agents.md](docs/roadmaps/agents.md) |
 | **Projects** | Campaign management, orchestration, cost tracking, records | [docs/roadmaps/projects.md](docs/roadmaps/projects.md) |
+| **Public Compute** | Volunteer onboarding, release channels, validation, reputation | [docs/roadmaps/public-compute.md](docs/roadmaps/public-compute.md) |
 
 ---
 
@@ -25,6 +26,17 @@ Based on research into GIMPS, PrimeGrid, PFGW, LLR, mtsieve, and the current com
 Hardware scaling is gated on software milestones. **The single most impactful investment is GWNUM integration — worth more than $10K/mo in hardware.** Scale software before hardware.
 
 Details: [ops.md Phased Deployment](docs/roadmaps/ops.md#phased-deployment-plan), [server-setup.md](docs/server-setup.md)
+
+## Public Compute Track
+
+Competing with GIMPS/PrimeGrid on contributor experience requires a dedicated release and trust pipeline. This work is tracked separately from engine/server optimization:
+
+- Public worker packaging + auto-update channels
+- Quorum validation + host reputation for untrusted compute
+- Release canary/ramp/rollback controls
+- Volunteer engagement layer (credits, teams, challenges)
+
+Details: [docs/roadmaps/public-compute.md](docs/roadmaps/public-compute.md)
 
 ### Phase 1: Foundation ($53/mo — 1x Hetzner AX42, 8 cores)
 
