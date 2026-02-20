@@ -20,6 +20,7 @@ import { useTheme } from "@/hooks/use-theme";
 import { useBrowserNotifications } from "@/hooks/use-notifications";
 import { cn } from "@/lib/utils";
 import { relativeTime } from "@/lib/format";
+import { DarkReachLogo } from "@/components/darkreach-logo";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -108,6 +109,7 @@ export function AppHeader() {
       <div className="mx-auto flex w-full max-w-6xl items-center gap-6">
         {/* Logo */}
         <Link href="/" className="flex items-center gap-2 flex-shrink-0">
+          <DarkReachLogo size={22} className="text-[#bc8cff]" />
           <span className="font-semibold text-[var(--header-foreground)] tracking-tight text-sm">
             darkreach
           </span>
@@ -294,6 +296,7 @@ export function AppHeader() {
         <SheetContent side="left" className="w-64 p-0">
           <SheetHeader className="border-b px-4 py-3">
             <SheetTitle className="flex items-center gap-2">
+              <DarkReachLogo size={20} className="text-[#bc8cff]" />
               darkreach
             </SheetTitle>
           </SheetHeader>
