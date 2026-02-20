@@ -17,12 +17,15 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { SearchCard } from "@/components/search-card";
+import { SearchJobCard } from "@/components/search-job-card";
 import { NewSearchDialog } from "@/components/new-search-dialog";
-import type { ManagedSearch } from "@/hooks/use-websocket";
+import type { ManagedSearch, SearchJob } from "@/hooks/use-websocket";
 import Link from "next/link";
 import { API_BASE, numberWithCommas } from "@/lib/format";
-import { Activity, CheckCircle2, Hash, Server, XCircle } from "lucide-react";
+import { Activity, CheckCircle2, Database, Hash, Server, XCircle } from "lucide-react";
 import { ViewHeader } from "@/components/view-header";
+import { StatCard } from "@/components/stat-card";
+import { EmptyState } from "@/components/empty-state";
 
 function sortSearches(searches: ManagedSearch[]): ManagedSearch[] {
   return [...searches].sort((a, b) => {
@@ -30,6 +33,24 @@ function sortSearches(searches: ManagedSearch[]): ManagedSearch[] {
     const bRunning = b.status === "running" ? 0 : 1;
     if (aRunning !== bRunning) return aRunning - bRunning;
     return new Date(b.started_at).getTime() - new Date(a.started_at).getTime();
+  });
+}
+
+/** Sort PG search jobs: running first, then paused, then by ID descending. */
+function sortJobs(jobs: SearchJob[]): SearchJob[] {
+  const statusOrder: Record<string, number> = {
+    running: 0,
+    paused: 1,
+    pending: 2,
+    completed: 3,
+    cancelled: 4,
+    failed: 5,
+  };
+  return [...jobs].sort((a, b) => {
+    const aOrder = statusOrder[a.status] ?? 9;
+    const bOrder = statusOrder[b.status] ?? 9;
+    if (aOrder !== bOrder) return aOrder - bOrder;
+    return b.id - a.id;
   });
 }
 
@@ -50,7 +71,7 @@ function formatActiveCheckpoint(
 }
 
 export default function SearchesPage() {
-  const { searches, status, fleet } = useWs();
+  const { searches, searchJobs, status, fleet } = useWs();
   const [newSearchOpen, setNewSearchOpen] = useState(false);
   const [stoppingCoordinator, setStoppingCoordinator] = useState(false);
   const [nowMs, setNowMs] = useState(() => Date.now());
@@ -83,6 +104,11 @@ export default function SearchesPage() {
   const totalTested = useMemo(
     () => searches.reduce((sum, s) => sum + (s.tested ?? 0), 0),
     [searches]
+  );
+  const sortedJobs = useMemo(() => sortJobs(searchJobs), [searchJobs]);
+  const jobsRunning = useMemo(
+    () => searchJobs.filter((j) => j.status === "running" || j.status === "paused").length,
+    [searchJobs]
   );
   const staleWorkers = useMemo(
     () => workers.filter((w) => w.last_heartbeat_secs_ago >= 60).length,
@@ -247,56 +273,19 @@ export default function SearchesPage() {
               <TabsTrigger value="running">
                 Running{runningCount > 0 ? ` (${runningCount})` : ""}
               </TabsTrigger>
+              <TabsTrigger value="jobs">
+                Jobs{searchJobs.length > 0 ? ` (${searchJobs.length})` : ""}
+              </TabsTrigger>
             </TabsList>
           }
         />
 
         <div className="grid grid-cols-2 lg:grid-cols-5 gap-3 mb-4">
-          <Card className="py-3">
-            <CardContent className="px-4 p-0 flex items-center justify-between">
-              <div>
-                <div className="text-xs font-medium text-muted-foreground">Running</div>
-                <div className="text-xl font-semibold tabular-nums">{runningCount}</div>
-              </div>
-              <Activity className="size-4 text-primary" />
-            </CardContent>
-          </Card>
-          <Card className="py-3">
-            <CardContent className="px-4 p-0 flex items-center justify-between">
-              <div>
-                <div className="text-xs font-medium text-muted-foreground">Completed</div>
-                <div className="text-xl font-semibold tabular-nums">{completedCount}</div>
-              </div>
-              <CheckCircle2 className="size-4 text-green-500" />
-            </CardContent>
-          </Card>
-          <Card className="py-3">
-            <CardContent className="px-4 p-0 flex items-center justify-between">
-              <div>
-                <div className="text-xs font-medium text-muted-foreground">Failed</div>
-                <div className="text-xl font-semibold tabular-nums">{failedCount}</div>
-              </div>
-              <XCircle className="size-4 text-red-500" />
-            </CardContent>
-          </Card>
-          <Card className="py-3">
-            <CardContent className="px-4 p-0 flex items-center justify-between">
-              <div>
-                <div className="text-xs font-medium text-muted-foreground">Primes found</div>
-                <div className="text-xl font-semibold tabular-nums">{numberWithCommas(totalFound)}</div>
-              </div>
-              <Hash className="size-4 text-amber-500" />
-            </CardContent>
-          </Card>
-          <Card className="py-3">
-            <CardContent className="px-4 p-0 flex items-center justify-between">
-              <div>
-                <div className="text-xs font-medium text-muted-foreground">Tested</div>
-                <div className="text-xl font-semibold tabular-nums">{numberWithCommas(totalTested)}</div>
-              </div>
-              <Server className="size-4 text-muted-foreground" />
-            </CardContent>
-          </Card>
+          <StatCard label="Running" value={runningCount} icon={<Activity className="size-4 text-primary" />} />
+          <StatCard label="Completed" value={completedCount} icon={<CheckCircle2 className="size-4 text-green-500" />} />
+          <StatCard label="Failed" value={failedCount} icon={<XCircle className="size-4 text-red-500" />} />
+          <StatCard label="Primes found" value={numberWithCommas(totalFound)} icon={<Hash className="size-4 text-amber-500" />} />
+          <StatCard label="Tested" value={numberWithCommas(totalTested)} icon={<Server className="size-4 text-muted-foreground" />} />
         </div>
 
         <TabsContent value="running" className="mt-4">
@@ -372,11 +361,7 @@ export default function SearchesPage() {
             </div>
           )}
           {sortedRunning.length === 0 && !hasCoordinatorActive ? (
-            <Card className="py-8 border-dashed">
-              <CardContent className="p-0 px-4 text-center text-muted-foreground text-sm">
-                No running searches. Click &ldquo;New Search&rdquo; to start one.
-              </CardContent>
-            </Card>
+            <EmptyState message='No running searches. Click "New Search" to start one.' />
           ) : (
             <div className="space-y-2">
               {coordinatorSearchCard}
@@ -389,16 +374,34 @@ export default function SearchesPage() {
 
         <TabsContent value="all" className="mt-4">
           {sorted.length === 0 && !hasCoordinatorActive ? (
-            <Card className="py-8 border-dashed">
-              <CardContent className="p-0 px-4 text-center text-muted-foreground text-sm">
-                No searches yet. Click &ldquo;New Search&rdquo; to start hunting primes.
-              </CardContent>
-            </Card>
+            <EmptyState message='No searches yet. Click "New Search" to start hunting primes.' />
           ) : (
             <div className="space-y-2">
               {coordinatorSearchCard}
               {sorted.map((s) => (
                 <SearchCard key={s.id} search={s} />
+              ))}
+            </div>
+          )}
+        </TabsContent>
+
+        <TabsContent value="jobs" className="mt-4">
+          {/* Summary stats for PG search jobs */}
+          {searchJobs.length > 0 && (
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
+              <StatCard label="Active Jobs" value={jobsRunning} icon={<Database className="size-4 text-primary" />} />
+              <StatCard label="Total Jobs" value={searchJobs.length} icon={<Database className="size-4 text-muted-foreground" />} />
+              <StatCard label="Found" value={numberWithCommas(searchJobs.reduce((s, j) => s + j.total_found, 0))} icon={<Hash className="size-4 text-amber-500" />} />
+              <StatCard label="Tested" value={numberWithCommas(searchJobs.reduce((s, j) => s + j.total_tested, 0))} icon={<Server className="size-4 text-muted-foreground" />} />
+            </div>
+          )}
+
+          {sortedJobs.length === 0 ? (
+            <EmptyState message="No search jobs. Jobs are created by the projects system or via the API." />
+          ) : (
+            <div className="space-y-2">
+              {sortedJobs.map((j) => (
+                <SearchJobCard key={j.id} job={j} />
               ))}
             </div>
           )}

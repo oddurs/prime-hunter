@@ -15,7 +15,7 @@ type Theme = "light" | "dark";
 export function useTheme() {
   const [theme, setThemeState] = useState<Theme>(() => {
     if (typeof window === "undefined") return "dark";
-    const stored = localStorage.getItem("primehunt-theme");
+    const stored = localStorage.getItem("darkreach-theme");
     return stored === "light" || stored === "dark" ? stored : "dark";
   });
 
@@ -25,7 +25,7 @@ export function useTheme() {
 
   useEffect(() => {
     document.documentElement.className = theme;
-    localStorage.setItem("primehunt-theme", theme);
+    localStorage.setItem("darkreach-theme", theme);
   }, [theme]);
 
   const toggleTheme = useCallback(() => {

@@ -1,4 +1,4 @@
-# primehunt
+# darkreach
 
 CLI tool for hunting special-form prime numbers using GMP for arbitrary-precision arithmetic and rayon for parallel search.
 
@@ -28,7 +28,7 @@ brew install gmp
 cargo build --release
 ```
 
-The binary will be at `target/release/primehunt`.
+The binary will be at `target/release/darkreach`.
 
 ## Local Dev Stack
 
@@ -46,12 +46,12 @@ Use production dashboard data with local UI:
 ./scripts/dev.sh --remote https://your-prod-dashboard.example.com
 ```
 
-This runs only local frontend on `:3000` and proxies `/api` + `/ws` to the remote dashboard.
+This runs only local frontend on `:3001` and proxies `/api` + `/ws` to the remote dashboard.
 
 Optional detached process helpers:
 
 ```bash
-./scripts/dev-up.sh      # start backend (:8080) + frontend (:3000)
+./scripts/dev-up.sh      # start backend (:7001) + frontend (:3001)
 ./scripts/dev-status.sh  # check process + HTTP health
 ./scripts/dev-down.sh    # stop both
 ```
@@ -73,7 +73,7 @@ This runs local Next.js on `:3000`, proxies `/api/*` to the remote host (avoids 
 Search for primes of the form n! ± 1:
 
 ```bash
-primehunt factorial --start 1000 --end 50000
+darkreach factorial --start 1000 --end 50000
 ```
 
 ### Palindromic primes
@@ -81,7 +81,7 @@ primehunt factorial --start 1000 --end 50000
 Search for palindromic primes in a given base:
 
 ```bash
-primehunt palindromic --base 10 --min-digits 50 --max-digits 200
+darkreach palindromic --base 10 --min-digits 50 --max-digits 200
 ```
 
 Even-digit palindromes are automatically skipped (they're divisible by base+1).
@@ -92,17 +92,17 @@ Search for primes of the form k·b^n ± 1:
 
 ```bash
 # Proth-style: 3·2^n + 1
-primehunt kbn --k 3 --base 2 --min-n 100000 --max-n 500000
+darkreach kbn --k 3 --base 2 --min-n 100000 --max-n 500000
 
 # Mersenne-like: 1·2^n - 1
-primehunt kbn --k 1 --base 2 --min-n 1000 --max-n 100000
+darkreach kbn --k 1 --base 2 --min-n 1000 --max-n 100000
 ```
 
 ### Options
 
 ```
---db <path>          SQLite database path (default: primehunt.db)
---checkpoint <path>  Checkpoint file path (default: primehunt.checkpoint)
+--db <path>          SQLite database path (default: darkreach.db)
+--checkpoint <path>  Checkpoint file path (default: darkreach.checkpoint)
 ```
 
 ## Features
@@ -129,5 +129,5 @@ CREATE TABLE primes (
 Query your results:
 
 ```bash
-sqlite3 primehunt.db "SELECT expression, digits FROM primes ORDER BY digits DESC LIMIT 10;"
+sqlite3 darkreach.db "SELECT expression, digits FROM primes ORDER BY digits DESC LIMIT 10;"
 ```

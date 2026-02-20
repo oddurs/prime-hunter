@@ -18,12 +18,15 @@ import { AddServerDialog } from "@/components/add-server-dialog";
 import { NewSearchDialog } from "@/components/new-search-dialog";
 import { SearchCard } from "@/components/search-card";
 import { MetricsBar } from "@/components/metrics-bar";
+import { WorkerDetailDialog } from "@/components/worker-detail-dialog";
 import {
   Card,
   CardContent,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { StatCard } from "@/components/stat-card";
+import { EmptyState } from "@/components/empty-state";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -42,13 +45,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import { API_BASE, formatTime, formatUptime, numberWithCommas } from "@/lib/format";
+import { API_BASE, formatTime, numberWithCommas } from "@/lib/format";
 import { ViewHeader } from "@/components/view-header";
 import type { Deployment, WorkerStatus } from "@/hooks/use-websocket";
 
@@ -262,56 +259,11 @@ export default function FleetPage() {
       />
 
       <div className="grid grid-cols-2 lg:grid-cols-5 gap-3 mb-5">
-        <Card className="rounded-md shadow-none">
-          <CardHeader className="pb-1">
-            <CardTitle className="text-xs font-medium text-muted-foreground">
-              Workers
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="text-2xl font-semibold tabular-nums">
-            {numberWithCommas(fleet?.total_workers ?? 0)}
-          </CardContent>
-        </Card>
-        <Card className="rounded-md shadow-none">
-          <CardHeader className="pb-1">
-            <CardTitle className="text-xs font-medium text-muted-foreground">
-              Cores
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="text-2xl font-semibold tabular-nums">
-            {numberWithCommas(fleet?.total_cores ?? 0)}
-          </CardContent>
-        </Card>
-        <Card className="rounded-md shadow-none">
-          <CardHeader className="pb-1">
-            <CardTitle className="text-xs font-medium text-muted-foreground">
-              Fleet Throughput
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="text-2xl font-semibold tabular-nums">
-            {numberWithCommas(Math.round(fleetRate))}/s
-          </CardContent>
-        </Card>
-        <Card className="rounded-md shadow-none">
-          <CardHeader className="pb-1">
-            <CardTitle className="text-xs font-medium text-muted-foreground">
-              Tested
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="text-2xl font-semibold tabular-nums">
-            {numberWithCommas(fleet?.total_tested ?? 0)}
-          </CardContent>
-        </Card>
-        <Card className="rounded-md shadow-none">
-          <CardHeader className="pb-1">
-            <CardTitle className="text-xs font-medium text-muted-foreground">
-              Found
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="text-2xl font-semibold tabular-nums">
-            {numberWithCommas(fleet?.total_found ?? 0)}
-          </CardContent>
-        </Card>
+        <StatCard label="Workers" value={numberWithCommas(fleet?.total_workers ?? 0)} />
+        <StatCard label="Cores" value={numberWithCommas(fleet?.total_cores ?? 0)} />
+        <StatCard label="Fleet Throughput" value={`${numberWithCommas(Math.round(fleetRate))}/s`} />
+        <StatCard label="Tested" value={numberWithCommas(fleet?.total_tested ?? 0)} />
+        <StatCard label="Found" value={numberWithCommas(fleet?.total_found ?? 0)} />
       </div>
 
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-5 mb-5">
@@ -359,9 +311,7 @@ export default function FleetPage() {
             </div>
 
             {filteredWorkers.length === 0 ? (
-              <div className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">
-                No workers match current filters.
-              </div>
+              <EmptyState message="No workers match current filters." />
             ) : (
               <div className="space-y-2">
                 {filteredWorkers.map((worker) => {
@@ -494,9 +444,7 @@ export default function FleetPage() {
         </CardHeader>
         <CardContent>
           {deployments.length === 0 ? (
-            <div className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">
-              No deployments yet.
-            </div>
+            <EmptyState message="No deployments yet." />
           ) : (
             <Table>
               <TableHeader>
@@ -589,9 +537,7 @@ export default function FleetPage() {
         </CardHeader>
         <CardContent>
           {searches.length === 0 ? (
-            <div className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">
-              No searches in queue.
-            </div>
+            <EmptyState message="No searches in queue." />
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
               {[...searches]
@@ -645,7 +591,8 @@ export default function FleetPage() {
         onCreated={() => toast.success("Search started")}
       />
 
-      <Dialog
+      <WorkerDetailDialog
+        worker={selectedWorker}
         open={workerDetailOpen}
         onOpenChange={(open) => {
           if (!open) {
@@ -653,110 +600,7 @@ export default function FleetPage() {
             setSelectedWorker(null);
           }
         }}
-      >
-        <DialogContent className="max-w-xl">
-          <DialogHeader>
-            <DialogTitle>{selectedWorker?.hostname ?? "Worker"}</DialogTitle>
-          </DialogHeader>
-          {selectedWorker && (() => {
-            const params = parseJsonObject(selectedWorker.search_params);
-            const checkpoint = selectedWorker.checkpoint
-              ? parseJsonObject(selectedWorker.checkpoint)
-              : null;
-            const throughput =
-              selectedWorker.uptime_secs > 0
-                ? (selectedWorker.tested / selectedWorker.uptime_secs).toFixed(1)
-                : "0.0";
-            return (
-              <div className="space-y-4">
-                <div className="grid grid-cols-2 gap-4 text-sm">
-                  <div>
-                    <div className="text-xs font-medium text-muted-foreground mb-1">
-                      Worker ID
-                    </div>
-                    <span className="font-mono text-xs">{selectedWorker.worker_id}</span>
-                  </div>
-                  <div>
-                    <div className="text-xs font-medium text-muted-foreground mb-1">
-                      Search Type
-                    </div>
-                    <Badge variant="outline">{selectedWorker.search_type}</Badge>
-                  </div>
-                  <div>
-                    <div className="text-xs font-medium text-muted-foreground mb-1">
-                      Uptime
-                    </div>
-                    <span>{formatUptime(selectedWorker.uptime_secs)}</span>
-                  </div>
-                  <div>
-                    <div className="text-xs font-medium text-muted-foreground mb-1">
-                      Throughput
-                    </div>
-                    <span>{throughput}/s</span>
-                  </div>
-                  <div>
-                    <div className="text-xs font-medium text-muted-foreground mb-1">
-                      Tested
-                    </div>
-                    <span className="font-semibold">{numberWithCommas(selectedWorker.tested)}</span>
-                  </div>
-                  <div>
-                    <div className="text-xs font-medium text-muted-foreground mb-1">
-                      Found
-                    </div>
-                    <span className="font-semibold">{selectedWorker.found}</span>
-                  </div>
-                </div>
-                {selectedWorker.current && (
-                  <div>
-                    <div className="text-xs font-medium text-muted-foreground mb-1">
-                      Current candidate
-                    </div>
-                    <div className="font-mono text-xs break-all bg-muted rounded-md p-2">
-                      {selectedWorker.current}
-                    </div>
-                  </div>
-                )}
-                {selectedWorker.metrics && (
-                  <div className="space-y-2">
-                    <MetricsBar label="CPU" percent={selectedWorker.metrics.cpu_usage_percent} />
-                    <MetricsBar
-                      label="Memory"
-                      percent={selectedWorker.metrics.memory_usage_percent}
-                      detail={`${selectedWorker.metrics.memory_used_gb} / ${selectedWorker.metrics.memory_total_gb} GB`}
-                    />
-                    <MetricsBar
-                      label="Disk"
-                      percent={selectedWorker.metrics.disk_usage_percent}
-                      detail={`${selectedWorker.metrics.disk_used_gb} / ${selectedWorker.metrics.disk_total_gb} GB`}
-                    />
-                  </div>
-                )}
-                {params && (
-                  <div>
-                    <div className="text-xs font-medium text-muted-foreground mb-1">
-                      Search parameters
-                    </div>
-                    <pre className="bg-muted rounded-md p-3 text-xs overflow-auto max-h-40">
-                      {JSON.stringify(params, null, 2)}
-                    </pre>
-                  </div>
-                )}
-                {checkpoint && (
-                  <div>
-                    <div className="text-xs font-medium text-muted-foreground mb-1">
-                      Checkpoint
-                    </div>
-                    <pre className="bg-muted rounded-md p-3 text-xs overflow-auto max-h-40">
-                      {JSON.stringify(checkpoint, null, 2)}
-                    </pre>
-                  </div>
-                )}
-              </div>
-            );
-          })()}
-        </DialogContent>
-      </Dialog>
+      />
     </>
   );
 }

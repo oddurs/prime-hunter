@@ -3,23 +3,29 @@
 /**
  * @module app-header
  *
- * Top navigation bar for the dashboard. Contains the primehunt logo,
+ * Top navigation bar for the dashboard. Contains the darkreach logo,
  * page links (Dashboard, Browse, Searches, Fleet, Docs, Agents),
- * a connection status indicator, theme toggle (dark/light), notification
- * toggle, and mobile hamburger menu. Highlights the current route.
+ * a connection status indicator, notification bell with in-app notifications,
+ * theme toggle (dark/light), user avatar dropdown, and mobile hamburger menu.
+ * Highlights the current route.
  */
 
-import { useState } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Bell, BellOff, Menu, Moon, Sun } from "lucide-react";
+import { Bell, BellOff, LogOut, Menu, Moon, Sun } from "lucide-react";
 import { useWs } from "@/contexts/websocket-context";
+import { useAuth } from "@/contexts/auth-context";
 import { useTheme } from "@/hooks/use-theme";
 import { useBrowserNotifications } from "@/hooks/use-notifications";
 import { cn } from "@/lib/utils";
+import { relativeTime } from "@/lib/format";
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Switch } from "@/components/ui/switch";
@@ -33,10 +39,48 @@ import {
 
 export function AppHeader() {
   const pathname = usePathname();
-  const { connected, searches, agentTasks } = useWs();
+  const { connected, searches, agentTasks, notifications } = useWs();
+  const { user, signOut } = useAuth();
   const { theme, toggleTheme } = useTheme();
   const { supported, permission, enabled, setEnabled } = useBrowserNotifications();
   const [mobileOpen, setMobileOpen] = useState(false);
+
+  // Track when the user last opened the notification dropdown to compute unread count
+  const lastSeenRef = useRef<number>(0);
+  const [unreadCount, setUnreadCount] = useState(0);
+
+  // Recompute unread count whenever notifications change
+  useEffect(() => {
+    const count = notifications.filter(
+      (n) => n.timestamp_ms > lastSeenRef.current
+    ).length;
+    setUnreadCount(count);
+  }, [notifications]);
+
+  // When the notification dropdown closes, mark all as seen
+  const handleNotifOpenChange = useCallback(
+    (open: boolean) => {
+      if (!open) {
+        if (notifications.length > 0) {
+          lastSeenRef.current = Math.max(
+            ...notifications.map((n) => n.timestamp_ms)
+          );
+        }
+        setUnreadCount(0);
+      }
+    },
+    [notifications]
+  );
+
+  // User initials for avatar
+  const initials = user?.email
+    ? user.email
+        .split("@")[0]
+        .split(/[._-]/)
+        .slice(0, 2)
+        .map((s) => s[0]?.toUpperCase() ?? "")
+        .join("")
+    : "?";
 
   const runningCount = searches.filter((s) => s.status === "running").length;
   const activeAgentCount = agentTasks.filter(
@@ -51,6 +95,7 @@ export function AppHeader() {
     { title: "Agents", href: "/agents", count: activeAgentCount || undefined },
     { title: "Fleet", href: "/fleet", count: undefined },
     { title: "Browse", href: "/browse", count: undefined },
+    { title: "Leaderboard", href: "/leaderboard", count: undefined },
     { title: "Docs", href: "/docs", count: undefined },
   ];
 
@@ -63,11 +108,8 @@ export function AppHeader() {
       <div className="mx-auto flex w-full max-w-6xl items-center gap-6">
         {/* Logo */}
         <Link href="/" className="flex items-center gap-2 flex-shrink-0">
-          <div className="flex size-7 items-center justify-center rounded-md bg-[#f78166] text-white text-sm font-bold">
-            &Sigma;
-          </div>
-          <span className="font-semibold text-[var(--header-foreground)] tracking-tight hidden sm:inline">
-            sigma
+          <span className="font-semibold text-[var(--header-foreground)] tracking-tight text-sm">
+            darkreach
           </span>
         </Link>
 
@@ -109,43 +151,83 @@ export function AppHeader() {
             )}
             title={connected ? "Connected" : "Disconnected"}
           />
-          {supported && (
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <button
-                  className="flex size-8 items-center justify-center rounded-md text-[var(--header-foreground)]/60 hover:text-[var(--header-foreground)] hover:bg-white/[0.12] transition-colors"
-                  aria-label="Notification settings"
-                >
-                  {enabled ? (
-                    <Bell className="size-4" />
-                  ) : (
-                    <BellOff className="size-4" />
-                  )}
-                </button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-56 p-3">
-                <div className="flex items-center justify-between gap-2">
-                  <label
-                    htmlFor="notif-toggle"
-                    className="text-sm font-medium leading-none"
-                  >
-                    Browser notifications
-                  </label>
-                  <Switch
-                    id="notif-toggle"
-                    checked={enabled}
-                    onCheckedChange={setEnabled}
-                    disabled={permission === "denied"}
-                  />
-                </div>
-                {permission === "denied" && (
-                  <p className="text-xs text-muted-foreground mt-2">
-                    Blocked by browser. Allow in site settings.
-                  </p>
+          {/* Notification bell with in-app notifications */}
+          <DropdownMenu onOpenChange={handleNotifOpenChange}>
+            <DropdownMenuTrigger asChild>
+              <button
+                className="relative flex size-8 items-center justify-center rounded-md text-[var(--header-foreground)]/60 hover:text-[var(--header-foreground)] hover:bg-white/[0.12] transition-colors"
+                aria-label="Notifications"
+              >
+                {enabled ? (
+                  <Bell className="size-4" />
+                ) : (
+                  <BellOff className="size-4" />
                 )}
-              </DropdownMenuContent>
-            </DropdownMenu>
-          )}
+                {unreadCount > 0 && (
+                  <span className="absolute -top-0.5 -right-0.5 flex size-4 items-center justify-center rounded-full bg-[#f78166] text-[10px] font-bold text-white leading-none">
+                    {unreadCount > 9 ? "9+" : unreadCount}
+                  </span>
+                )}
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-80">
+              <DropdownMenuLabel className="flex items-center justify-between">
+                Notifications
+                {supported && (
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-normal text-muted-foreground">
+                      Browser
+                    </span>
+                    <Switch
+                      id="notif-toggle"
+                      checked={enabled}
+                      onCheckedChange={setEnabled}
+                      disabled={permission === "denied"}
+                      className="scale-75"
+                    />
+                  </div>
+                )}
+              </DropdownMenuLabel>
+              {permission === "denied" && (
+                <p className="px-2 pb-1 text-xs text-muted-foreground">
+                  Browser notifications blocked. Allow in site settings.
+                </p>
+              )}
+              <DropdownMenuSeparator />
+              {notifications.length === 0 ? (
+                <div className="px-2 py-6 text-center text-sm text-muted-foreground">
+                  No notifications yet
+                </div>
+              ) : (
+                <div className="max-h-64 overflow-y-auto">
+                  {notifications.slice(0, 20).map((n) => (
+                    <div
+                      key={n.id}
+                      className="flex flex-col gap-0.5 px-2 py-2 text-sm border-b last:border-0 border-border/50"
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <span className="font-medium leading-tight">
+                          {n.title}
+                        </span>
+                        <span className="text-[11px] text-muted-foreground whitespace-nowrap tabular-nums">
+                          {relativeTime(
+                            new Date(n.timestamp_ms).toISOString()
+                          )}
+                        </span>
+                      </div>
+                      {n.details.length > 0 && (
+                        <span className="text-xs text-muted-foreground leading-snug truncate">
+                          {n.details[0]}
+                        </span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </DropdownMenuContent>
+          </DropdownMenu>
+
+          {/* Theme toggle */}
           <button
             onClick={toggleTheme}
             className="flex size-8 items-center justify-center rounded-md text-[var(--header-foreground)]/60 hover:text-[var(--header-foreground)] hover:bg-white/[0.12] transition-colors"
@@ -161,6 +243,40 @@ export function AppHeader() {
               <Moon className="size-4" />
             )}
           </button>
+
+          {/* User dropdown */}
+          {user && (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button
+                  className="flex size-7 items-center justify-center rounded-full bg-white/[0.15] text-[11px] font-semibold text-[var(--header-foreground)] hover:bg-white/[0.25] transition-colors"
+                  aria-label="User menu"
+                >
+                  {initials}
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-56">
+                <DropdownMenuLabel className="font-normal">
+                  <div className="flex flex-col gap-1">
+                    <p className="text-sm font-medium leading-none">
+                      {user.email?.split("@")[0] ?? "User"}
+                    </p>
+                    <p className="text-xs text-muted-foreground leading-none">
+                      {user.email}
+                    </p>
+                  </div>
+                </DropdownMenuLabel>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem
+                  onClick={() => signOut()}
+                  className="cursor-pointer"
+                >
+                  <LogOut className="size-4" />
+                  Sign out
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )}
 
           {/* Mobile hamburger */}
           <button
@@ -178,10 +294,7 @@ export function AppHeader() {
         <SheetContent side="left" className="w-64 p-0">
           <SheetHeader className="border-b px-4 py-3">
             <SheetTitle className="flex items-center gap-2">
-              <div className="flex size-6 items-center justify-center rounded-md bg-[#f78166] text-white text-xs font-bold">
-                &Sigma;
-              </div>
-              sigma
+              darkreach
             </SheetTitle>
           </SheetHeader>
           <nav className="flex flex-col py-2">
@@ -209,6 +322,30 @@ export function AppHeader() {
               );
             })}
           </nav>
+          {user && (
+            <div className="mt-auto border-t px-4 py-3">
+              <div className="flex items-center gap-3">
+                <div className="flex size-8 items-center justify-center rounded-full bg-muted text-xs font-semibold">
+                  {initials}
+                </div>
+                <div className="flex flex-col min-w-0">
+                  <span className="text-sm font-medium truncate">
+                    {user.email?.split("@")[0] ?? "User"}
+                  </span>
+                  <span className="text-xs text-muted-foreground truncate">
+                    {user.email}
+                  </span>
+                </div>
+              </div>
+              <button
+                onClick={() => signOut()}
+                className="mt-3 flex w-full items-center gap-2 rounded-md px-2 py-2 text-sm text-muted-foreground hover:text-foreground hover:bg-accent/50 transition-colors"
+              >
+                <LogOut className="size-4" />
+                Sign out
+              </button>
+            </div>
+          )}
         </SheetContent>
       </Sheet>
     </header>

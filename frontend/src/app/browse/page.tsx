@@ -26,22 +26,16 @@ import {
   getCoreRowModel,
   useReactTable,
 } from "@tanstack/react-table";
-import { CheckCircle2, Clock, ExternalLink, RefreshCw, Loader2 } from "lucide-react";
-import { toast } from "sonner";
+import { CheckCircle2, Clock } from "lucide-react";
 import { usePrimes, type PrimeFilter, type PrimeRecord } from "@/hooks/use-primes";
 import { useStats } from "@/hooks/use-stats";
 import { API_BASE, formToSlug, formatTime, numberWithCommas } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { ViewHeader } from "@/components/view-header";
+import { PrimeDetailDialog } from "@/components/prime-detail-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
@@ -114,7 +108,6 @@ export default function BrowsePage() {
   const [detailOpen, setDetailOpen] = useState(false);
   const [pendingPrimeId, setPendingPrimeId] = useState<number | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
-  const [verifying, setVerifying] = useState(false);
 
   const offset = primes.offset;
   const total = primes.total;
@@ -292,34 +285,6 @@ export default function BrowsePage() {
     }
   }
 
-  const handleVerify = useCallback(async () => {
-    if (!selectedPrime) return;
-    setVerifying(true);
-    try {
-      const res = await fetch(
-        `${API_BASE}/api/primes/${selectedPrime.id}/verify`,
-        { method: "POST" }
-      );
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.error || `HTTP ${res.status}`);
-      }
-      if (data.result === "verified") {
-        toast.success(`Verified: ${data.method} (Tier ${data.tier})`);
-      } else if (data.result === "failed") {
-        toast.error(`Verification failed: ${data.reason}`);
-      } else if (data.result === "skipped") {
-        toast.info(`Verification skipped: ${data.reason}`);
-      }
-    } catch (error) {
-      const message =
-        error instanceof Error ? error.message : "Verification request failed";
-      toast.error(message);
-    } finally {
-      setVerifying(false);
-    }
-  }, [selectedPrime]);
-
   function exportData(format: "csv" | "json") {
     if (digitsError) return;
     const params = new URLSearchParams();
@@ -434,15 +399,6 @@ export default function BrowsePage() {
     setColumnSizing({});
     setDensity("comfortable");
     setWrapExpressions(false);
-  }
-
-  let parsedSearchParams: Record<string, unknown> | null = null;
-  if (selectedPrime?.search_params) {
-    try {
-      parsedSearchParams = JSON.parse(selectedPrime.search_params);
-    } catch {
-      // leave as null
-    }
   }
 
   return (
@@ -736,120 +692,13 @@ export default function BrowsePage() {
         </div>
       </div>
 
-      <Dialog open={detailOpen} onOpenChange={handleDetailClose}>
-        <DialogContent className="max-w-lg">
-          <DialogHeader>
-            <DialogTitle className="font-mono text-primary break-all">
-              {detailLoading ? "Loading..." : (selectedPrime?.expression ?? "Prime detail")}
-            </DialogTitle>
-          </DialogHeader>
-          {detailLoading && (
-            <p className="text-sm text-muted-foreground">Loading prime details...</p>
-          )}
-          {!detailLoading && selectedPrime && (
-            <div className="space-y-4">
-              <div className="grid grid-cols-2 gap-4 text-sm">
-                <div>
-                  <div className="text-xs font-medium text-muted-foreground mb-1">
-                    Form
-                  </div>
-                  <Badge variant="outline">{selectedPrime.form}</Badge>
-                </div>
-                <div>
-                  <div className="text-xs font-medium text-muted-foreground mb-1">
-                    Digits
-                  </div>
-                  <span className="font-semibold">
-                    {numberWithCommas(selectedPrime.digits)}
-                  </span>
-                </div>
-                <div>
-                  <div className="text-xs font-medium text-muted-foreground mb-1">
-                    Proof
-                  </div>
-                  <Badge variant="outline">{selectedPrime.proof_method}</Badge>
-                </div>
-                <div>
-                  <div className="text-xs font-medium text-muted-foreground mb-1">
-                    Verification
-                  </div>
-                  {selectedPrime.verified ? (
-                    <span className="inline-flex items-center gap-1 text-green-600 dark:text-green-400 font-medium">
-                      <CheckCircle2 className="size-3.5" />
-                      Tier {selectedPrime.verification_tier}
-                    </span>
-                  ) : (
-                    <span className="inline-flex items-center gap-1 text-muted-foreground">
-                      <Clock className="size-3.5" />
-                      Pending
-                    </span>
-                  )}
-                </div>
-                <div className="col-span-2">
-                  <div className="text-xs font-medium text-muted-foreground mb-1">
-                    Found at
-                  </div>
-                  <span>{formatTime(selectedPrime.found_at)}</span>
-                </div>
-              </div>
-              {selectedPrime.verified && selectedPrime.verification_method && (
-                <div>
-                  <div className="text-xs font-medium text-muted-foreground mb-1">
-                    Verification details
-                  </div>
-                  <div className="bg-muted rounded-md p-3 text-xs space-y-1">
-                    <div><span className="text-muted-foreground">Method:</span> {selectedPrime.verification_method}</div>
-                    {selectedPrime.verified_at && (
-                      <div><span className="text-muted-foreground">Verified at:</span> {formatTime(selectedPrime.verified_at)}</div>
-                    )}
-                  </div>
-                </div>
-              )}
-              {parsedSearchParams && (
-                <div>
-                  <div className="text-xs font-medium text-muted-foreground mb-1">
-                    Search parameters
-                  </div>
-                  <pre className="bg-muted rounded-md p-3 text-xs overflow-auto max-h-48">
-                    {JSON.stringify(parsedSearchParams, null, 2)}
-                  </pre>
-                </div>
-              )}
-              {selectedPrime.search_params && !parsedSearchParams && (
-                <div>
-                  <div className="text-xs font-medium text-muted-foreground mb-1">
-                    Search parameters
-                  </div>
-                  <pre className="bg-muted rounded-md p-3 text-xs overflow-auto max-h-48">
-                    {selectedPrime.search_params}
-                  </pre>
-                </div>
-              )}
-              <div className="flex items-center gap-2 pt-2 border-t">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={handleVerify}
-                  disabled={verifying}
-                >
-                  {verifying ? (
-                    <Loader2 className="size-3.5 mr-1 animate-spin" />
-                  ) : (
-                    <RefreshCw className="size-3.5 mr-1" />
-                  )}
-                  {verifying ? "Verifying..." : "Re-verify"}
-                </Button>
-                <Button variant="outline" size="sm" asChild>
-                  <Link href={`/prime/?id=${selectedPrime.id}`}>
-                    <ExternalLink className="size-3.5 mr-1" />
-                    Permalink
-                  </Link>
-                </Button>
-              </div>
-            </div>
-          )}
-        </DialogContent>
-      </Dialog>
+      <PrimeDetailDialog
+        prime={selectedPrime}
+        open={detailOpen}
+        onOpenChange={handleDetailClose}
+        showVerifyButton
+        loading={detailLoading}
+      />
     </>
   );
 }

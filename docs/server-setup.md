@@ -1,6 +1,6 @@
 # Server Setup & Cost Analysis
 
-Optimal infrastructure for running primehunt at scale. Analysis as of February 2026.
+Optimal infrastructure for running darkreach at scale. Analysis as of February 2026.
 
 ---
 
@@ -22,18 +22,18 @@ See [ops.md Phased Deployment](roadmaps/ops.md#phased-deployment-plan) for the f
 
 ### GMP Performance Is Everything
 
-primehunt spends >99% of CPU time in GMP's `mpz_powm` (modular exponentiation) and `mpz_mul` (multiplication). The critical CPU features:
+darkreach spends >99% of CPU time in GMP's `mpz_powm` (modular exponentiation) and `mpz_mul` (multiplication). The critical CPU features:
 
 - **MULX instruction (BMI2)**: Allows multiply without clobbering flags. GMP's inner loops depend on this.
 - **ADCX/ADOX (ADX extension)**: Two independent carry chains in parallel. This is what makes x86 faster than ARM for GMP.
 - **High clock speed**: `is_probably_prime()` is single-threaded per candidate. Higher clocks = faster individual tests.
-- **Many cores**: primehunt parallelizes across candidates via rayon. Total throughput = single-core speed x core count.
+- **Many cores**: darkreach parallelizes across candidates via rayon. Total throughput = single-core speed x core count.
 
 ### AMD Zen 4 Is the Sweet Spot
 
 | Architecture | GMPbench (single-thread) | Notes |
 |-------------|------------------------|-------|
-| AMD Zen 4 (Ryzen 7950X) | ~9,480 | Highest score. Best for primehunt. |
+| AMD Zen 4 (Ryzen 7950X) | ~9,480 | Highest score. Best for darkreach. |
 | Intel Alder Lake (i5-12600K) | ~7,950-9,234 | Competitive but fewer cores per dollar. |
 | AMD Zen 3 (Ryzen 5950X) | ~6,864-8,094 | Still good. Cloud instances use this. |
 | Apple M2 (ARM) | ~6,445 | Good per-watt, but no server availability. |
@@ -41,7 +41,7 @@ primehunt spends >99% of CPU time in GMP's `mpz_powm` (modular exponentiation) a
 
 ### WARNING: Avoid AMD Zen 5
 
-GMP has issued an [official warning](https://gmplib.org/gmp-zen5) about AMD Zen 5 (Ryzen 9000, EPYC 9005 "Turin"). Two Ryzen 9950X CPUs were physically destroyed running sustained GMP workloads. The tight assembly loops drawing one MULX per cycle appear to exceed Zen 5's power envelope. **Do not run primehunt on Zen 5 hardware until AMD resolves this.**
+GMP has issued an [official warning](https://gmplib.org/gmp-zen5) about AMD Zen 5 (Ryzen 9000, EPYC 9005 "Turin"). Two Ryzen 9950X CPUs were physically destroyed running sustained GMP workloads. The tight assembly loops drawing one MULX per cycle appear to exceed Zen 5's power envelope. **Do not run darkreach on Zen 5 hardware until AMD resolves this.**
 
 ---
 
@@ -104,7 +104,7 @@ Hourly billing. Good for short campaigns — spin up 10 instances for a week, te
                     │   AX102 (16 cores)  │
                     │   Dashboard + Docs  │
                     │   Factorial search   │
-                    │   Port 8080 public   │
+                    │   Port 7001 public   │
                     └─────────┬───────────┘
                               │ WebSocket / REST
               ┌───────────────┼───────────────┐
@@ -124,12 +124,12 @@ Each worker registers with the coordinator dashboard, sends heartbeats every 10s
 
 ```bash
 # From your machine, deploy to each server:
-./deploy/deploy.sh root@ax162-1.example.com --coordinator http://ax102.example.com:8080
-./deploy/deploy.sh root@ax162-2.example.com --coordinator http://ax102.example.com:8080
+./deploy/deploy.sh root@ax162-1.example.com --coordinator http://ax102.example.com:7001
+./deploy/deploy.sh root@ax162-2.example.com --coordinator http://ax102.example.com:7001
 ./deploy/deploy.sh root@ax102.example.com   # coordinator (no --coordinator flag)
 ```
 
-Systemd manages all services with `Restart=always`. See `deploy/primehunt-coordinator.service` and `deploy/primehunt-worker@.service`.
+Systemd manages all services with `Restart=always`. See `deploy/darkreach-coordinator.service` and `deploy/darkreach-worker@.service`.
 
 ---
 
@@ -208,7 +208,7 @@ Add AX102 + 1-2 more AX162-S = 120-168 cores.
 
 - **Bandwidth**: Minimal. Worker heartbeats are ~200 bytes every 10s. Prime reports are ~500 bytes each. Total fleet traffic is under 1 Mbps even with 100 workers.
 - **Latency**: Not critical. Heartbeat tolerance is 60s before a worker is pruned.
-- **Firewall**: Only the coordinator needs port 8080 open. Workers make outbound HTTP connections.
+- **Firewall**: Only the coordinator needs port 7001 open. Workers make outbound HTTP connections.
 
 All Hetzner servers include 1 Gbps unmetered (AX series) or 20 TB/mo (cloud), which is vastly more than needed.
 

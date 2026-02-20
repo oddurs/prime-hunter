@@ -34,5 +34,5 @@ show_http() {
 
 show_proc "Backend" "$BACKEND_PID_FILE"
 show_proc "Frontend" "$FRONTEND_PID_FILE"
-show_http "Backend API" "http://localhost:8080/api/status"
-show_http "Frontend" "http://localhost:3000"
+show_http "Backend API" "http://localhost:7001/api/status"
+show_http "Frontend" "http://localhost:3001"

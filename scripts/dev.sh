@@ -11,7 +11,7 @@ REMOTE_BASE=""
 if [[ "${1:-}" == "--remote" ]]; then
   if [[ $# -lt 2 ]]; then
     echo "Usage: $0 [--remote <dashboard_base_url>]"
-    echo "Example: $0 --remote https://primehunt.example.com"
+    echo "Example: $0 --remote https://darkreach.example.com"
     exit 1
   fi
   MODE="remote"
@@ -54,28 +54,28 @@ wait_for_http() {
 
 trap cleanup EXIT INT TERM
 
-pkill -f "primehunt.*dashboard" 2>/dev/null || true
+pkill -f "darkreach.*dashboard" 2>/dev/null || true
 pkill -f "next dev" 2>/dev/null || true
 
 if [[ "$MODE" == "local" ]]; then
-  echo "Starting backend (:8080)..."
-  (cd "$ROOT" && cargo run -- dashboard --port 8080 >"$BACKEND_LOG" 2>&1) &
+  echo "Starting backend (:7001)..."
+  (cd "$ROOT" && cargo run -- dashboard --port 7001 >"$BACKEND_LOG" 2>&1) &
   BACKEND_PID=$!
-  wait_for_http "http://localhost:8080/api/status" "Backend"
+  wait_for_http "http://localhost:7001/api/status" "Backend"
 
-  echo "Starting frontend (:3000)..."
+  echo "Starting frontend (:3001)..."
   (
     cd "$ROOT/frontend" && \
-    NEXT_PUBLIC_API_URL="http://localhost:8080" \
-    NEXT_PUBLIC_WS_URL="ws://localhost:8080/ws" \
-    npm run dev -- --port 3000 >"$FRONTEND_LOG" 2>&1
+    NEXT_PUBLIC_API_URL="http://localhost:7001" \
+    NEXT_PUBLIC_WS_URL="ws://localhost:7001/ws" \
+    npm run dev -- --port 3001 >"$FRONTEND_LOG" 2>&1
   ) &
   FRONTEND_PID=$!
-  wait_for_http "http://localhost:3000" "Frontend"
+  wait_for_http "http://localhost:3001" "Frontend"
 
   echo "Dev stack ready:"
-  echo "  Frontend: http://localhost:3000"
-  echo "  Backend:  http://localhost:8080"
+  echo "  Frontend: http://localhost:3001"
+  echo "  Backend:  http://localhost:7001"
 else
   if [[ ! "$REMOTE_BASE" =~ ^https?:// ]]; then
     echo "--remote value must start with http:// or https://"
@@ -83,7 +83,7 @@ else
   fi
   REMOTE_WS_BASE="${REMOTE_BASE/http:\/\//ws://}"
   REMOTE_WS_BASE="${REMOTE_WS_BASE/https:\/\//wss://}"
-  echo "Starting frontend (:3000) with remote data source..."
+  echo "Starting frontend (:3001) with remote data source..."
   echo "  Remote dashboard: $REMOTE_BASE"
   echo "  Remote ws:        ${REMOTE_WS_BASE}/ws"
   (
@@ -91,13 +91,13 @@ else
     DEV_PROXY_TARGET="$REMOTE_BASE" \
     NEXT_PUBLIC_API_URL="" \
     NEXT_PUBLIC_WS_URL="${REMOTE_WS_BASE}/ws" \
-    npm run dev -- --port 3000 >"$FRONTEND_LOG" 2>&1
+    npm run dev -- --port 3001 >"$FRONTEND_LOG" 2>&1
   ) &
   FRONTEND_PID=$!
-  wait_for_http "http://localhost:3000" "Frontend"
+  wait_for_http "http://localhost:3001" "Frontend"
 
   echo "Remote UI ready:"
-  echo "  Frontend: http://localhost:3000"
+  echo "  Frontend: http://localhost:3001"
   echo "  Data via: $REMOTE_BASE (/api + /ws proxy)"
 fi
 

@@ -2,7 +2,7 @@
 
 ## Project overview
 
-`primehunt` is a Rust CLI tool for hunting special-form prime numbers on dedicated servers. It uses GMP (via `rug`) for arbitrary-precision arithmetic and `rayon` for parallel search.
+`darkreach` is a Rust CLI tool for hunting special-form prime numbers on dedicated servers. It uses GMP (via `rug`) for arbitrary-precision arithmetic and `rayon` for parallel search.
 
 ## Domain Map
 
@@ -90,8 +90,8 @@ cd frontend && npm install && npm run build
 
 ### Deployment
 - `deploy/deploy.sh` — SSH deployment script
-- `deploy/primehunt-coordinator.service` — Dashboard systemd unit
-- `deploy/primehunt-worker@.service` — Worker template unit
+- `deploy/darkreach-coordinator.service` — Dashboard systemd unit
+- `deploy/darkreach-worker@.service` — Worker template unit
 
 ## Key Design Decisions
 

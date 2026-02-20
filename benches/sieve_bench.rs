@@ -1,5 +1,5 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use primehunt::sieve;
+use darkreach::sieve;
 
 fn bench_generate_primes_1m(c: &mut Criterion) {
     c.bench_function("generate_primes(1_000_000)", |b| {

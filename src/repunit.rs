@@ -222,6 +222,11 @@ pub fn search(
                     }
                 }
 
+                // Adaptive P-1 pre-filter (Stage 1 + Stage 2, auto-tuned B1/B2)
+                if crate::p1::adaptive_p1_filter(&val) {
+                    return None;
+                }
+
                 let result = mr_screened_test(&val, mr_rounds);
                 if result == IsPrime::No {
                     return None;
@@ -257,7 +262,7 @@ pub fn search(
                     expr, digits, certainty
                 );
             }
-            db.insert_prime_sync(rt, "repunit", &expr, digits, search_params, &certainty)?;
+            db.insert_prime_sync(rt, "repunit", &expr, digits, search_params, &certainty, None)?;
             if let Some(wc) = worker_client {
                 wc.report_prime("repunit", &expr, digits, search_params, &certainty);
             }

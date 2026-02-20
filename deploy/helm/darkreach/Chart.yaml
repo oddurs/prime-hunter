@@ -1,0 +1,8 @@
+apiVersion: v2
+name: darkreach
+description: Distributed prime number hunting platform
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+maintainers:
+  - name: darkreach

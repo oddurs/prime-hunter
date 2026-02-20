@@ -236,7 +236,7 @@ pub fn search(
                             expr, digits, cert
                         );
                     }
-                    db.insert_prime_sync(rt, "palindromic", &expr, digits, search_params, cert)?;
+                    db.insert_prime_sync(rt, "palindromic", &expr, digits, search_params, cert, None)?;
                     if let Some(wc) = worker_client {
                         wc.report_prime("palindromic", &expr, digits, search_params, cert);
                     }
@@ -346,6 +346,11 @@ pub fn search(
                             }
                         }
 
+                        // Adaptive P-1 pre-filter (Stage 1 + Stage 2, auto-tuned B1/B2)
+                        if crate::p1::adaptive_p1_filter(&num) {
+                            return None;
+                        }
+
                         // GMP Miller-Rabin fallback — defer to_string_radix until prime is found
                         let r = mr_screened_test(&num, mr_rounds);
                         if r != IsPrime::No {
@@ -386,6 +391,7 @@ pub fn search(
                         digits,
                         search_params,
                         &certainty,
+                        None,
                     )?;
                     if let Some(wc) = worker_client {
                         wc.report_prime("palindromic", &expr, digits, search_params, &certainty);

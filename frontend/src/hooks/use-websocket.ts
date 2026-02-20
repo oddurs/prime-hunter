@@ -145,6 +145,25 @@ export interface AgentInfo {
   pid: number | null;
 }
 
+/** A PostgreSQL-backed search job with block-based work distribution.
+ * Created via `POST /api/search_jobs` or by the projects system.
+ * Workers claim blocks from these jobs via `claim_work_block()`. */
+export interface SearchJob {
+  id: number;
+  search_type: string;
+  params: Record<string, unknown>;
+  status: "pending" | "running" | "paused" | "completed" | "cancelled" | "failed";
+  error: string | null;
+  created_at: string;
+  started_at: string | null;
+  stopped_at: string | null;
+  range_start: number;
+  range_end: number;
+  block_size: number;
+  total_tested: number;
+  total_found: number;
+}
+
 export interface ProjectSummary {
   slug: string;
   name: string;
@@ -171,6 +190,7 @@ export interface WsData {
   fleet: FleetData | null;
   coordinator: HardwareMetrics | null;
   searches: ManagedSearch[];
+  searchJobs: SearchJob[];
   deployments: Deployment[];
   notifications: Notification[];
   agentTasks: AgentTaskSummary[];
@@ -186,6 +206,7 @@ export function useWebSocket(): WsData {
   const [status, setStatus] = useState<Status | null>(null);
   const [fleet, setFleet] = useState<FleetData | null>(null);
   const [searches, setSearches] = useState<ManagedSearch[]>([]);
+  const [searchJobs, setSearchJobs] = useState<SearchJob[]>([]);
   const [deployments, setDeployments] = useState<Deployment[]>([]);
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [coordinator, setCoordinator] = useState<HardwareMetrics | null>(null);
@@ -237,6 +258,7 @@ export function useWebSocket(): WsData {
           setStatus(data.status);
           if (data.fleet) setFleet(data.fleet);
           if (data.searches) setSearches(data.searches);
+          if (data.search_jobs) setSearchJobs(data.search_jobs);
           if (data.deployments) setDeployments(data.deployments);
           if (data.notifications) setNotifications(data.notifications);
           if (data.agent_tasks) setAgentTasks(data.agent_tasks);
@@ -281,6 +303,7 @@ export function useWebSocket(): WsData {
     fleet,
     coordinator,
     searches,
+    searchJobs,
     deployments,
     notifications,
     agentTasks,

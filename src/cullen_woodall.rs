@@ -119,8 +119,8 @@ fn test_cullen(candidate: &Integer, n: u64, mr_rounds: u32) -> (IsPrime, &'stati
     // Proth test: deterministic for k < 2^n, always true for Cullen (n ≥ 1)
     if n >= 1 {
         match kbn::proth_test(candidate) {
-            Some(true) => return (IsPrime::Yes, "deterministic (Proth)"),
-            Some(false) => return (IsPrime::No, ""),
+            Some((true, _)) => return (IsPrime::Yes, "deterministic (Proth)"),
+            Some((false, _)) => return (IsPrime::No, ""),
             None => {} // fall through to Miller-Rabin
         }
     }
@@ -150,9 +150,14 @@ fn test_woodall(candidate: &Integer, n: u64, mr_rounds: u32) -> (IsPrime, &'stat
         // LLR requires k < 2^exp and k odd and exp >= 3
         // m is odd by construction; m < 2^exp since m ≤ n < 2^n ≤ 2^(n+e) = 2^exp
         if exp >= 3 {
+            // Quick MR pre-screen (1 round) rejects ~75% of composites before
+            // the expensive O(n-2) LLR squaring loop.
+            if candidate.is_probably_prime(1) == rug::integer::IsPrime::No {
+                return (rug::integer::IsPrime::No, "");
+            }
             match kbn::llr_test(candidate, m, exp) {
-                Some(true) => return (IsPrime::Yes, "deterministic (LLR)"),
-                Some(false) => return (IsPrime::No, ""),
+                Some((true, _)) => return (IsPrime::Yes, "deterministic (LLR)"),
+                Some((false, _)) => return (IsPrime::No, ""),
                 None => {} // fall through to Miller-Rabin
             }
         }
@@ -286,12 +291,17 @@ pub fn search(
                         Some(pfgw::PfgwResult::Composite) => None,
                         _ => {
                             // Unavailable or not configured — fall through to GMP
-                            let (r, cert) = test_cullen(&cullen, n, mr_rounds);
-                            if r != IsPrime::No {
-                                let digits = exact_digits(&cullen);
-                                Some((format!("{}*2^{} + 1", n, n), digits, cert.to_string(), "cullen"))
-                            } else {
+                            // Adaptive P-1 pre-filter (Stage 1 + Stage 2, auto-tuned B1/B2)
+                            if crate::p1::adaptive_p1_filter(&cullen) {
                                 None
+                            } else {
+                                let (r, cert) = test_cullen(&cullen, n, mr_rounds);
+                                if r != IsPrime::No {
+                                    let digits = exact_digits(&cullen);
+                                    Some((format!("{}*2^{} + 1", n, n), digits, cert.to_string(), "cullen"))
+                                } else {
+                                    None
+                                }
                             }
                         }
                     }
@@ -318,12 +328,17 @@ pub fn search(
                             Some(pfgw::PfgwResult::Composite) => None,
                             _ => {
                                 // Unavailable or not configured — fall through to GMP
-                                let (r, cert) = test_woodall(&woodall, n, mr_rounds);
-                                if r != IsPrime::No {
-                                    let digits = exact_digits(&woodall);
-                                    Some((format!("{}*2^{} - 1", n, n), digits, cert.to_string(), "woodall"))
-                                } else {
+                                // Adaptive P-1 pre-filter (Stage 1 + Stage 2, auto-tuned B1/B2)
+                                if crate::p1::adaptive_p1_filter(&woodall) {
                                     None
+                                } else {
+                                    let (r, cert) = test_woodall(&woodall, n, mr_rounds);
+                                    if r != IsPrime::No {
+                                        let digits = exact_digits(&woodall);
+                                        Some((format!("{}*2^{} - 1", n, n), digits, cert.to_string(), "woodall"))
+                                    } else {
+                                        None
+                                    }
                                 }
                             }
                         }
@@ -356,7 +371,7 @@ pub fn search(
                     expr, digits, certainty
                 );
             }
-            db.insert_prime_sync(rt, form, &expr, digits, search_params, &certainty)?;
+            db.insert_prime_sync(rt, form, &expr, digits, search_params, &certainty, None)?;
             if let Some(wc) = worker_client {
                 wc.report_prime(form, &expr, digits, search_params, &certainty);
             }

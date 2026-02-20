@@ -20,7 +20,7 @@
 //!
 //! ## Usage
 //!
-//! Called by the `primehunt verify` subcommand and the dashboard's
+//! Called by the `darkreach verify` subcommand and the dashboard's
 //! `/api/verify` endpoint to audit primes already in the database.
 
 use anyhow::{anyhow, Result};
@@ -441,7 +441,7 @@ fn verify_tier1_kbn(expression: &str, candidate: &Integer) -> VerifyResult {
     };
 
     let is_plus = sign == '+';
-    let (result, method) = kbn::test_prime(candidate, k, base, n, is_plus, 15);
+    let (result, method, _certificate) = kbn::test_prime(candidate, k, base, n, is_plus, 15);
     match result {
         IsPrime::Yes if method == "deterministic" => VerifyResult::Verified {
             method: "tier1-kbn-deterministic".into(),
@@ -722,6 +722,47 @@ pub fn verify_prime(detail: &PrimeDetail) -> VerifyResult {
 
     // Return tier 2 result if tier 3 was skipped or not attempted
     t2
+}
+
+// ── Volunteer Quorum Logic ────────────────────────────────────────
+
+/// Provable forms that have deterministic proof methods (certificates).
+/// For these forms, a valid proof certificate is itself verification.
+const PROVABLE_FORMS: &[&str] = &[
+    "factorial",
+    "primorial",
+    "near_repdigit",
+    "kbn",
+    "cullen_woodall",
+    "carol_kynea",
+    "twin",
+    "sophie_germain",
+    "gen_fermat",
+];
+
+/// Determine the minimum quorum (number of independent checks) required
+/// for a volunteer-submitted block based on trust level and prime form.
+///
+/// Trust levels (from `volunteer_trust` table):
+/// - 0: Untrusted (invalid result detected) → always quorum=2
+/// - 1: New (default) → quorum=2 (double-check all)
+/// - 2: Reliable (10+ consecutive valid) → quorum=1 for provable forms
+/// - 3: Trusted (100+ consecutive valid) → quorum=1 for all forms
+///
+/// This follows the BOINC adaptive replication model: new volunteers
+/// are double-checked, experienced ones are trusted, and any invalid
+/// result resets trust.
+pub fn required_quorum(trust_level: i16, form: &str) -> i16 {
+    match trust_level {
+        3 => 1,                                                    // Trusted: single-check all
+        2 if PROVABLE_FORMS.contains(&form) => 1,                 // Reliable + provable: proof is verification
+        _ => 2,                                                    // New/untrusted or PRP form: double-check
+    }
+}
+
+/// Check if a form has deterministic proof methods available.
+pub fn is_provable_form(form: &str) -> bool {
+    PROVABLE_FORMS.contains(&form)
 }
 
 #[cfg(test)]
@@ -1028,5 +1069,47 @@ mod tests {
         match result {
             VerifyResult::Verified { .. } | VerifyResult::Failed { .. } | VerifyResult::Skipped { .. } => {}
         }
+    }
+
+    // --- Quorum logic tests ---
+
+    #[test]
+    fn quorum_untrusted_always_double() {
+        assert_eq!(required_quorum(0, "kbn"), 2);
+        assert_eq!(required_quorum(0, "factorial"), 2);
+        assert_eq!(required_quorum(0, "wagstaff"), 2);
+    }
+
+    #[test]
+    fn quorum_new_always_double() {
+        assert_eq!(required_quorum(1, "kbn"), 2);
+        assert_eq!(required_quorum(1, "wagstaff"), 2);
+        assert_eq!(required_quorum(1, "factorial"), 2);
+    }
+
+    #[test]
+    fn quorum_reliable_single_for_provable() {
+        assert_eq!(required_quorum(2, "kbn"), 1);
+        assert_eq!(required_quorum(2, "factorial"), 1);
+        assert_eq!(required_quorum(2, "primorial"), 1);
+        // PRP-only form still needs double-check
+        assert_eq!(required_quorum(2, "wagstaff"), 2);
+        assert_eq!(required_quorum(2, "repunit"), 2);
+    }
+
+    #[test]
+    fn quorum_trusted_single_for_all() {
+        assert_eq!(required_quorum(3, "kbn"), 1);
+        assert_eq!(required_quorum(3, "wagstaff"), 1);
+        assert_eq!(required_quorum(3, "repunit"), 1);
+        assert_eq!(required_quorum(3, "factorial"), 1);
+    }
+
+    #[test]
+    fn provable_forms_check() {
+        assert!(is_provable_form("kbn"));
+        assert!(is_provable_form("factorial"));
+        assert!(!is_provable_form("wagstaff"));
+        assert!(!is_provable_form("repunit"));
     }
 }

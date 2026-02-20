@@ -8,17 +8,25 @@ Campaign-style prime discovery management: orchestration, cost tracking, records
 
 ## Current State
 
-The Projects feature provides TOML-defined campaigns with multi-phase orchestration, auto-strategy generation for all 12 forms, cost estimation, world record tracking via t5k.org scraping, and a full frontend UI with phase timeline, cost tracker, and record comparison cards. 15 unit tests cover parsing, cost estimation, phase activation, and template validation. 13 template TOML files cover all forms.
+The Projects feature provides TOML-defined campaigns with multi-phase orchestration, auto-strategy generation for all 12 forms (including verification objectives), cost estimation, world record tracking via t5k.org scraping, and a full frontend UI with phase timeline, cost tracker with live graph, and record comparison cards. 37 unit tests cover parsing, cost estimation, phase activation, conditions, verification strategy, and template validation. 13 template TOML files cover all forms.
 
 **What works today:**
 - TOML project definition with import via CLI and API
 - Project CRUD (create, list, show, activate, pause, cancel)
 - Phase state machine with dependency checking and activation conditions
-- Auto-strategy generation per form and objective
-- Cost estimation with per-form power-law timing model
-- t5k.org record scraping (8 forms) with 24-hour refresh
+- Phase skip, force-complete, and retry operations (API + CLI)
+- Auto-strategy generation per form and objective (including verification)
+- Cost estimation with per-form power-law timing model + preview endpoint
+- Actual cost tracking from work block durations (updated every orchestration tick)
+- Per-phase cost breakdown in project detail API
+- Best prime linking to project
+- Phase dependency validation (Kahn's algorithm for cycle detection)
+- Expanded completion conditions: `all_blocks_done`, `first_prime_found`, `n_primes_found:N`, `target_digits_reached:D`, `timeout_hours:H`, `budget_reached:USD`
+- Expanded activation conditions: `previous_phase_found_zero`, `previous_phase_found_prime`, `time_since_start:H`
+- t5k.org record scraping (8 forms) with 24-hour refresh, retries, exponential backoff
+- Event pruning (500 per project) + paginated events API
 - WebSocket push of project/record summaries
-- Frontend: project list with status tabs, detail view with phase timeline, cost tracker, record comparison
+- Frontend: project list, detail view, phase timeline, cost tracker, live cost graph, record comparison
 
 ---
 
@@ -104,9 +112,9 @@ fn validate_phase_graph(phases: &[PhaseConfig]) -> Result<()> {
 - `POST /api/projects/{slug}/phases/{phase_name}/retry` — reset a failed phase to pending
 
 ```
-primehunt project skip-phase <slug> <phase-name>
-primehunt project force-complete-phase <slug> <phase-name>
-primehunt project retry-phase <slug> <phase-name>
+darkreach project skip-phase <slug> <phase-name>
+darkreach project force-complete-phase <slug> <phase-name>
+darkreach project retry-phase <slug> <phase-name>
 ```
 
 **Rationale:** Operators need escape hatches for long-running campaigns. Without these, any phase failure is a project-level failure.
@@ -300,7 +308,7 @@ if should_generate_followup_phase(&project, &completed_phase) {
 **Current:** Templates are static TOML files. No way to clone an existing project with modifications.
 
 **Target:**
-- `primehunt project clone <slug> --name <new-name> [--range-start N]` — clone with overrides
+- `darkreach project clone <slug> --name <new-name> [--range-start N]` — clone with overrides
 - `POST /api/projects/{slug}/clone` — API equivalent
 - Frontend "Clone" button on project detail page
 - Template library in the UI with one-click creation
@@ -339,30 +347,30 @@ if should_generate_followup_phase(&project, &completed_phase) {
 
 ## Implementation Priority
 
-| Item | Effort | Impact | Priority |
-|------|--------|--------|----------|
-| 1.1 Persist cost tracking | Low | Critical | **P0** |
-| 1.2 Link best prime | Low | High | **P0** |
-| 1.3 Validate phase deps | Low | High | **P0** |
-| 1.4 Work block duration | Low | High | **P0** |
-| 2.1 Phase skip/force | Medium | High | **P1** |
-| 2.2 Per-phase cost | Medium | High | **P1** |
-| 2.3 Cost preview dialog | Low | Medium | **P1** |
-| 2.5 Robust scraping | Low | Medium | **P1** |
-| 2.4 Calibrate cost model | Medium | Medium | **P2** |
-| 2.6 Event pruning | Low | Low | **P2** |
-| 3.2 Expanded conditions | Medium | High | **P2** |
-| 3.1 Verification strategy | Medium | Medium | **P2** |
-| 4.1 Dependency viz | Medium | Medium | **P2** |
-| 4.2 Live cost graph | Medium | Medium | **P2** |
-| 3.3 Adaptive phases | High | High | **P3** |
-| 3.4 Infra enforcement | Medium | Medium | **P3** |
-| 3.5 Worker auto-scaling | Medium | Medium | **P3** |
-| 4.3 Record deep-dive | Medium | Low | **P3** |
-| 4.4 Project diff view | Medium | Low | **P3** |
-| 4.5 Bulk operations | Low | Low | **P3** |
-| 5.1 Multi-project scheduling | High | High | **P4** |
-| 5.2 Templates and cloning | Medium | Medium | **P4** |
-| 5.3 Cross-project analytics | High | Medium | **P4** |
-| 5.4 Notifications/webhooks | High | Medium | **P4** |
-| 5.5 TOML version control | High | Low | **P4** |
+| Item | Effort | Impact | Priority | Status |
+|------|--------|--------|----------|--------|
+| 1.1 Persist cost tracking | Low | Critical | **P0** | Done |
+| 1.2 Link best prime | Low | High | **P0** | Done |
+| 1.3 Validate phase deps | Low | High | **P0** | Done |
+| 1.4 Work block duration | Low | High | **P0** | Done |
+| 2.1 Phase skip/force | Medium | High | **P1** | Done |
+| 2.2 Per-phase cost | Medium | High | **P1** | Done |
+| 2.3 Cost preview dialog | Low | Medium | **P1** | Done |
+| 2.5 Robust scraping | Low | Medium | **P1** | Done |
+| 2.6 Event pruning | Low | Low | **P2** | Done |
+| 3.2 Expanded conditions | Medium | High | **P2** | Done |
+| 3.1 Verification strategy | Medium | Medium | **P2** | Done |
+| 4.2 Live cost graph | Medium | Medium | **P2** | Done |
+| 2.4 Calibrate cost model | Medium | Medium | **P2** | Done |
+| 4.1 Dependency viz | Medium | Medium | **P2** | Done |
+| 3.3 Adaptive phases | High | High | **P3** | Done |
+| 3.4 Infra enforcement | Medium | Medium | **P3** | Done |
+| 3.5 Worker auto-scaling | Medium | Medium | **P3** | Done |
+| 4.3 Record deep-dive | Medium | Low | **P3** | Done |
+| 4.4 Project diff view | Medium | Low | **P3** | Done |
+| 4.5 Bulk operations | Low | Low | **P3** | Done |
+| 5.1 Multi-project scheduling | High | High | **P4** | |
+| 5.2 Templates and cloning | Medium | Medium | **P4** | |
+| 5.3 Cross-project analytics | High | Medium | **P4** | |
+| 5.4 Notifications/webhooks | High | Medium | **P4** | |
+| 5.5 TOML version control | High | Low | **P4** | |

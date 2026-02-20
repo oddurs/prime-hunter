@@ -8,9 +8,9 @@ Deployment scripts and systemd units for fleet management.
 |------|---------|
 | `deploy.sh` | SSH deployment script: installs Rust/GMP, clones/updates repo, builds release binary, copies to `/usr/local/bin`, installs systemd units |
 | `production-deploy.sh` | Full production setup: swap, UFW, kernel tuning, nginx, systemd, frontend deploy, search launch, verification |
-| `nginx-primehunt.conf` | Nginx reverse proxy: rate limiting, WebSocket, static caching, security headers, gzip |
-| `primehunt-coordinator.service` | Systemd unit for dashboard: port 8080, static dir serving, security-hardened (strict filesystem, no new privs, 512M memory limit, 65k file descriptors) |
-| `primehunt-worker@.service` | Template unit for workers: runs search with `--coordinator` flag, supports instance numbers (`%i`), auto-restarts every 10s |
+| `nginx-darkreach.conf` | Nginx reverse proxy: rate limiting, WebSocket, static caching, security headers, gzip |
+| `darkreach-coordinator.service` | Systemd unit for dashboard: port 7001, static dir serving, security-hardened (strict filesystem, no new privs, 512M memory limit, 65k file descriptors) |
+| `darkreach-worker@.service` | Template unit for workers: runs search with `--coordinator` flag, supports instance numbers (`%i`), auto-restarts every 10s |
 
 ## Deployment Flow
 
@@ -24,7 +24,7 @@ deploy.sh → SSH to target → install deps (Rust, GMP) → clone/pull repo
 
 ```
 Coordinator (1 instance)
-  ├── Serves web dashboard on port 8080
+  ├── Serves web dashboard on port 7001
   ├── Manages worker registry (in-memory, 60s stale timeout)
   └── Aggregates results into shared SQLite DB
 
@@ -34,7 +34,7 @@ Workers (N instances via template unit)
   └── Report discovered primes to coordinator
 ```
 
-Multiple worker instances on one host: `systemctl start primehunt-worker@1 primehunt-worker@2`
+Multiple worker instances on one host: `systemctl start darkreach-worker@1 darkreach-worker@2`
 
 ## Build Flags
 

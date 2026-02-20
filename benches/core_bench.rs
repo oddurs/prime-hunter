@@ -6,7 +6,7 @@ fn bench_has_small_factor_prime(c: &mut Criterion) {
     let n = Integer::from(1u32) << 127u32;
     let prime = n - 1u32;
     c.bench_function("has_small_factor(M127)", |b| {
-        b.iter(|| primehunt::has_small_factor(black_box(&prime)));
+        b.iter(|| darkreach::has_small_factor(black_box(&prime)));
     });
 }
 
@@ -14,7 +14,7 @@ fn bench_has_small_factor_composite(c: &mut Criterion) {
     // Large composite: 2^128 (divisible by 2)
     let composite = Integer::from(1u32) << 128u32;
     c.bench_function("has_small_factor(2^128)", |b| {
-        b.iter(|| primehunt::has_small_factor(black_box(&composite)));
+        b.iter(|| darkreach::has_small_factor(black_box(&composite)));
     });
 }
 
@@ -23,7 +23,7 @@ fn bench_mr_screened_prime(c: &mut Criterion) {
     let n = Integer::from(1u32) << 127u32;
     let prime = n - 1u32;
     c.bench_function("mr_screened_test(M127, 25)", |b| {
-        b.iter(|| primehunt::mr_screened_test(black_box(&prime), black_box(25)));
+        b.iter(|| darkreach::mr_screened_test(black_box(&prime), black_box(25)));
     });
 }
 
@@ -31,21 +31,21 @@ fn bench_mr_screened_composite(c: &mut Criterion) {
     // Large Carmichael-like composite: 561 = 3 * 11 * 17
     let composite = Integer::from(561);
     c.bench_function("mr_screened_test(561, 25)", |b| {
-        b.iter(|| primehunt::mr_screened_test(black_box(&composite), black_box(25)));
+        b.iter(|| darkreach::mr_screened_test(black_box(&composite), black_box(25)));
     });
 }
 
 fn bench_estimate_digits(c: &mut Criterion) {
     let n = Integer::from(1u32) << 10000u32;
     c.bench_function("estimate_digits(2^10000)", |b| {
-        b.iter(|| primehunt::estimate_digits(black_box(&n)));
+        b.iter(|| darkreach::estimate_digits(black_box(&n)));
     });
 }
 
 fn bench_checkpoint_save_load(c: &mut Criterion) {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("bench_checkpoint.json");
-    let cp = primehunt::checkpoint::Checkpoint::Factorial {
+    let cp = darkreach::checkpoint::Checkpoint::Factorial {
         last_n: 12345,
         start: Some(1),
         end: Some(100000),
@@ -53,8 +53,8 @@ fn bench_checkpoint_save_load(c: &mut Criterion) {
 
     c.bench_function("checkpoint_save_load", |b| {
         b.iter(|| {
-            primehunt::checkpoint::save(black_box(&path), black_box(&cp)).unwrap();
-            primehunt::checkpoint::load(black_box(&path)).unwrap();
+            darkreach::checkpoint::save(black_box(&path), black_box(&cp)).unwrap();
+            darkreach::checkpoint::load(black_box(&path)).unwrap();
         });
     });
 }

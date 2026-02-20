@@ -1,6 +1,6 @@
 # src/ — Engine & Server Domains
 
-This directory contains all Rust source code for primehunt, spanning two domains:
+This directory contains all Rust source code for darkreach, spanning two domains:
 
 ## Module Map
 
@@ -88,7 +88,7 @@ cargo run -- repunit --base 10 --min-n 2 --max-n 100
 Web dashboard, database, fleet coordination, and infrastructure.
 
 ### Axum API
-- Dashboard runs on configurable port (default 8080)
+- Dashboard runs on configurable port (default 7001)
 - Static file serving for Next.js frontend
 - REST endpoints: `/api/stats`, `/api/primes`, `/api/workers`, `/api/search_jobs`, `/api/verify`
 - WebSocket at `/ws` pushes updates every 2 seconds

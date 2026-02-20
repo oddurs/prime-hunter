@@ -14,7 +14,7 @@ const MOCK_SESSION = {
     id: "00000000-0000-0000-0000-000000000001",
     aud: "authenticated",
     role: "authenticated",
-    email: "test@primehunt.dev",
+    email: "test@darkreach.ai",
     email_confirmed_at: "2025-01-01T00:00:00Z",
     created_at: "2025-01-01T00:00:00Z",
     updated_at: "2025-01-01T00:00:00Z",

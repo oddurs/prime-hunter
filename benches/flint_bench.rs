@@ -15,7 +15,7 @@ fn bench_factorial(c: &mut Criterion) {
 
         #[cfg(feature = "flint")]
         group.bench_function(format!("flint_{}", n), |b| {
-            b.iter(|| primehunt::flint::factorial(n))
+            b.iter(|| darkreach::flint::factorial(n))
         });
     }
 
@@ -32,7 +32,7 @@ fn bench_primorial(c: &mut Criterion) {
 
         #[cfg(feature = "flint")]
         group.bench_function(format!("flint_{}", n), |b| {
-            b.iter(|| primehunt::flint::primorial(n))
+            b.iter(|| darkreach::flint::primorial(n))
         });
     }
 

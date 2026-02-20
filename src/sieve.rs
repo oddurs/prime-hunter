@@ -460,6 +460,113 @@ pub fn discrete_log_bsgs(base: u64, target: u64, p: u64, order: u64) -> Option<u
     }
 }
 
+/// Packed bit array for sieve results.
+///
+/// 8× memory reduction over `Vec<bool>`: a 10M-candidate search drops from
+/// 10 MB to 1.25 MB, fitting entirely in L2 cache on most architectures.
+/// Uses hardware `POPCNT` (via `count_ones()`) for O(n/64) survivor counting.
+///
+/// Bit layout: bit `i` is stored in word `i / 64`, bit position `i % 64`.
+/// A set bit (1) means the candidate **survives** the sieve; a clear bit (0)
+/// means it was eliminated.
+pub struct BitSieve {
+    words: Vec<u64>,
+    len: usize,
+}
+
+impl BitSieve {
+    /// Create a sieve of `len` bits, all set to 1 (all candidates survive).
+    pub fn new_all_set(len: usize) -> Self {
+        let num_words = (len + 63) / 64;
+        let mut words = vec![u64::MAX; num_words];
+        // Clear unused high bits in the last word
+        let extra = num_words * 64 - len;
+        if extra > 0 && num_words > 0 {
+            words[num_words - 1] >>= extra;
+        }
+        BitSieve { words, len }
+    }
+
+    /// Create a sieve of `len` bits, all cleared to 0 (all eliminated).
+    pub fn new_all_clear(len: usize) -> Self {
+        let num_words = (len + 63) / 64;
+        BitSieve {
+            words: vec![0u64; num_words],
+            len,
+        }
+    }
+
+    /// Number of bits in this sieve.
+    #[inline]
+    pub fn len(&self) -> usize {
+        self.len
+    }
+
+    /// Returns true if sieve has zero length.
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    /// Get bit `index`. Returns `true` if the bit is set (candidate survives).
+    ///
+    /// # Panics
+    /// Panics if `index >= len`.
+    #[inline]
+    pub fn get(&self, index: usize) -> bool {
+        debug_assert!(index < self.len, "BitSieve index out of bounds: {} >= {}", index, self.len);
+        let word = self.words[index / 64];
+        word & (1u64 << (index % 64)) != 0
+    }
+
+    /// Set bit `index` to 1 (candidate survives).
+    #[inline]
+    pub fn set(&mut self, index: usize) {
+        debug_assert!(index < self.len);
+        self.words[index / 64] |= 1u64 << (index % 64);
+    }
+
+    /// Clear bit `index` to 0 (candidate eliminated).
+    #[inline]
+    pub fn clear(&mut self, index: usize) {
+        debug_assert!(index < self.len);
+        self.words[index / 64] &= !(1u64 << (index % 64));
+    }
+
+    /// Count the number of set bits (surviving candidates) using hardware POPCNT.
+    pub fn count_ones(&self) -> usize {
+        self.words.iter().map(|w| w.count_ones() as usize).sum()
+    }
+
+    /// Iterate over the indices of all set bits in ascending order.
+    pub fn iter_set_bits(&self) -> impl Iterator<Item = usize> + '_ {
+        self.words.iter().enumerate().flat_map(|(wi, &word)| {
+            let base = wi * 64;
+            BitIter { word, base }
+        })
+    }
+}
+
+/// Iterator over set bits within a single u64 word.
+struct BitIter {
+    word: u64,
+    base: usize,
+}
+
+impl Iterator for BitIter {
+    type Item = usize;
+
+    #[inline]
+    fn next(&mut self) -> Option<usize> {
+        if self.word == 0 {
+            return None;
+        }
+        let tz = self.word.trailing_zeros() as usize;
+        self.word &= self.word - 1; // clear lowest set bit
+        Some(self.base + tz)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -722,5 +829,130 @@ mod tests {
         // sieve_limit=0 should auto-tune
         let depth = resolve_sieve_limit(0, 10_000, 10000);
         assert!(depth >= 1_000_000);
+    }
+
+    // ---- BitSieve tests ----
+
+    #[test]
+    fn bitsieve_new_all_set() {
+        let bs = BitSieve::new_all_set(100);
+        assert_eq!(bs.len(), 100);
+        assert_eq!(bs.count_ones(), 100);
+        for i in 0..100 {
+            assert!(bs.get(i), "bit {} should be set", i);
+        }
+    }
+
+    #[test]
+    fn bitsieve_new_all_clear() {
+        let bs = BitSieve::new_all_clear(100);
+        assert_eq!(bs.len(), 100);
+        assert_eq!(bs.count_ones(), 0);
+        for i in 0..100 {
+            assert!(!bs.get(i), "bit {} should be clear", i);
+        }
+    }
+
+    #[test]
+    fn bitsieve_set_clear_get() {
+        let mut bs = BitSieve::new_all_clear(200);
+        bs.set(0);
+        bs.set(63);
+        bs.set(64);
+        bs.set(127);
+        bs.set(128);
+        bs.set(199);
+        assert!(bs.get(0));
+        assert!(bs.get(63));
+        assert!(bs.get(64));
+        assert!(bs.get(127));
+        assert!(bs.get(128));
+        assert!(bs.get(199));
+        assert!(!bs.get(1));
+        assert!(!bs.get(65));
+        assert_eq!(bs.count_ones(), 6);
+
+        bs.clear(64);
+        assert!(!bs.get(64));
+        assert_eq!(bs.count_ones(), 5);
+    }
+
+    #[test]
+    fn bitsieve_word_boundary() {
+        // Test at exact word boundaries: 63, 64, 127, 128
+        let mut bs = BitSieve::new_all_clear(256);
+        for &i in &[63usize, 64, 127, 128, 191, 192, 255] {
+            bs.set(i);
+        }
+        assert_eq!(bs.count_ones(), 7);
+        for &i in &[63usize, 64, 127, 128, 191, 192, 255] {
+            assert!(bs.get(i), "bit {} should be set", i);
+        }
+    }
+
+    #[test]
+    fn bitsieve_count_ones() {
+        let mut bs = BitSieve::new_all_set(100);
+        assert_eq!(bs.count_ones(), 100);
+        // Clear every other bit
+        for i in (0..100).step_by(2) {
+            bs.clear(i);
+        }
+        assert_eq!(bs.count_ones(), 50);
+    }
+
+    #[test]
+    fn bitsieve_iter_set_bits() {
+        let mut bs = BitSieve::new_all_clear(200);
+        let expected = vec![0, 1, 63, 64, 65, 127, 128, 199];
+        for &i in &expected {
+            bs.set(i);
+        }
+        let collected: Vec<usize> = bs.iter_set_bits().collect();
+        assert_eq!(collected, expected);
+    }
+
+    #[test]
+    fn bitsieve_empty() {
+        let bs = BitSieve::new_all_set(0);
+        assert_eq!(bs.len(), 0);
+        assert!(bs.is_empty());
+        assert_eq!(bs.count_ones(), 0);
+        assert_eq!(bs.iter_set_bits().count(), 0);
+    }
+
+    #[test]
+    fn bitsieve_large() {
+        let n = 10_000_000;
+        let bs = BitSieve::new_all_set(n);
+        assert_eq!(bs.count_ones(), n);
+        assert_eq!(bs.len(), n);
+    }
+
+    #[test]
+    fn bitsieve_non_multiple_of_64() {
+        // len=65 → 2 words. Last word should only have bit 0 set.
+        let bs = BitSieve::new_all_set(65);
+        assert_eq!(bs.count_ones(), 65);
+        // Verify the "extra" bits in the last word are clear (don't pollute count)
+        assert_eq!(bs.words.len(), 2);
+        // Word 1 should have exactly 1 bit set (bit 0 = index 64)
+        assert_eq!(bs.words[1].count_ones(), 1);
+    }
+
+    #[test]
+    fn bitsieve_iter_set_bits_matches_count() {
+        let mut bs = BitSieve::new_all_set(1000);
+        // Clear primes (just to get a non-trivial pattern)
+        for p in &[2u64, 3, 5, 7, 11, 13, 17, 19, 23] {
+            let mut i = *p as usize;
+            while i < 1000 {
+                bs.clear(i);
+                i += *p as usize;
+            }
+        }
+        let count = bs.count_ones();
+        let iter_count = bs.iter_set_bits().count();
+        assert_eq!(count, iter_count, "count_ones and iter_set_bits should agree");
     }
 }

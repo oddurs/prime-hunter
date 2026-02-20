@@ -32,9 +32,9 @@ pub fn ensure_schema() {
 }
 
 /// Connect to the test database (also ensures schema is set up).
-pub async fn setup_test_db() -> primehunt::db::Database {
+pub async fn setup_test_db() -> darkreach::db::Database {
     ensure_schema();
-    let db = primehunt::db::Database::connect(&test_db_url())
+    let db = darkreach::db::Database::connect(&test_db_url())
         .await
         .expect("Failed to connect to test database");
     truncate_all_tables(db.pool()).await;
@@ -44,19 +44,19 @@ pub async fn setup_test_db() -> primehunt::db::Database {
 /// Build an Axum test app router connected to the test database.
 pub async fn build_test_app() -> axum::Router {
     let db = setup_test_db().await;
-    let state = primehunt::dashboard::AppState::with_db(
+    let state = darkreach::dashboard::AppState::with_db(
         db,
         &test_db_url(),
-        PathBuf::from("/tmp/primehunt-test-checkpoint"),
+        PathBuf::from("/tmp/darkreach-test-checkpoint"),
         0,
     );
-    primehunt::dashboard::build_router(state, None)
+    darkreach::dashboard::build_router(state, None)
 }
 
 /// Truncate all tables to ensure test isolation.
 pub async fn truncate_all_tables(pool: &sqlx::PgPool) {
     sqlx::raw_sql(
-        "TRUNCATE TABLE agent_role_templates, agent_task_deps, agent_memory,
+        "TRUNCATE TABLE agent_logs, agent_schedules, agent_role_templates, agent_task_deps, agent_memory,
                        agent_events, agent_tasks, agent_budgets, agent_templates,
                        agent_roles, work_blocks, search_jobs, workers, primes
          CASCADE",
@@ -122,6 +122,8 @@ async fn run_migrations(pool: &sqlx::PgPool) {
         "supabase/migrations/009_agent_memory.sql",
         "supabase/migrations/010_task_decomposition.sql",
         "supabase/migrations/013_agent_roles.sql",
+        "supabase/migrations/014_agent_schedules.sql",
+        "supabase/migrations/018_agent_observability.sql",
     ];
 
     for file in &migration_files {

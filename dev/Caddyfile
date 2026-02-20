@@ -1,0 +1,19 @@
+# Darkreach local dev reverse proxy
+# Caddy auto-generates locally-trusted HTTPS certs via `tls internal`
+
+darkreach.test {
+	tls internal
+	root * {$PROJECT_ROOT}/website/out
+	file_server
+	try_files {path} {path}.html /index.html
+}
+
+app.darkreach.test {
+	tls internal
+	reverse_proxy localhost:3001
+}
+
+api.darkreach.test {
+	tls internal
+	reverse_proxy localhost:7001
+}

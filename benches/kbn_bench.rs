@@ -40,7 +40,7 @@ fn bench_mr_screened_test_prime(c: &mut Criterion) {
     let candidate = candidate - 1u32;
     c.bench_function("mr_screened_test(M127, 25)", |b| {
         b.iter(|| {
-            primehunt::mr_screened_test(black_box(&candidate), black_box(25));
+            darkreach::mr_screened_test(black_box(&candidate), black_box(25));
         });
     });
 }
@@ -51,7 +51,7 @@ fn bench_mr_screened_test_composite(c: &mut Criterion) {
     let composite = composite + 1u32;
     c.bench_function("mr_screened_test(2^127+1, 25)", |b| {
         b.iter(|| {
-            let result = primehunt::mr_screened_test(black_box(&composite), black_box(25));
+            let result = darkreach::mr_screened_test(black_box(&composite), black_box(25));
             assert_eq!(result, IsPrime::No);
         });
     });

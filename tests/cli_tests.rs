@@ -9,15 +9,15 @@ use assert_cmd::Command;
 use predicates::prelude::*;
 
 #[allow(deprecated)]
-fn primehunt() -> Command {
-    Command::cargo_bin("primehunt").unwrap()
+fn darkreach() -> Command {
+    Command::cargo_bin("darkreach").unwrap()
 }
 
 // --- Help and arg validation (no database needed) ---
 
 #[test]
 fn help_shows_all_subcommands() {
-    primehunt()
+    darkreach()
         .arg("--help")
         .assert()
         .success()
@@ -42,7 +42,7 @@ fn help_shows_all_subcommands() {
 
 #[test]
 fn help_factorial_shows_args() {
-    primehunt()
+    darkreach()
         .args(["factorial", "--help"])
         .assert()
         .success()
@@ -54,7 +54,7 @@ fn help_factorial_shows_args() {
 
 #[test]
 fn help_kbn_shows_args() {
-    primehunt()
+    darkreach()
         .args(["kbn", "--help"])
         .assert()
         .success()
@@ -68,7 +68,7 @@ fn help_kbn_shows_args() {
 
 #[test]
 fn help_palindromic_shows_args() {
-    primehunt()
+    darkreach()
         .args(["palindromic", "--help"])
         .assert()
         .success()
@@ -81,7 +81,7 @@ fn help_palindromic_shows_args() {
 
 #[test]
 fn help_dashboard_shows_args() {
-    primehunt()
+    darkreach()
         .args(["dashboard", "--help"])
         .assert()
         .success()
@@ -93,7 +93,7 @@ fn help_dashboard_shows_args() {
 
 #[test]
 fn unknown_subcommand_fails() {
-    primehunt()
+    darkreach()
         .arg("nonexistent")
         .assert()
         .failure()
@@ -102,7 +102,7 @@ fn unknown_subcommand_fails() {
 
 #[test]
 fn factorial_missing_required_args_fails() {
-    primehunt()
+    darkreach()
         .args(["--database-url", "postgres://fake", "factorial"])
         .assert()
         .failure()
@@ -111,7 +111,7 @@ fn factorial_missing_required_args_fails() {
 
 #[test]
 fn kbn_missing_required_args_fails() {
-    primehunt()
+    darkreach()
         .args(["--database-url", "postgres://fake", "kbn"])
         .assert()
         .failure()
@@ -120,7 +120,7 @@ fn kbn_missing_required_args_fails() {
 
 #[test]
 fn palindromic_missing_required_args_fails() {
-    primehunt()
+    darkreach()
         .args(["--database-url", "postgres://fake", "palindromic"])
         .assert()
         .failure()
@@ -130,7 +130,7 @@ fn palindromic_missing_required_args_fails() {
 #[test]
 fn invalid_database_url_fails() {
     // An unreachable database URL should cause a connection error
-    primehunt()
+    darkreach()
         .env("DATABASE_URL", "postgres://invalid:invalid@127.0.0.1:59999/nonexistent")
         .args(["--database-url", "postgres://invalid:invalid@127.0.0.1:59999/nonexistent",
                "factorial", "--start", "1", "--end", "10"])
@@ -159,7 +159,7 @@ fn factorial_finds_known_primes() {
     // n!+1 primes: 1, 2, 3, 11, 27, 37, 41, 73, ...
     // n!-1 primes: 3, 4, 6, 7, 12, 14, 30, 32, ...
     // Range 1..50 should find several
-    primehunt()
+    darkreach()
         .args(["--database-url", &db_url, "factorial", "--start", "1", "--end", "50"])
         .timeout(std::time::Duration::from_secs(60))
         .assert()
@@ -171,7 +171,7 @@ fn factorial_finds_known_primes() {
 fn kbn_finds_mersenne_primes() {
     let db_url = db_url_or_skip!();
     // k=1, base=2: 2^n-1 primes for n=2,3,5,7,13,17,19
-    primehunt()
+    darkreach()
         .args([
             "--database-url", &db_url,
             "kbn", "--k", "1", "--base", "2", "--min-n", "2", "--max-n", "20",
@@ -186,7 +186,7 @@ fn kbn_finds_mersenne_primes() {
 fn palindromic_finds_known_primes() {
     let db_url = db_url_or_skip!();
     // Base 10, 1-5 digits: should find many palindromic primes (2,3,5,7,11,101,131,...)
-    primehunt()
+    darkreach()
         .args([
             "--database-url", &db_url,
             "palindromic", "--base", "10", "--min-digits", "1", "--max-digits", "5",
@@ -201,7 +201,7 @@ fn palindromic_finds_known_primes() {
 fn wagstaff_finds_known_primes() {
     let db_url = db_url_or_skip!();
     // Known Wagstaff primes: exponents 3,5,7,11,13,17,19,23,31,43
-    primehunt()
+    darkreach()
         .args([
             "--database-url", &db_url,
             "wagstaff", "--min-exp", "3", "--max-exp", "50",
@@ -216,7 +216,7 @@ fn wagstaff_finds_known_primes() {
 fn carol_kynea_finds_primes() {
     let db_url = db_url_or_skip!();
     // Carol primes at n=2,3,4,6,7,10,12,15
-    primehunt()
+    darkreach()
         .args([
             "--database-url", &db_url,
             "carol-kynea", "--min-n", "2", "--max-n", "16",

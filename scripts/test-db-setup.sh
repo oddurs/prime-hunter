@@ -2,12 +2,12 @@
 # Set up the test database by applying all migrations.
 # Usage: ./scripts/test-db-setup.sh [DATABASE_URL]
 #
-# Defaults to: postgres://postgres:test@localhost:5433/primehunt_test
+# Defaults to: postgres://postgres:test@localhost:5433/darkreach_test
 # (matching docker-compose.test.yml)
 
 set -euo pipefail
 
-DB_URL="${1:-postgres://postgres:test@localhost:5433/primehunt_test}"
+DB_URL="${1:-postgres://postgres:test@localhost:5433/darkreach_test}"
 
 echo "Setting up test database at: $DB_URL"
 

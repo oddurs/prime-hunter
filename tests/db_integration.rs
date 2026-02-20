@@ -8,7 +8,7 @@
 
 mod common;
 
-use primehunt::db::{Database, PrimeFilter};
+use darkreach::db::{Database, PrimeFilter};
 
 /// Skip the test if TEST_DATABASE_URL is not set.
 macro_rules! require_db {
@@ -38,7 +38,7 @@ async fn insert_prime_and_retrieve() {
     require_db!();
     let db = setup().await;
 
-    db.insert_prime("factorial", "5! + 1", 3, r#"{"form":"factorial"}"#, "deterministic")
+    db.insert_prime("factorial", "5! + 1", 3, r#"{"form":"factorial"}"#, "deterministic", None)
         .await
         .unwrap();
 
@@ -58,7 +58,7 @@ async fn insert_duplicate_expression_ignored() {
     require_db!();
     let db = setup().await;
 
-    db.insert_prime("factorial", "5! + 1", 3, "{}", "deterministic")
+    db.insert_prime("factorial", "5! + 1", 3, "{}", "deterministic", None)
         .await
         .unwrap();
 
@@ -81,13 +81,13 @@ async fn filter_primes_by_form() {
     require_db!();
     let db = setup().await;
 
-    db.insert_prime("factorial", "5! + 1", 3, "{}", "det")
+    db.insert_prime("factorial", "5! + 1", 3, "{}", "det", None)
         .await
         .unwrap();
-    db.insert_prime("kbn", "3*2^5+1", 2, "{}", "det")
+    db.insert_prime("kbn", "3*2^5+1", 2, "{}", "det", None)
         .await
         .unwrap();
-    db.insert_prime("palindromic", "10301", 5, "{}", "det")
+    db.insert_prime("palindromic", "10301", 5, "{}", "det", None)
         .await
         .unwrap();
 
@@ -105,13 +105,13 @@ async fn filter_primes_by_digit_range() {
     require_db!();
     let db = setup().await;
 
-    db.insert_prime("factorial", "5! + 1", 3, "{}", "det")
+    db.insert_prime("factorial", "5! + 1", 3, "{}", "det", None)
         .await
         .unwrap();
-    db.insert_prime("kbn", "3*2^100+1", 31, "{}", "det")
+    db.insert_prime("kbn", "3*2^100+1", 31, "{}", "det", None)
         .await
         .unwrap();
-    db.insert_prime("palindromic", "10301", 5, "{}", "det")
+    db.insert_prime("palindromic", "10301", 5, "{}", "det", None)
         .await
         .unwrap();
 
@@ -130,13 +130,13 @@ async fn filter_primes_search_text() {
     require_db!();
     let db = setup().await;
 
-    db.insert_prime("factorial", "73! + 1", 106, "{}", "det")
+    db.insert_prime("factorial", "73! + 1", 106, "{}", "det", None)
         .await
         .unwrap();
-    db.insert_prime("factorial", "73! - 1", 106, "{}", "det")
+    db.insert_prime("factorial", "73! - 1", 106, "{}", "det", None)
         .await
         .unwrap();
-    db.insert_prime("kbn", "3*2^5+1", 2, "{}", "det")
+    db.insert_prime("kbn", "3*2^5+1", 2, "{}", "det", None)
         .await
         .unwrap();
 
@@ -153,13 +153,13 @@ async fn sort_primes_ascending_descending() {
     require_db!();
     let db = setup().await;
 
-    db.insert_prime("factorial", "A", 10, "{}", "det")
+    db.insert_prime("factorial", "A", 10, "{}", "det", None)
         .await
         .unwrap();
-    db.insert_prime("factorial", "B", 20, "{}", "det")
+    db.insert_prime("factorial", "B", 20, "{}", "det", None)
         .await
         .unwrap();
-    db.insert_prime("factorial", "C", 5, "{}", "det")
+    db.insert_prime("factorial", "C", 5, "{}", "det", None)
         .await
         .unwrap();
 
@@ -191,7 +191,7 @@ async fn paginate_primes() {
     let db = setup().await;
 
     for i in 1..=5 {
-        db.insert_prime("factorial", &format!("{}! + 1", i), i, "{}", "det")
+        db.insert_prime("factorial", &format!("{}! + 1", i), i, "{}", "det", None)
             .await
             .unwrap();
     }
@@ -232,13 +232,13 @@ async fn get_filtered_count() {
     require_db!();
     let db = setup().await;
 
-    db.insert_prime("factorial", "5! + 1", 3, "{}", "det")
+    db.insert_prime("factorial", "5! + 1", 3, "{}", "det", None)
         .await
         .unwrap();
-    db.insert_prime("kbn", "3*2^5+1", 2, "{}", "det")
+    db.insert_prime("kbn", "3*2^5+1", 2, "{}", "det", None)
         .await
         .unwrap();
-    db.insert_prime("kbn", "3*2^7+1", 3, "{}", "det")
+    db.insert_prime("kbn", "3*2^7+1", 3, "{}", "det", None)
         .await
         .unwrap();
 
@@ -872,4 +872,144 @@ async fn expand_template_with_role() {
             "Child task should inherit role_name"
         );
     }
+}
+
+// --- Agent Observability ---
+
+#[tokio::test]
+async fn agent_log_insert_and_query() {
+    require_db!();
+    let db = setup().await;
+
+    let task = db
+        .create_agent_task("Log test task", "Testing logs", "normal", None, "test", None, 1, None)
+        .await
+        .unwrap();
+
+    // Insert 10 log lines: 7 stdout, 3 stderr
+    let mut entries: Vec<(String, i32, Option<String>, String)> = Vec::new();
+    for i in 1..=7 {
+        entries.push(("stdout".into(), i, Some("assistant".into()), format!("stdout line {}", i)));
+    }
+    for i in 1..=3 {
+        entries.push(("stderr".into(), i, None, format!("stderr line {}", i)));
+    }
+    db.insert_agent_logs_batch(task.id, &entries).await.unwrap();
+
+    // Query all logs
+    let all = db.get_agent_logs(task.id, None, 0, 100).await.unwrap();
+    assert_eq!(all.len(), 10);
+
+    // Query stdout only
+    let stdout_only = db.get_agent_logs(task.id, Some("stdout"), 0, 100).await.unwrap();
+    assert_eq!(stdout_only.len(), 7);
+    assert!(stdout_only.iter().all(|l| l.stream == "stdout"));
+
+    // Query stderr only
+    let stderr_only = db.get_agent_logs(task.id, Some("stderr"), 0, 100).await.unwrap();
+    assert_eq!(stderr_only.len(), 3);
+
+    // Test offset/limit pagination
+    let page = db.get_agent_logs(task.id, None, 5, 3).await.unwrap();
+    assert_eq!(page.len(), 3);
+
+    // Test count
+    let count = db.get_agent_log_count(task.id).await.unwrap();
+    assert_eq!(count, 10);
+}
+
+#[tokio::test]
+async fn agent_event_extended_fields() {
+    require_db!();
+    let db = setup().await;
+
+    let task = db
+        .create_agent_task("Event ext test", "Testing extended events", "normal", None, "test", None, 1, None)
+        .await
+        .unwrap();
+
+    db.insert_agent_event_ex(
+        Some(task.id),
+        "tool_call",
+        Some("claude"),
+        "Tool call: Read",
+        None,
+        Some("Read"),
+        Some(1500),
+        Some(300),
+        Some(250),
+    )
+    .await
+    .unwrap();
+
+    let events = db.get_agent_events(Some(task.id), 10).await.unwrap();
+    assert_eq!(events.len(), 1);
+    let ev = &events[0];
+    assert_eq!(ev.tool_name.as_deref(), Some("Read"));
+    assert_eq!(ev.input_tokens, Some(1500));
+    assert_eq!(ev.output_tokens, Some(300));
+    assert_eq!(ev.duration_ms, Some(250));
+
+    // Timeline also returns extended fields
+    let timeline = db.get_agent_task_timeline(task.id).await.unwrap();
+    assert_eq!(timeline.len(), 1);
+    assert_eq!(timeline[0].tool_name.as_deref(), Some("Read"));
+}
+
+#[tokio::test]
+async fn agent_daily_cost_analytics() {
+    require_db!();
+    let db = setup().await;
+
+    for (model, cost, tokens) in [("sonnet", 0.05, 5000i64), ("sonnet", 0.03, 3000), ("opus", 0.15, 8000)] {
+        let task = db
+            .create_agent_task("Cost test", "", "normal", Some(model), "test", None, 1, None)
+            .await
+            .unwrap();
+        let result = serde_json::json!({"text": "done"});
+        db.complete_agent_task(task.id, "completed", Some(&result), tokens, cost)
+            .await
+            .unwrap();
+    }
+
+    let daily = db.get_agent_daily_costs(30).await.unwrap();
+    assert!(!daily.is_empty());
+    let total_cost: f64 = daily.iter().map(|r| r.total_cost).sum();
+    assert!((total_cost - 0.23).abs() < 0.01);
+}
+
+#[tokio::test]
+async fn agent_token_anomaly_detection() {
+    require_db!();
+    let db = setup().await;
+
+    sqlx::raw_sql(
+        "INSERT INTO agent_templates (name, description, steps) VALUES
+          ('anomaly-test', 'Test template', '[]'::jsonb)
+         ON CONFLICT (name) DO NOTHING",
+    )
+    .execute(db.pool())
+    .await
+    .unwrap();
+
+    // 4 normal tasks (1000 tokens), 1 outlier (10000 tokens)
+    for tokens in [1000i64, 1000, 1000, 1000, 10000] {
+        let task = db
+            .create_agent_task("Anomaly test", "", "normal", Some("sonnet"), "test", None, 1, None)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE agent_tasks SET template_name = 'anomaly-test' WHERE id = $1")
+            .bind(task.id)
+            .execute(db.pool())
+            .await
+            .unwrap();
+        let result = serde_json::json!({"text": "done"});
+        db.complete_agent_task(task.id, "completed", Some(&result), tokens, 0.01)
+            .await
+            .unwrap();
+    }
+
+    let anomalies = db.get_agent_token_anomalies(2.0).await.unwrap();
+    assert!(!anomalies.is_empty());
+    assert!(anomalies.iter().all(|t| t.tokens_used > 5000));
 }

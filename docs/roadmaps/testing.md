@@ -1,6 +1,6 @@
 # Testing Roadmap
 
-Phased plan to expand primehunt from 100 algorithm unit tests to a comprehensive multi-layered test system. Each phase is self-contained and delivers incremental value.
+Phased plan to expand darkreach from 100 algorithm unit tests to a comprehensive multi-layered test system. Each phase is self-contained and delivers incremental value.
 
 ## Overview
 
@@ -192,7 +192,7 @@ services:
     image: postgres:16
     environment:
       POSTGRES_PASSWORD: test
-      POSTGRES_DB: primehunt_test
+      POSTGRES_DB: darkreach_test
     ports: ['5433:5432']
 ```
 
@@ -289,7 +289,7 @@ rust-integration:
   services:
     postgres:
       image: postgres:16
-      env: { POSTGRES_PASSWORD: test, POSTGRES_DB: primehunt_test }
+      env: { POSTGRES_PASSWORD: test, POSTGRES_DB: darkreach_test }
   steps:
     - run: cargo test --test '*'
 ```

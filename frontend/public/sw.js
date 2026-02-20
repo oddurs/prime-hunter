@@ -1,5 +1,5 @@
 /**
- * Primehunt Dashboard Service Worker
+ * Darkreach Dashboard Service Worker
  *
  * Provides offline caching for the static Next.js export:
  * - Install: pre-cache the app shell (page routes, icons, manifest)
@@ -7,7 +7,7 @@
  * - Fetch: cache-first for static assets, network-first for API, skip WebSocket
  */
 
-const CACHE_NAME = "primehunt-v1";
+const CACHE_NAME = "darkreach-v1";
 
 const SHELL_URLS = [
   "/",

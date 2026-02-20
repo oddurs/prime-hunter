@@ -128,10 +128,8 @@ pub fn search(
         kbn::bsgs_sieve(resume_from, max_n, k2, base, &sieve_primes, sieve_min_n);
 
     let total_range = max_n - resume_from + 1;
-    let sg_survivors: u64 = minus_surv_k
-        .iter()
-        .zip(minus_surv_k2.iter())
-        .filter(|(&a, &b)| a && b)
+    let sg_survivors: u64 = (0..minus_surv_k.len())
+        .filter(|&i| minus_surv_k.get(i) && minus_surv_k2.get(i))
         .count() as u64;
     eprintln!(
         "Sieve complete: {} Sophie Germain candidates of {} ({:.1}%)",
@@ -156,7 +154,7 @@ pub fn search(
         let survivors: Vec<u64> = (block_start..=block_end)
             .filter(|&n| {
                 let idx = (n - resume_from) as usize;
-                minus_surv_k[idx] && minus_surv_k2[idx]
+                minus_surv_k.get(idx) && minus_surv_k2.get(idx)
             })
             .collect();
 
@@ -181,14 +179,22 @@ pub fn search(
                 if p <= 0u32 {
                     return None;
                 }
-                let (r_p, cert_p) = kbn::test_prime(&p, k, base, n, false, mr_rounds);
+                // Adaptive P-1 pre-filter (Stage 1 + Stage 2, auto-tuned B1/B2)
+                if crate::p1::adaptive_p1_filter(&p) {
+                    return None;
+                }
+                let (r_p, cert_p, certificate_p) = kbn::test_prime(&p, k, base, n, false, mr_rounds);
                 if r_p == IsPrime::No {
                     return None;
                 }
 
                 // p is (probably) prime, now test 2p+1 = 2k*b^n - 1
                 let safe = Integer::from(&k2_int * &base_pow) - 1u32;
-                let (r_safe, cert_safe) = kbn::test_prime(&safe, k2, base, n, false, mr_rounds);
+                // Adaptive P-1 pre-filter (Stage 1 + Stage 2, auto-tuned B1/B2)
+                if crate::p1::adaptive_p1_filter(&safe) {
+                    return None;
+                }
+                let (r_safe, cert_safe, _certificate_safe) = kbn::test_prime(&safe, k2, base, n, false, mr_rounds);
                 if r_safe == IsPrime::No {
                     return None;
                 }
@@ -199,13 +205,15 @@ pub fn search(
                     ("deterministic", "deterministic") => "deterministic",
                     _ => "probabilistic",
                 };
-                Some((n, digits, certainty.to_string()))
+                // Use the certificate from p (the Sophie Germain prime itself)
+                let cert_json = certificate_p.as_ref().and_then(|c| serde_json::to_string(c).ok());
+                Some((n, digits, certainty.to_string(), cert_json))
             })
             .collect();
 
         progress.tested.fetch_add(block_len, Ordering::Relaxed);
 
-        for (n, digits, certainty) in found {
+        for (n, digits, certainty, cert_json) in found {
             let expr = format!("{}*{}^{}-1", k, base, n);
             progress.found.fetch_add(1, Ordering::Relaxed);
             if let Some(eb) = event_bus {
@@ -229,6 +237,7 @@ pub fn search(
                 digits,
                 search_params,
                 &certainty,
+                cert_json.as_deref(),
             )?;
             if let Some(wc) = worker_client {
                 wc.report_prime("sophie_germain", &expr, digits, search_params, &certainty);
@@ -364,11 +373,11 @@ mod tests {
         let p = kb_minus(3, 2, 2);
         let safe = kb_minus(6, 2, 2);
 
-        let (r_p, cert_p) = kbn::test_prime(&p, 3, 2, 2, false, 25);
+        let (r_p, cert_p, _) = kbn::test_prime(&p, 3, 2, 2, false, 25);
         assert_eq!(r_p, IsPrime::Yes, "3*2^2-1=11 should be prime");
         assert_eq!(cert_p, "deterministic");
 
-        let (r_safe, cert_safe) = kbn::test_prime(&safe, 6, 2, 2, false, 25);
+        let (r_safe, cert_safe, _) = kbn::test_prime(&safe, 6, 2, 2, false, 25);
         assert_eq!(r_safe, IsPrime::Yes, "6*2^2-1=23 should be prime");
         assert_eq!(cert_safe, "deterministic");
     }
@@ -387,7 +396,7 @@ mod tests {
         // Verify sieve correctness: if sieved out, must be composite
         for n in sieve_min_n..=200 {
             let idx = (n - 1) as usize;
-            if !minus_k[idx] {
+            if !minus_k.get(idx) {
                 let p = kb_minus(k, base, n);
                 assert_eq!(
                     p.is_probably_prime(15),
@@ -396,7 +405,7 @@ mod tests {
                     n
                 );
             }
-            if !minus_k2[idx] {
+            if !minus_k2.get(idx) {
                 let s = kb_minus(k2, base, n);
                 assert_eq!(
                     s.is_probably_prime(15),
@@ -411,14 +420,14 @@ mod tests {
         let sg_count = (sieve_min_n..=200)
             .filter(|&n| {
                 let idx = (n - 1) as usize;
-                minus_k[idx] && minus_k2[idx]
+                minus_k.get(idx) && minus_k2.get(idx)
             })
             .count();
         let k_count = (sieve_min_n..=200)
-            .filter(|&n| minus_k[(n - 1) as usize])
+            .filter(|&n| minus_k.get((n - 1) as usize))
             .count();
         let k2_count = (sieve_min_n..=200)
-            .filter(|&n| minus_k2[(n - 1) as usize])
+            .filter(|&n| minus_k2.get((n - 1) as usize))
             .count();
         assert!(sg_count <= k_count);
         assert!(sg_count <= k2_count);
@@ -497,9 +506,11 @@ mod tests {
         let (_p_k, minus_k) = kbn::bsgs_sieve(1, 100, 3, 2, &sieve_primes, sieve_min_n);
         let (_p_k2, minus_k2) = kbn::bsgs_sieve(1, 100, 6, 2, &sieve_primes, sieve_min_n);
 
-        let k_survivors = minus_k.iter().filter(|&&b| b).count();
-        let k2_survivors = minus_k2.iter().filter(|&&b| b).count();
-        let intersection = minus_k.iter().zip(minus_k2.iter()).filter(|(&a, &b)| a && b).count();
+        let k_survivors = minus_k.count_ones();
+        let k2_survivors = minus_k2.count_ones();
+        let intersection = (0..minus_k.len())
+            .filter(|&i| minus_k.get(i) && minus_k2.get(i))
+            .count();
 
         assert!(
             intersection <= k_survivors.min(k2_survivors),
@@ -516,11 +527,11 @@ mod tests {
         assert_eq!(p, 23);
         assert_eq!(safe, 47);
 
-        let (r_p, cert_p) = kbn::test_prime(&p, 3, 2, 3, false, 25);
+        let (r_p, cert_p, _) = kbn::test_prime(&p, 3, 2, 3, false, 25);
         assert_eq!(r_p, IsPrime::Yes, "23 should be prime");
         assert_eq!(cert_p, "deterministic");
 
-        let (r_safe, cert_safe) = kbn::test_prime(&safe, 6, 2, 3, false, 25);
+        let (r_safe, cert_safe, _) = kbn::test_prime(&safe, 6, 2, 3, false, 25);
         assert_eq!(r_safe, IsPrime::Yes, "47 should be prime");
         assert_eq!(cert_safe, "deterministic");
     }

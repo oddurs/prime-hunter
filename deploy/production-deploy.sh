@@ -1,25 +1,25 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Production deploy for primehunt to Hetzner CX22 (178.156.211.107)
-# Usage: ./deploy/production-deploy.sh [--skip-frontend] [--skip-searches]
+# Production deploy for darkreach to Hetzner CX22 (178.156.211.107)
+# Usage: ./deploy/production-deploy.sh [--skip-searches]
+#
+# Frontend is deployed to Vercel separately (see frontend/vercel.json).
 #
 # Performs:
 #   1. System hardening (swap, UFW, kernel tuning)
-#   2. Nginx reverse proxy install + config
+#   2. Nginx reverse proxy install + config (API + WebSocket only)
 #   3. Systemd coordinator service
-#   4. Frontend build + rsync
+#   4. (Frontend on Vercel — skipped)
 #   5. Journald log management
 #   6. Launch initial searches
 #   7. Verification checks
 
 SERVER="root@178.156.211.107"
-SKIP_FRONTEND=false
 SKIP_SEARCHES=false
 
 for arg in "$@"; do
     case "$arg" in
-        --skip-frontend) SKIP_FRONTEND=true ;;
         --skip-searches) SKIP_SEARCHES=true ;;
     esac
 done
@@ -27,7 +27,7 @@ done
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 
-echo "=== Primehunt Production Deploy ==="
+echo "=== Darkreach Production Deploy ==="
 echo "Server: $SERVER"
 echo ""
 
@@ -37,8 +37,8 @@ echo ""
 echo "==> [1/7] System hardening + nginx + systemd + journald"
 
 # Copy config files to server first
-scp "$SCRIPT_DIR/nginx-primehunt.conf" "$SERVER:/tmp/nginx-primehunt.conf"
-scp "$SCRIPT_DIR/primehunt-coordinator.service" "$SERVER:/tmp/primehunt-coordinator.service"
+scp "$SCRIPT_DIR/nginx-darkreach.conf" "$SERVER:/tmp/nginx-darkreach.conf"
+scp "$SCRIPT_DIR/darkreach-coordinator.service" "$SERVER:/tmp/darkreach-coordinator.service"
 
 ssh "$SERVER" bash -s <<'REMOTE_SETUP'
 set -euo pipefail
@@ -68,7 +68,7 @@ echo "y" | ufw enable || true
 ufw status
 
 echo "--- [1] Kernel tuning ---"
-cat > /etc/sysctl.d/99-primehunt.conf <<'SYSCTL'
+cat > /etc/sysctl.d/99-darkreach.conf <<'SYSCTL'
 net.core.somaxconn = 1024
 net.ipv4.tcp_tw_reuse = 1
 net.ipv4.tcp_fin_timeout = 15
@@ -79,8 +79,8 @@ echo "  Kernel params applied"
 
 echo "--- [2] Nginx ---"
 apt-get install -y -qq nginx
-cp /tmp/nginx-primehunt.conf /etc/nginx/sites-available/primehunt
-ln -sf /etc/nginx/sites-available/primehunt /etc/nginx/sites-enabled/primehunt
+cp /tmp/nginx-darkreach.conf /etc/nginx/sites-available/darkreach
+ln -sf /etc/nginx/sites-available/darkreach /etc/nginx/sites-enabled/darkreach
 rm -f /etc/nginx/sites-enabled/default
 nginx -t
 systemctl enable nginx
@@ -88,15 +88,15 @@ systemctl restart nginx
 echo "  Nginx configured and running"
 
 echo "--- [3] Systemd coordinator ---"
-cp /tmp/primehunt-coordinator.service /etc/systemd/system/primehunt-coordinator.service
+cp /tmp/darkreach-coordinator.service /etc/systemd/system/darkreach-coordinator.service
 systemctl daemon-reload
-systemctl enable primehunt-coordinator
-systemctl restart primehunt-coordinator
+systemctl enable darkreach-coordinator
+systemctl restart darkreach-coordinator
 echo "  Coordinator service started"
 
 echo "--- [5] Journald log management ---"
 mkdir -p /etc/systemd/journald.conf.d
-cat > /etc/systemd/journald.conf.d/primehunt.conf <<'JOURNALD'
+cat > /etc/systemd/journald.conf.d/darkreach.conf <<'JOURNALD'
 [Journal]
 SystemMaxUse=500M
 SystemMaxFileSize=50M
@@ -110,23 +110,10 @@ echo "--- Remote setup complete ---"
 REMOTE_SETUP
 
 # ---------------------------------------------------------------
-# Step 4: Build + deploy frontend
+# Step 4: Frontend (now on Vercel — nothing to deploy here)
 # ---------------------------------------------------------------
-if [ "$SKIP_FRONTEND" = false ]; then
-    echo ""
-    echo "==> [4/7] Building frontend locally"
-    cd "$PROJECT_DIR/frontend"
-    npm run build
-    echo "  Frontend built"
-
-    echo "==> [4/7] Deploying frontend to server"
-    ssh "$SERVER" "mkdir -p /opt/primehunt/frontend/out"
-    rsync -avz --delete "$PROJECT_DIR/frontend/out/" "$SERVER:/opt/primehunt/frontend/out/"
-    echo "  Frontend deployed"
-else
-    echo ""
-    echo "==> [4/7] Skipping frontend (--skip-frontend)"
-fi
+echo ""
+echo "==> [4/7] Frontend served by Vercel — skipping"
 
 # ---------------------------------------------------------------
 # Step 6: Launch initial searches
@@ -138,7 +125,7 @@ if [ "$SKIP_SEARCHES" = false ]; then
     # Wait for coordinator to be ready
     echo "  Waiting for coordinator..."
     for i in $(seq 1 15); do
-        if ssh "$SERVER" "curl -sf http://127.0.0.1:8080/api/status >/dev/null 2>&1"; then
+        if ssh "$SERVER" "curl -sf http://127.0.0.1:7001/api/status >/dev/null 2>&1"; then
             echo "  Coordinator ready"
             break
         fi
@@ -153,13 +140,13 @@ fi
 if [ "$SKIP_SEARCHES" = false ]; then
     # Palindromic primes: base 10, 11-21 digits
     echo "  Starting palindromic search (base 10, 11-21 digits)..."
-    ssh "$SERVER" 'curl -sf -X POST http://127.0.0.1:8080/api/searches \
+    ssh "$SERVER" 'curl -sf -X POST http://127.0.0.1:7001/api/searches \
         -H "Content-Type: application/json" \
         -d '"'"'{"search_type":"palindromic","base":10,"min_digits":11,"max_digits":21}'"'"' || echo "  (may already exist)"'
 
     # k*b^n +/- 1: k=3, base=2, n=10000-100000
     echo "  Starting kbn search (k=3, 2^n, n=10k-100k)..."
-    ssh "$SERVER" 'curl -sf -X POST http://127.0.0.1:8080/api/searches \
+    ssh "$SERVER" 'curl -sf -X POST http://127.0.0.1:7001/api/searches \
         -H "Content-Type: application/json" \
         -d '"'"'{"search_type":"kbn","k":3,"base":2,"min_n":10000,"max_n":100000}'"'"' || echo "  (may already exist)"'
 
@@ -196,8 +183,8 @@ check "Swap active"           "swapon --show | grep -q swapfile"
 check "UFW enabled"           "ufw status | grep -q 'Status: active'"
 check "Nginx running"         "systemctl is-active nginx"
 check "Nginx config valid"    "nginx -t 2>&1"
-check "Coordinator running"   "systemctl is-active primehunt-coordinator"
-check "API responds"          "curl -sf http://127.0.0.1:8080/api/status"
+check "Coordinator running"   "systemctl is-active darkreach-coordinator"
+check "API responds"          "curl -sf http://127.0.0.1:7001/api/status"
 check "Dashboard via nginx"   "curl -sf http://127.0.0.1/api/status"
 check "Security headers"      "curl -sI http://127.0.0.1/ | grep -qi 'x-content-type-options'"
 
@@ -210,6 +197,6 @@ echo "=== Deploy complete ==="
 echo "Dashboard: http://178.156.211.107"
 echo ""
 echo "Useful commands:"
-echo "  ssh $SERVER journalctl -u primehunt-coordinator -f"
-echo "  ssh $SERVER systemctl status primehunt-coordinator"
+echo "  ssh $SERVER journalctl -u darkreach-coordinator -f"
+echo "  ssh $SERVER systemctl status darkreach-coordinator"
 echo "  curl http://178.156.211.107/api/searches"

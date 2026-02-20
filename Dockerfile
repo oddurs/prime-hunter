@@ -1,26 +1,28 @@
-# Multi-stage Docker build for primehunt
+# Multi-stage Docker build for darkreach
 #
-# Stage 1: Build the Next.js static frontend
-# Stage 2: Build the Rust release binary (with GMP)
-# Stage 3: Minimal runtime image with binary + static assets
+# Stage 1: Build the Rust release binary (with GMP)
+# Stage 2: Minimal runtime image with binary
+#
+# Frontend is deployed to Vercel separately — not bundled here.
 #
 # Usage:
-#   docker build -t primehunt .
-#   docker run -e DATABASE_URL=postgres://... -p 8080:8080 primehunt
+#   docker build -t darkreach .
+#   docker run -e DATABASE_URL=postgres://... -p 7001:7001 darkreach
+#
+# Build args:
+#   RUST_TARGET_CPU  - CPU target for RUSTFLAGS (default: x86-64-v3 for AVX2)
+#
+# Volunteer mode:
+#   docker run -e API_KEY=ph_xxx -e SERVER=https://darkreach.example.com \
+#     ghcr.io/oddurs/darkreach volunteer
 
-# ── Stage 1: Frontend build ──────────────────────────────────────
-FROM node:22-slim AS frontend-build
-WORKDIR /app/frontend
-
-COPY frontend/package.json frontend/package-lock.json ./
-RUN npm ci --ignore-scripts
-
-COPY frontend/ ./
-RUN npm run build
-
-# ── Stage 2: Rust build ─────────────────────────────────────────
+# ── Stage 1: Rust build ─────────────────────────────────────────
 FROM rust:1-bookworm AS rust-build
 WORKDIR /app
+
+# AVX2 (x86-64-v3) for modern servers; override for older or ARM targets
+ARG RUST_TARGET_CPU=x86-64-v3
+ENV RUSTFLAGS="-C target-cpu=${RUST_TARGET_CPU}"
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libgmp-dev m4 pkg-config \
@@ -39,18 +41,27 @@ COPY src/ src/
 RUN touch src/main.rs src/lib.rs \
     && cargo build --release
 
-# ── Stage 3: Runtime ─────────────────────────────────────────────
+# ── Stage 2: Runtime ─────────────────────────────────────────────
 FROM debian:bookworm-slim AS runtime
 WORKDIR /app
+
+# OCI metadata labels
+LABEL org.opencontainers.image.title="darkreach" \
+      org.opencontainers.image.description="Volunteer computing platform for hunting special-form prime numbers" \
+      org.opencontainers.image.source="https://github.com/oddurs/darkreach" \
+      org.opencontainers.image.licenses="MIT"
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libgmp10 ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-COPY --from=rust-build /app/target/release/primehunt /usr/local/bin/primehunt
-COPY --from=frontend-build /app/frontend/out/ /app/frontend/out/
+COPY --from=rust-build /app/target/release/darkreach /usr/local/bin/darkreach
 
-EXPOSE 8080
+EXPOSE 7001
 
-ENTRYPOINT ["primehunt"]
-CMD ["dashboard", "--port", "8080", "--static-dir", "/app/frontend/out"]
+# Health check for container orchestration (K8s uses its own probes instead)
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD ["darkreach", "--help"]
+
+ENTRYPOINT ["darkreach"]
+CMD ["dashboard", "--port", "7001"]

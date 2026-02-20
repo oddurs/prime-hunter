@@ -16,7 +16,7 @@
 //! # Usage
 //!
 //! ```ignore
-//! use primehunt::gwnum::{GwContext, GwError};
+//! use darkreach::gwnum::{GwContext, GwError};
 //!
 //! let mut ctx = GwContext::new(3, 2, 50000, 1)?;  // mod 3*2^50000+1
 //! let mut a = ctx.alloc();

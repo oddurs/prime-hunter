@@ -1,6 +1,6 @@
 ---
 name: Bug Report
-about: Report a bug in primehunt
+about: Report a bug in darkreach
 labels: bug
 ---
 
@@ -22,7 +22,7 @@ labels: bug
 
 - OS:
 - Rust version:
-- primehunt version/commit:
+- darkreach version/commit:
 
 ## Logs / output
 

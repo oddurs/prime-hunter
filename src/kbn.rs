@@ -61,6 +61,7 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Instant;
 
+use crate::certificate::PrimalityCertificate;
 use crate::checkpoint::{self, Checkpoint};
 use crate::db::Database;
 use crate::events::{self, EventBus};
@@ -74,9 +75,9 @@ use crate::{exact_digits, sieve};
 /// a^((p-1)/2) ≡ -1 (mod p), then p is deterministically prime.
 /// A single modular exponentiation replaces 15+ Miller-Rabin rounds.
 ///
-/// Returns Some(true) for deterministic prime, Some(false) for composite,
-/// None if inconclusive (fall back to Miller-Rabin).
-pub(crate) fn proth_test(p: &Integer) -> Option<bool> {
+/// Returns `Some((true, Some(a)))` for deterministic prime (with witness base `a`),
+/// `Some((false, None))` for composite, `None` if inconclusive.
+pub(crate) fn proth_test(p: &Integer) -> Option<(bool, Option<u32>)> {
     let p_minus_1 = Integer::from(p - 1u32);
     let exp = Integer::from(&p_minus_1 >> 1u32); // (p-1)/2
 
@@ -87,14 +88,14 @@ pub(crate) fn proth_test(p: &Integer) -> Option<bool> {
         match Integer::from(a).pow_mod(&exp, p) {
             Ok(result) => {
                 if result == p_minus_1 {
-                    return Some(true); // Deterministically prime
+                    return Some((true, Some(a))); // Deterministically prime
                 }
                 if result != 1u32 {
-                    return Some(false); // Failed Fermat test → composite
+                    return Some((false, None)); // Failed Fermat test → composite
                 }
                 // result == 1: quadratic residue, try next base
             }
-            Err(_) => return Some(false), // gcd(a, p) > 1 → composite
+            Err(_) => return Some((false, None)), // gcd(a, p) > 1 → composite
         }
     }
     None // All bases inconclusive
@@ -105,7 +106,7 @@ pub(crate) fn proth_test(p: &Integer) -> Option<bool> {
 /// Generalization of Proth's theorem. If a^(p-1) ≡ 1 (mod p) and
 /// gcd(a^((p-1)/q) - 1, p) = 1 for each prime factor q of b, then p is prime
 /// (provided b^n > sqrt(p), i.e., k < b^n).
-fn pocklington_test(p: &Integer, base: u32) -> Option<bool> {
+fn pocklington_test(p: &Integer, base: u32) -> Option<(bool, Option<u32>)> {
     let p_minus_1 = Integer::from(p - 1u32);
 
     // Get prime factors of base for the Pocklington condition
@@ -117,10 +118,10 @@ fn pocklington_test(p: &Integer, base: u32) -> Option<bool> {
         // Check a^(p-1) ≡ 1 (mod p) (Fermat test)
         let fermat = match a_int.clone().pow_mod(&p_minus_1, p) {
             Ok(r) => r,
-            Err(_) => return Some(false),
+            Err(_) => return Some((false, None)),
         };
         if fermat != 1u32 {
-            return Some(false); // Composite
+            return Some((false, None)); // Composite
         }
 
         // Check gcd(a^((p-1)/q) - 1, p) = 1 for each prime factor q of base
@@ -129,7 +130,7 @@ fn pocklington_test(p: &Integer, base: u32) -> Option<bool> {
             let exp_q = Integer::from(&p_minus_1 / q);
             let r = match a_int.clone().pow_mod(&exp_q, p) {
                 Ok(r) => r,
-                Err(_) => return Some(false),
+                Err(_) => return Some((false, None)),
             };
             let g = (r - 1u32).gcd(p);
             if g != 1u32 {
@@ -139,7 +140,7 @@ fn pocklington_test(p: &Integer, base: u32) -> Option<bool> {
         }
 
         if all_coprime {
-            return Some(true); // Deterministically prime
+            return Some((true, Some(a))); // Deterministically prime
         }
     }
     None
@@ -230,14 +231,14 @@ pub(crate) fn lucas_v_k(k: u64, p_val: u32, n: &Integer) -> Integer {
 /// Lucas-Lehmer-Riesel (LLR) deterministic primality test for N = k*2^n - 1.
 ///
 /// Requires: k odd, k < 2^n, n >= 3.
-/// Returns Some(true) for proven prime, Some(false) for composite,
-/// None if preconditions not met (fall back to Miller-Rabin).
+/// Returns `Some((true, Some(seed_str)))` for proven prime (with seed `u_0 = V_k(P,1) mod N`),
+/// `Some((false, None))` for composite, `None` if preconditions not met.
 ///
 /// Includes Gerbicz-style error checking: periodic checkpoints during the
 /// squaring loop, with automatic rollback and recomputation if a hardware
 /// error corrupts the residue. When a prime is found, the last portion is
 /// independently verified from a checkpoint to confirm the result.
-pub(crate) fn llr_test(candidate: &Integer, k: u64, n: u64) -> Option<bool> {
+pub(crate) fn llr_test(candidate: &Integer, k: u64, n: u64) -> Option<(bool, Option<String>)> {
     // Guard: LLR can give false negatives for very small n
     if n < 3 {
         return None;
@@ -252,6 +253,7 @@ pub(crate) fn llr_test(candidate: &Integer, k: u64, n: u64) -> Option<bool> {
 
     // Compute u_0 = V_k(P, 1) mod N
     let mut u = lucas_v_k(k, p_val, candidate);
+    let seed_str = u.to_string();
 
     // Iterate n-2 squarings: u = u^2 - 2 mod N
     let iters = n - 2;
@@ -362,11 +364,16 @@ pub(crate) fn llr_test(candidate: &Integer, k: u64, n: u64) -> Option<bool> {
         }
     }
 
-    Some(is_prime)
+    if is_prime {
+        Some((true, Some(seed_str)))
+    } else {
+        Some((false, None))
+    }
 }
 
 /// Test primality using the best available method.
 /// Uses Proth/Pocklington for k*b^n+1 when applicable, falls back to Miller-Rabin.
+/// Returns `(IsPrime, proof_method_label, Option<PrimalityCertificate>)`.
 pub(crate) fn test_prime(
     candidate: &Integer,
     k: u64,
@@ -374,7 +381,7 @@ pub(crate) fn test_prime(
     n: u64,
     is_plus: bool,
     mr_rounds: u32,
-) -> (IsPrime, &'static str) {
+) -> (IsPrime, &'static str, Option<PrimalityCertificate>) {
     // Proth/Pocklington only applies to +1 form where k < b^n
     let can_use_n1_test = is_plus && {
         if n >= 64 {
@@ -392,8 +399,13 @@ pub(crate) fn test_prime(
         };
 
         match result {
-            Some(true) => return (IsPrime::Yes, "deterministic"),
-            Some(false) => return (IsPrime::No, ""),
+            Some((true, witness_base)) => {
+                let cert = PrimalityCertificate::Proth {
+                    base: witness_base.unwrap_or(0),
+                };
+                return (IsPrime::Yes, "deterministic", Some(cert));
+            }
+            Some((false, _)) => return (IsPrime::No, "", None),
             None => {} // fall through to Miller-Rabin
         }
     }
@@ -402,20 +414,31 @@ pub(crate) fn test_prime(
     if !is_plus && base == 2 && k % 2 == 1 {
         let can_use_llr = if n >= 64 { true } else { k < (1u64 << n) };
         if can_use_llr {
+            // Quick MR pre-screen (1 round) rejects ~75% of composites before
+            // the expensive O(n-2) LLR squaring loop, for the cost of a single
+            // modular exponentiation.
+            if candidate.is_probably_prime(1) == IsPrime::No {
+                return (IsPrime::No, "", None);
+            }
             match llr_test(candidate, k, n) {
-                Some(true) => return (IsPrime::Yes, "deterministic"),
-                Some(false) => return (IsPrime::No, ""),
+                Some((true, seed)) => {
+                    let cert = PrimalityCertificate::Llr {
+                        k,
+                        n,
+                        seed: seed.unwrap_or_default(),
+                    };
+                    return (IsPrime::Yes, "deterministic", Some(cert));
+                }
+                Some((false, _)) => return (IsPrime::No, "", None),
                 None => {} // fall through to Miller-Rabin
             }
         }
     }
 
-    // P-1 factoring pre-filter for large candidates
-    // Costs ~1 modular exponentiation but catches 1-5% of composites that survive the sieve
-    if candidate.significant_bits() > 50_000
-        && crate::p1::is_p1_composite(candidate, 1_000_000)
-    {
-        return (IsPrime::No, "");
+    // Adaptive P-1 composite pre-filter — auto-tunes B1/B2 by candidate size,
+    // uses Stage 1 + Stage 2 to catch composites with one partially-smooth factor.
+    if crate::p1::adaptive_p1_filter(candidate) {
+        return (IsPrime::No, "", None);
     }
 
     // Try GWNUM direct FFI for large candidates (when --features gwnum is enabled)
@@ -425,14 +448,14 @@ pub(crate) fn test_prime(
         if digits >= 10_000 {
             if is_plus && base == 2 {
                 match crate::gwnum::gwnum_proth(k, base, n) {
-                    Ok(Some(true)) => return (IsPrime::Yes, "deterministic"),
-                    Ok(Some(false)) => return (IsPrime::No, ""),
+                    Ok(Some(true)) => return (IsPrime::Yes, "deterministic", None),
+                    Ok(Some(false)) => return (IsPrime::No, "", None),
                     Ok(None) | Err(_) => {} // fall through
                 }
             } else if !is_plus && base == 2 && k % 2 == 1 {
                 match crate::gwnum::gwnum_llr(k, n) {
-                    Ok(Some(true)) => return (IsPrime::Yes, "deterministic"),
-                    Ok(Some(false)) => return (IsPrime::No, ""),
+                    Ok(Some(true)) => return (IsPrime::Yes, "deterministic", None),
+                    Ok(Some(false)) => return (IsPrime::No, "", None),
                     Ok(None) | Err(_) => {} // fall through
                 }
             }
@@ -445,30 +468,38 @@ pub(crate) fn test_prime(
             crate::prst::PrstResult::Prime {
                 is_deterministic, ..
             } => {
+                let cert = Some(PrimalityCertificate::Prst {
+                    method: format!("k={}*{}^{}{}1", k, base, n, if is_plus { "+" } else { "-" }),
+                });
                 if is_deterministic {
-                    return (IsPrime::Yes, "deterministic");
+                    return (IsPrime::Yes, "deterministic", cert);
                 } else {
-                    return (IsPrime::Probably, "probabilistic");
+                    return (IsPrime::Probably, "probabilistic", cert);
                 }
             }
-            crate::prst::PrstResult::Composite => return (IsPrime::No, ""),
+            crate::prst::PrstResult::Composite => return (IsPrime::No, "", None),
             crate::prst::PrstResult::Unavailable { .. } => {} // fall through to MR
         }
     }
 
     // Two-round MR pre-screen before full Miller-Rabin
     if mr_rounds > 2 && candidate.is_probably_prime(2) == IsPrime::No {
-        return (IsPrime::No, "");
+        return (IsPrime::No, "", None);
     }
 
     // Standard Miller-Rabin
     let r = candidate.is_probably_prime(mr_rounds);
-    let cert = match r {
-        IsPrime::Yes => "deterministic",
-        IsPrime::Probably => "probabilistic",
-        IsPrime::No => "",
+    let (cert_label, cert) = match r {
+        IsPrime::Yes => ("deterministic", None),
+        IsPrime::Probably => (
+            "probabilistic",
+            Some(PrimalityCertificate::MillerRabin {
+                rounds: mr_rounds,
+            }),
+        ),
+        IsPrime::No => ("", None),
     };
-    (r, cert)
+    (r, cert_label, cert)
 }
 
 
@@ -482,10 +513,10 @@ pub(crate) fn bsgs_sieve(
     base: u32,
     sieve_primes: &[u64],
     sieve_min_n: u64,
-) -> (Vec<bool>, Vec<bool>) {
+) -> (sieve::BitSieve, sieve::BitSieve) {
     let range = (max_n - min_n + 1) as usize;
-    let mut plus_survives = vec![true; range];
-    let mut minus_survives = vec![true; range];
+    let mut plus_survives = sieve::BitSieve::new_all_set(range);
+    let mut minus_survives = sieve::BitSieve::new_all_set(range);
 
     let base_u64 = base as u64;
     let total_primes = sieve_primes.len();
@@ -529,7 +560,7 @@ pub(crate) fn bsgs_sieve(
             let mut n = first;
             while n <= max_n {
                 if n >= sieve_min_n {
-                    plus_survives[(n - min_n) as usize] = false;
+                    plus_survives.clear((n - min_n) as usize);
                 }
                 n += order;
             }
@@ -549,7 +580,7 @@ pub(crate) fn bsgs_sieve(
             let mut n = first;
             while n <= max_n {
                 if n >= sieve_min_n {
-                    minus_survives[(n - min_n) as usize] = false;
+                    minus_survives.clear((n - min_n) as usize);
                 }
                 n += order;
             }
@@ -613,8 +644,8 @@ pub fn search(
     );
     let (plus_survives, minus_survives) =
         bsgs_sieve(resume_from, max_n, k, base, &sieve_primes, sieve_min_n);
-    let bsgs_plus_survivors: u64 = plus_survives.iter().filter(|&&b| b).count() as u64;
-    let bsgs_minus_survivors: u64 = minus_survives.iter().filter(|&&b| b).count() as u64;
+    let bsgs_plus_survivors = plus_survives.count_ones() as u64;
+    let bsgs_minus_survivors = minus_survives.count_ones() as u64;
     let total_range = max_n - resume_from + 1;
     eprintln!(
         "BSGS sieve complete: +1 survivors {}/{} ({:.1}%), -1 survivors {}/{} ({:.1}%)",
@@ -641,8 +672,8 @@ pub fn search(
         let survivors: Vec<(u64, bool, bool)> = (block_start..=block_end)
             .filter_map(|n| {
                 let idx = (n - resume_from) as usize;
-                let tp = plus_survives[idx];
-                let tm = minus_survives[idx];
+                let tp = plus_survives.get(idx);
+                let tm = minus_survives.get(idx);
                 if tp || tm {
                     Some((n, tp, tm))
                 } else {
@@ -670,10 +701,19 @@ pub fn search(
 
                 let plus_result = if test_plus {
                     let plus = Integer::from(&kb + 1u32);
-                    let (r, cert) = test_prime(&plus, k, base, n, true, mr_rounds);
+                    let (r, cert_label, certificate) =
+                        test_prime(&plus, k, base, n, true, mr_rounds);
                     if r != IsPrime::No {
                         let digits = exact_digits(&plus);
-                        Some((format!("{}*{}^{} + 1", k, base, n), digits, cert.to_string()))
+                        let cert_json = certificate
+                            .as_ref()
+                            .and_then(|c| serde_json::to_string(c).ok());
+                        Some((
+                            format!("{}*{}^{} + 1", k, base, n),
+                            digits,
+                            cert_label.to_string(),
+                            cert_json,
+                        ))
                     } else {
                         None
                     }
@@ -683,10 +723,19 @@ pub fn search(
 
                 let minus_result = if test_minus {
                     let minus = Integer::from(&kb - 1u32);
-                    let (r, cert) = test_prime(&minus, k, base, n, false, mr_rounds);
+                    let (r, cert_label, certificate) =
+                        test_prime(&minus, k, base, n, false, mr_rounds);
                     if r != IsPrime::No {
                         let digits = exact_digits(&minus);
-                        Some((format!("{}*{}^{} - 1", k, base, n), digits, cert.to_string()))
+                        let cert_json = certificate
+                            .as_ref()
+                            .and_then(|c| serde_json::to_string(c).ok());
+                        Some((
+                            format!("{}*{}^{} - 1", k, base, n),
+                            digits,
+                            cert_label.to_string(),
+                            cert_json,
+                        ))
                     } else {
                         None
                     }
@@ -700,7 +749,7 @@ pub fn search(
 
         progress.tested.fetch_add(block_len * 2, Ordering::Relaxed);
 
-        for (expr, digits, certainty) in found_primes {
+        for (expr, digits, certainty, cert_json) in found_primes {
             progress.found.fetch_add(1, Ordering::Relaxed);
             if let Some(eb) = event_bus {
                 eb.emit(events::Event::PrimeFound {
@@ -716,7 +765,15 @@ pub fn search(
                     expr, digits, certainty
                 );
             }
-            db.insert_prime_sync(rt, "kbn", &expr, digits, search_params, &certainty)?;
+            db.insert_prime_sync(
+                rt,
+                "kbn",
+                &expr,
+                digits,
+                search_params,
+                &certainty,
+                cert_json.as_deref(),
+            )?;
             if let Some(wc) = worker_client {
                 wc.report_prime("kbn", &expr, digits, search_params, &certainty);
             }
@@ -779,7 +836,11 @@ mod tests {
         for &n in &[3u64, 5, 7, 13, 17, 19, 31] {
             let candidate = make_candidate(1, n);
             let result = llr_test(&candidate, 1, n);
-            assert_eq!(result, Some(true), "2^{} - 1 should be prime", n);
+            assert!(
+                matches!(result, Some((true, Some(_)))),
+                "2^{} - 1 should be prime",
+                n
+            );
         }
     }
 
@@ -788,7 +849,11 @@ mod tests {
         for &n in &[4u64, 6, 8, 11] {
             let candidate = make_candidate(1, n);
             let result = llr_test(&candidate, 1, n);
-            assert_eq!(result, Some(false), "2^{} - 1 should be composite", n);
+            assert!(
+                matches!(result, Some((false, None))),
+                "2^{} - 1 should be composite",
+                n
+            );
         }
     }
 
@@ -800,7 +865,11 @@ mod tests {
         for &n in &[3u64, 4, 6, 7, 11, 18] {
             let candidate = make_candidate(3, n);
             let result = llr_test(&candidate, 3, n);
-            assert_eq!(result, Some(true), "3*2^{} - 1 should be prime", n);
+            assert!(
+                matches!(result, Some((true, Some(_)))),
+                "3*2^{} - 1 should be prime",
+                n
+            );
         }
     }
 
@@ -809,7 +878,11 @@ mod tests {
         for &n in &[5u64, 8] {
             let candidate = make_candidate(3, n);
             let result = llr_test(&candidate, 3, n);
-            assert_eq!(result, Some(false), "3*2^{} - 1 should be composite", n);
+            assert!(
+                matches!(result, Some((false, None))),
+                "3*2^{} - 1 should be composite",
+                n
+            );
         }
     }
 
@@ -818,7 +891,11 @@ mod tests {
         for &n in &[4u64, 8, 10] {
             let candidate = make_candidate(5, n);
             let result = llr_test(&candidate, 5, n);
-            assert_eq!(result, Some(true), "5*2^{} - 1 should be prime", n);
+            assert!(
+                matches!(result, Some((true, Some(_)))),
+                "5*2^{} - 1 should be prime",
+                n
+            );
         }
     }
 
@@ -852,16 +929,17 @@ mod tests {
     fn test_prime_llr_deterministic() {
         // 2^31 - 1 = 2147483647 (Mersenne prime)
         let candidate = make_candidate(1, 31);
-        let (result, cert) = test_prime(&candidate, 1, 2, 31, false, 25);
+        let (result, cert, certificate) = test_prime(&candidate, 1, 2, 31, false, 25);
         assert_eq!(result, IsPrime::Yes);
         assert_eq!(cert, "deterministic");
+        assert!(matches!(certificate, Some(PrimalityCertificate::Llr { .. })));
     }
 
     #[test]
     fn test_prime_llr_composite() {
         // 2^11 - 1 = 2047 = 23 * 89 (composite)
         let candidate = make_candidate(1, 11);
-        let (result, _) = test_prime(&candidate, 1, 2, 11, false, 25);
+        let (result, _, _) = test_prime(&candidate, 1, 2, 11, false, 25);
         assert_eq!(result, IsPrime::No);
     }
 
@@ -869,7 +947,7 @@ mod tests {
     fn test_prime_non_base2_still_probabilistic() {
         // 3*3^5 - 1 = 728, not prime; but check that non-base-2 doesn't use LLR
         let candidate = Integer::from(3u32) * Integer::from(3u32).pow(5) - 1u32;
-        let (result, cert) = test_prime(&candidate, 3, 3, 5, false, 25);
+        let (result, cert, _) = test_prime(&candidate, 3, 3, 5, false, 25);
         // Should not be "deterministic" from LLR (it's not base-2)
         assert_eq!(result, IsPrime::No);
         assert_ne!(cert, "deterministic");
@@ -977,16 +1055,102 @@ mod tests {
             for n in min_n..=max_n {
                 let idx = (n - min_n) as usize;
                 assert_eq!(
-                    bsgs_plus[idx], old_plus[idx],
+                    bsgs_plus.get(idx), old_plus[idx],
                     "k={} base={} n={}: +1 mismatch (bsgs={}, old={})",
-                    k, base, n, bsgs_plus[idx], old_plus[idx]
+                    k, base, n, bsgs_plus.get(idx), old_plus[idx]
                 );
                 assert_eq!(
-                    bsgs_minus[idx], old_minus[idx],
+                    bsgs_minus.get(idx), old_minus[idx],
                     "k={} base={} n={}: -1 mismatch (bsgs={}, old={})",
-                    k, base, n, bsgs_minus[idx], old_minus[idx]
+                    k, base, n, bsgs_minus.get(idx), old_minus[idx]
                 );
             }
+        }
+    }
+
+    // ---- MR pre-screen tests ----
+
+    #[test]
+    fn mr_prescreen_rejects_composite_before_llr() {
+        // 2^11 - 1 = 2047 = 23 × 89 (composite Mersenne number).
+        // The MR pre-screen should reject this before entering the expensive LLR loop.
+        let candidate = make_candidate(1, 11);
+        assert_eq!(candidate, Integer::from(2047u32));
+        // Verify the pre-screen catches it (1-round MR rejects composites)
+        assert_eq!(candidate.is_probably_prime(1), IsPrime::No);
+        // And test_prime returns No
+        let (result, _, _) = test_prime(&candidate, 1, 2, 11, false, 25);
+        assert_eq!(result, IsPrime::No);
+    }
+
+    #[test]
+    fn mr_prescreen_passes_primes_through() {
+        // M_13 = 2^13 - 1 = 8191 (Mersenne prime).
+        // The MR pre-screen must not reject this — it should pass through to LLR
+        // and return a deterministic proof.
+        let candidate = make_candidate(1, 13);
+        assert_eq!(candidate, Integer::from(8191u32));
+        assert_ne!(candidate.is_probably_prime(1), IsPrime::No);
+        let (result, cert, _) = test_prime(&candidate, 1, 2, 13, false, 25);
+        assert_eq!(result, IsPrime::Yes);
+        assert_eq!(cert, "deterministic");
+    }
+
+    // ---- Certificate witness tests ----
+
+    #[test]
+    fn proth_test_returns_witness_base() {
+        // 3*2^2 + 1 = 13 (prime, Proth form with k=3 < 2^2=4)
+        let candidate = Integer::from(13u32);
+        let result = proth_test(&candidate);
+        assert!(
+            matches!(result, Some((true, Some(base))) if base > 0),
+            "Proth should return witness base for 13"
+        );
+    }
+
+    #[test]
+    fn llr_test_returns_seed() {
+        // M_13 = 2^13 - 1 = 8191 (Mersenne prime)
+        let candidate = make_candidate(1, 13);
+        let result = llr_test(&candidate, 1, 13);
+        match result {
+            Some((true, Some(seed))) => {
+                assert!(!seed.is_empty(), "LLR seed should be non-empty");
+            }
+            other => panic!("Expected Some((true, Some(seed))), got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_prime_proth_returns_certificate() {
+        // 3*2^2 + 1 = 13 (prime)
+        let candidate = Integer::from(13u32);
+        let (result, cert, certificate) = test_prime(&candidate, 3, 2, 2, true, 25);
+        assert_eq!(result, IsPrime::Yes);
+        assert_eq!(cert, "deterministic");
+        match certificate {
+            Some(PrimalityCertificate::Proth { base }) => {
+                assert!(base > 0, "Proth certificate should have base > 0");
+            }
+            other => panic!("Expected Proth certificate, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_prime_llr_returns_certificate() {
+        // 2^13 - 1 = 8191 (Mersenne prime)
+        let candidate = make_candidate(1, 13);
+        let (result, cert, certificate) = test_prime(&candidate, 1, 2, 13, false, 25);
+        assert_eq!(result, IsPrime::Yes);
+        assert_eq!(cert, "deterministic");
+        match certificate {
+            Some(PrimalityCertificate::Llr { k, n, seed }) => {
+                assert_eq!(k, 1);
+                assert_eq!(n, 13);
+                assert!(!seed.is_empty(), "LLR seed should be non-empty");
+            }
+            other => panic!("Expected LLR certificate, got {:?}", other),
         }
     }
 }

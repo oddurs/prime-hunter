@@ -23,7 +23,7 @@ describe("LoginPage", () => {
 
   it("renders login form", () => {
     render(<LoginPage />);
-    expect(screen.getByText("primehunt")).toBeInTheDocument();
+    expect(screen.getByText("darkreach")).toBeInTheDocument();
     expect(screen.getByPlaceholderText("you@example.com")).toBeInTheDocument();
     expect(screen.getByPlaceholderText("Password")).toBeInTheDocument();
     expect(screen.getByText("Sign in")).toBeInTheDocument();

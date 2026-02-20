@@ -9,6 +9,7 @@
  */
 
 import { useState } from "react";
+import { API_BASE } from "@/lib/format";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -79,7 +80,7 @@ export function AddServerDialog({ open, onOpenChange, onDeployed }: AddServerDia
       if (sshKey.trim()) {
         body.ssh_key = sshKey.trim();
       }
-      const res = await fetch("/api/fleet/deploy", {
+      const res = await fetch(`${API_BASE}/api/fleet/deploy`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),

@@ -83,7 +83,7 @@ fn is_pepin_provable(b: u64) -> bool {
 /// falls back to Miller-Rabin otherwise.
 fn test_gf(candidate: &Integer, b: u64, _fermat_n: u32, mr_rounds: u32) -> (IsPrime, &'static str) {
     // Try Proth/Pépin test: a^((N-1)/2) ≡ -1 (mod N)
-    if let Some(result) = kbn::proth_test(candidate) {
+    if let Some((result, _witness)) = kbn::proth_test(candidate) {
         if result {
             let certainty = if is_pepin_provable(b) {
                 "deterministic"
@@ -275,6 +275,11 @@ pub fn search(
                     }
                 }
 
+                // Adaptive P-1 pre-filter (Stage 1 + Stage 2, auto-tuned B1/B2)
+                if crate::p1::adaptive_p1_filter(&candidate) {
+                    return None;
+                }
+
                 let (result, certainty) = test_gf(&candidate, b, fermat_n, mr_rounds);
                 if result == IsPrime::No {
                     return None;
@@ -306,7 +311,7 @@ pub fn search(
                     expr, digits, certainty
                 );
             }
-            db.insert_prime_sync(rt, "gen_fermat", &expr, digits, search_params, &certainty)?;
+            db.insert_prime_sync(rt, "gen_fermat", &expr, digits, search_params, &certainty, None)?;
             if let Some(wc) = worker_client {
                 wc.report_prime("gen_fermat", &expr, digits, search_params, &certainty);
             }

@@ -37,5 +37,5 @@ stop_pid_file() {
 
 stop_pid_file "Backend" "$BACKEND_PID_FILE"
 stop_pid_file "Frontend" "$FRONTEND_PID_FILE"
-pkill -f "primehunt.*dashboard" 2>/dev/null || true
+pkill -f "darkreach.*dashboard" 2>/dev/null || true
 pkill -f "next dev" 2>/dev/null || true

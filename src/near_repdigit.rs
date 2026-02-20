@@ -264,6 +264,11 @@ pub fn search(
                     }
                 }
 
+                // Adaptive P-1 pre-filter (Stage 1 + Stage 2, auto-tuned B1/B2)
+                if crate::p1::adaptive_p1_filter(&candidate) {
+                    return None;
+                }
+
                 let r = mr_screened_test(&candidate, mr_rounds);
                 if r != IsPrime::No {
                     let bls_ok = proof::bls_near_repdigit_proof(k, d, m, &candidate, &sieve_primes);
@@ -310,6 +315,7 @@ pub fn search(
                 digits,
                 search_params,
                 &certainty,
+                None,
             )?;
             if let Some(wc) = worker_client {
                 wc.report_prime("near_repdigit", &expr, digits, search_params, &certainty);

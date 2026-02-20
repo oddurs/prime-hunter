@@ -9,6 +9,7 @@ docs/
 ├── factorial-primes.md      # n! +/- 1: definition, known primes, records, testing strategies
 ├── palindromic-primes.md    # Palindromic primes: even-digit proof, distribution, records
 ├── kbn-primes.md            # k*b^n +/- 1: Proth/LLR/Mersenne theory, records, software
+├── landscape.md             # Distributed compute landscape (BOINC, GIMPS, PrimeGrid)
 ├── references.md            # OEIS, PrimePages, GIMPS, PrimeGrid, software links
 └── roadmaps/
     ├── engine.md            # Algorithm improvements (sieving, primality tests, new forms)

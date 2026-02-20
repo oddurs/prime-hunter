@@ -1,0 +1,76 @@
+# Values for kube-prometheus-stack when deploying alongside darkreach.
+#
+# Install: helm install monitoring prometheus-community/kube-prometheus-stack \
+#            -f monitoring-values.yaml
+#
+# This enables Prometheus scraping of darkreach's /metrics endpoint and
+# pre-loads the Grafana dashboard.
+
+prometheus:
+  prometheusSpec:
+    serviceMonitorSelectorNilUsesHelmValues: false
+
+grafana:
+  dashboardProviders:
+    dashboardproviders.yaml:
+      apiVersion: 1
+      providers:
+        - name: darkreach
+          orgId: 1
+          folder: Darkreach
+          type: file
+          disableDeletion: false
+          editable: true
+          options:
+            path: /var/lib/grafana/dashboards/darkreach
+
+  dashboardsConfigMaps:
+    darkreach: darkreach-grafana-dashboards
+
+alertmanager:
+  config:
+    route:
+      group_by: ['alertname', 'namespace']
+      group_wait: 30s
+      group_interval: 5m
+      repeat_interval: 4h
+      routes:
+        - match:
+            severity: critical
+          receiver: 'darkreach-critical'
+    receivers:
+      - name: 'darkreach-critical'
+        # Configure webhook, Slack, PagerDuty, etc.
+
+# Custom alerting rules for darkreach
+additionalPrometheusRulesMap:
+  darkreach:
+    groups:
+      - name: darkreach.rules
+        rules:
+          - alert: CoordinatorDown
+            expr: up{job="darkreach-coordinator"} == 0
+            for: 5m
+            labels:
+              severity: critical
+            annotations:
+              summary: "Darkreach coordinator is down"
+              description: "The darkreach coordinator has been unreachable for 5 minutes."
+
+          - alert: WorkersStuck
+            expr: darkreach_work_blocks_available > 0 and darkreach_workers_connected == 0
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Work blocks available but no workers connected"
+              description: "There are {{ $value }} available blocks but 0 workers for 10+ minutes."
+
+          - alert: HighBlockBacklog
+            expr: darkreach_work_blocks_available > 1000
+            for: 30m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Large work block backlog"
+              description: "{{ $value }} blocks are waiting — consider scaling up workers."

@@ -1,6 +1,6 @@
 # Test Infrastructure Guide
 
-How to set up, run, and maintain the primehunt test suite across all domains.
+How to set up, run, and maintain the darkreach test suite across all domains.
 
 ---
 
@@ -59,7 +59,7 @@ Integration tests live in `tests/` directory and compile as separate crates:
 
 ```rust
 // tests/db_integration.rs
-use primehunt::db::Database;
+use darkreach::db::Database;
 
 #[tokio::test]
 async fn insert_and_retrieve_prime() {
@@ -113,14 +113,14 @@ criterion = { version = "0.5", features = ["html_reports"] }
 
 ```bash
 # Start test PostgreSQL
-docker run -d --name primehunt-test-pg \
+docker run -d --name darkreach-test-pg \
   -e POSTGRES_PASSWORD=test \
-  -e POSTGRES_DB=primehunt_test \
+  -e POSTGRES_DB=darkreach_test \
   -p 5433:5432 \
   postgres:16
 
 # Apply migrations
-export DATABASE_URL=postgres://postgres:test@localhost:5433/primehunt_test
+export DATABASE_URL=postgres://postgres:test@localhost:5433/darkreach_test
 for f in supabase/migrations/*.sql; do
   psql "$DATABASE_URL" -f "$f"
 done
@@ -129,7 +129,7 @@ done
 cargo test --test '*'
 
 # Cleanup
-docker rm -f primehunt-test-pg
+docker rm -f darkreach-test-pg
 ```
 
 #### Option B: Docker Compose
@@ -141,7 +141,7 @@ services:
     image: postgres:16
     environment:
       POSTGRES_PASSWORD: test
-      POSTGRES_DB: primehunt_test
+      POSTGRES_DB: darkreach_test
     ports:
       - "5433:5432"
     volumes:
@@ -150,7 +150,7 @@ services:
 
 ```bash
 docker compose -f docker-compose.test.yml up -d
-DATABASE_URL=postgres://postgres:test@localhost:5433/primehunt_test cargo test --test '*'
+DATABASE_URL=postgres://postgres:test@localhost:5433/darkreach_test cargo test --test '*'
 docker compose -f docker-compose.test.yml down
 ```
 
@@ -162,7 +162,7 @@ services:
     image: postgres:16
     env:
       POSTGRES_PASSWORD: test
-      POSTGRES_DB: primehunt_test
+      POSTGRES_DB: darkreach_test
     ports: ['5432:5432']
     options: >-
       --health-cmd pg_isready
@@ -176,13 +176,13 @@ services:
 Shared test utilities in `tests/common/mod.rs`:
 
 ```rust
-use primehunt::db::Database;
+use darkreach::db::Database;
 use anyhow::Result;
 
 /// Connect to test database and apply migrations.
 pub async fn setup_test_db() -> Database {
     let url = std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://postgres:test@localhost:5433/primehunt_test".into());
+        .unwrap_or_else(|_| "postgres://postgres:test@localhost:5433/darkreach_test".into());
     Database::connect(&url).await.expect("failed to connect to test DB")
 }
 
@@ -191,7 +191,7 @@ pub async fn spawn_test_server() -> (String, tokio::task::JoinHandle<()>) {
     let port = portpicker::pick_unused_port().expect("no free port");
     let url = format!("http://localhost:{}", port);
     let handle = tokio::spawn(async move {
-        primehunt::dashboard::run(port, &db_url, &checkpoint_path, None)
+        darkreach::dashboard::run(port, &db_url, &checkpoint_path, None)
             .await
             .unwrap();
     });
@@ -239,7 +239,7 @@ Benchmark files live in `benches/`:
 ```rust
 // benches/sieve_bench.rs
 use criterion::{criterion_group, criterion_main, Criterion};
-use primehunt::sieve;
+use darkreach::sieve;
 
 fn bench_generate_primes(c: &mut Criterion) {
     c.bench_function("generate_primes_1m", |b| {
@@ -256,7 +256,7 @@ criterion_main!(benches);
 ```rust
 // tests/property_tests.rs
 use proptest::prelude::*;
-use primehunt::sieve;
+use darkreach::sieve;
 
 proptest! {
     #[test]
@@ -521,7 +521,7 @@ jobs:
         image: postgres:16
         env:
           POSTGRES_PASSWORD: test
-          POSTGRES_DB: primehunt_test
+          POSTGRES_DB: darkreach_test
         ports: ['5432:5432']
         options: >-
           --health-cmd pg_isready
@@ -536,11 +536,11 @@ jobs:
       - name: Apply migrations
         run: |
           for f in supabase/migrations/*.sql; do
-            PGPASSWORD=test psql -h localhost -U postgres -d primehunt_test -f "$f"
+            PGPASSWORD=test psql -h localhost -U postgres -d darkreach_test -f "$f"
           done
       - run: cargo test --test '*'
         env:
-          DATABASE_URL: postgres://postgres:test@localhost/primehunt_test
+          DATABASE_URL: postgres://postgres:test@localhost/darkreach_test
 
   rust-lint:
     name: Rust Lint
@@ -632,7 +632,7 @@ echo "All checks passed."
 ## 4. Test Organization Summary
 
 ```
-primehunt/
+darkreach/
 ├── src/                              # Unit tests inline (existing pattern)
 │   ├── sieve.rs                      # mod tests { ... }
 │   ├── kbn.rs                        # mod tests { ... }

@@ -17,7 +17,7 @@ proptest! {
         exp in 0u64..100,
         modulus in 2u64..10000,
     ) {
-        let result = primehunt::sieve::pow_mod(base, exp, modulus);
+        let result = darkreach::sieve::pow_mod(base, exp, modulus);
         let expected = {
             let b = Integer::from(base);
             let m = Integer::from(modulus);
@@ -41,9 +41,9 @@ proptest! {
         let p = small_primes[p_idx];
         let a = (a_mul % (p - 1)) + 1; // a in [1, p-1]
 
-        if let Some(inv) = primehunt::sieve::mod_inverse(a, p) {
-            let product = primehunt::sieve::pow_mod(a, 1, p) as u128
-                * primehunt::sieve::pow_mod(inv, 1, p) as u128;
+        if let Some(inv) = darkreach::sieve::mod_inverse(a, p) {
+            let product = darkreach::sieve::pow_mod(a, 1, p) as u128
+                * darkreach::sieve::pow_mod(inv, 1, p) as u128;
             prop_assert_eq!((product % p as u128) as u64, 1,
                 "mod_inverse({}, {}) = {}, but a*inv mod p = {}",
                 a, p, inv, (product % p as u128));
@@ -56,8 +56,8 @@ proptest! {
         a in 1u32..10000,
         b in 1u32..10000,
     ) {
-        let g = primehunt::sieve::gcd(a, b);
-        let g2 = primehunt::sieve::gcd(b, a);
+        let g = darkreach::sieve::gcd(a, b);
+        let g2 = darkreach::sieve::gcd(b, a);
         prop_assert_eq!(g, g2, "gcd({},{}) != gcd({},{})", a, b, b, a);
         prop_assert_eq!(a % g, 0, "gcd({},{})={} does not divide {}", a, b, g, a);
         prop_assert_eq!(b % g, 0, "gcd({},{})={} does not divide {}", a, b, g, b);
@@ -68,7 +68,7 @@ proptest! {
     fn prop_generate_primes_all_prime(
         limit in 10u64..10000,
     ) {
-        let primes = primehunt::sieve::generate_primes(limit);
+        let primes = darkreach::sieve::generate_primes(limit);
         for &p in &primes {
             let n = Integer::from(p);
             prop_assert!(
@@ -90,7 +90,7 @@ proptest! {
         let prime = Integer::from(1u32) << exp as u32;
         let prime = prime - 1u32;
         prop_assert!(
-            !primehunt::has_small_factor(&prime),
+            !darkreach::has_small_factor(&prime),
             "has_small_factor incorrectly flagged Mersenne prime M{}", exp
         );
     }
@@ -101,8 +101,8 @@ proptest! {
         exp in 1u32..500,
     ) {
         let n = Integer::from(2u32).pow(exp);
-        let est = primehunt::estimate_digits(&n);
-        let exact = primehunt::exact_digits(&n);
+        let est = darkreach::estimate_digits(&n);
+        let exact = darkreach::exact_digits(&n);
         let diff = if est > exact { est - exact } else { exact - est };
         prop_assert!(diff <= 1,
             "estimate_digits(2^{}) = {} but exact = {} (diff={})", exp, est, exact, diff);
@@ -122,12 +122,12 @@ proptest! {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("prop_test.json");
 
-        let cp = primehunt::checkpoint::Checkpoint::Factorial { last_n, start, end };
-        primehunt::checkpoint::save(&path, &cp).unwrap();
+        let cp = darkreach::checkpoint::Checkpoint::Factorial { last_n, start, end };
+        darkreach::checkpoint::save(&path, &cp).unwrap();
 
-        let loaded = primehunt::checkpoint::load(&path).unwrap();
+        let loaded = darkreach::checkpoint::load(&path).unwrap();
         match loaded {
-            primehunt::checkpoint::Checkpoint::Factorial {
+            darkreach::checkpoint::Checkpoint::Factorial {
                 last_n: ln, start: s, end: e,
             } => {
                 prop_assert_eq!(ln, last_n);
@@ -151,11 +151,11 @@ proptest! {
     ) {
         // m must be <= k, and if m==0, 2*d must be <= 9
         let m = (m_pct * k) / 100; // scale m to [0, k)
-        if !primehunt::near_repdigit::is_valid_params(k, d, m) {
+        if !darkreach::near_repdigit::is_valid_params(k, d, m) {
             return Ok(());
         }
 
-        let candidate = primehunt::near_repdigit::build_candidate(k, d, m);
+        let candidate = darkreach::near_repdigit::build_candidate(k, d, m);
         if candidate <= 0 {
             return Ok(());
         }
@@ -178,7 +178,7 @@ proptest! {
         a in 0u64..100000,
     ) {
         let n = 2 * n_half + 1; // ensure odd
-        let ctx = primehunt::sieve::MontgomeryCtx::new(n);
+        let ctx = darkreach::sieve::MontgomeryCtx::new(n);
         let a_mont = ctx.to_mont(a);
         let a_back = ctx.from_mont(a_mont);
         prop_assert_eq!(a_back, a % n,
@@ -194,11 +194,11 @@ proptest! {
         exp in 0u64..100,
     ) {
         let n = 2 * n_half + 1; // ensure odd
-        let ctx = primehunt::sieve::MontgomeryCtx::new(n);
+        let ctx = darkreach::sieve::MontgomeryCtx::new(n);
         let base_mont = ctx.to_mont(base % n);
         let result_mont = ctx.pow_mod(base_mont, exp);
         let result = ctx.from_mont(result_mont);
-        let expected = primehunt::sieve::pow_mod(base, exp, n);
+        let expected = darkreach::sieve::pow_mod(base, exp, n);
         prop_assert_eq!(result, expected,
             "Montgomery pow_mod({}, {}, {}) = {} but expected {}",
             base, exp, n, result, expected);

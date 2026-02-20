@@ -68,14 +68,14 @@ Discovery strategy, competitive analysis, publication pipeline, and references.
 - Special forms have their own Top 20 lists with lower thresholds
 - Any prime in a recognized archivable form gets listed regardless of size
 - **CRITICAL: Only PROVEN primes accepted. PRPs are rejected.**
-- primehunt currently only does Miller-Rabin (probabilistic) — must add proof capability
+- darkreach currently only does Miller-Rabin (probabilistic) — must add proof capability
 
 **51 archivable form categories** including: Factorial (#9), Palindrome (#39), Primorial (#41), Wagstaff (#50), Twin (#48), Sophie Germain (#46), Generalized Fermat (#16), Repunit (#44), Woodall (#51), Cullen (#3).
 
 ### Path from discovery to recognition
 
 ```
-1. Find PRP candidate (primehunt sieve + PRP test)
+1. Find PRP candidate (darkreach sieve + PRP test)
 2. Prove primality (BLS/Proth/LLR for special forms, ECPP for general)
 3. Cross-verify with PFGW/PRST on different hardware
 4. Generate primality certificate
@@ -99,7 +99,7 @@ Detailed search strategies with time estimates for an Apple Silicon workstation 
 
 Pick bases where only 1-3 k-values remain unresolved and search limits are low (< n=500K). Extending to n=1M-2M has ~40% chance of finding a prime per k-value.
 
-**Tools:** mtsieve/srsieve2 for sieving, LLR/PRST for testing. primehunt's Proth + LLR implementations handle base-2; other bases use Miller-Rabin.
+**Tools:** mtsieve/srsieve2 for sieving, LLR/PRST for testing. darkreach's Proth + LLR implementations handle base-2; other bases use Miller-Rabin.
 
 **Timeline:** Weeks to months for first discovery.
 
@@ -176,7 +176,7 @@ Without GWNUM (GMP only), multiply these times by ~50-100x. A single p=5M test w
 1. Register at oeis.org (new accounts limited to 3 pending submissions)
 2. Submit via oeis.org/Submit.html — minimum 4 terms, clear definition
 3. Four-stage review: Proposal -> Review -> Approval -> Live
-4. Software citation: `(Other) # Using primehunt (Rust/GMP), https://github.com/...`
+4. Software citation: `(Other) # Using darkreach (Rust/GMP), https://github.com/...`
 
 **Key sequences:**
 - A002981: n where n!+1 is prime (last term: 422,429)
@@ -199,7 +199,7 @@ Without GWNUM (GMP only), multiply these times by ~50-100x. A single p=5M test w
 | **INTEGERS** | Combinatorial number theory | **Bans AI-generated content** |
 | **Experimental Mathematics** (T&F) | Computational experiments | |
 | **arXiv math.NT** | Preprints, discovery announcements | Primary for discoveries |
-| **arXiv cs.MS** | Software papers | If paper focuses on primehunt itself |
+| **arXiv cs.MS** | Software papers | If paper focuses on darkreach itself |
 
 ### Verification Standards
 
@@ -279,6 +279,14 @@ Month 3-6: Submit journal paper (JIS for discovery, Math.Comp for methods)
 | mtsieve | 2.6.9 (Jan 2026) | BSGS sieving framework |
 | PFGW | 4.0.4 | General-purpose primality tester |
 | Prime95/mprime | 30.19 | GIMPS client, GWNUM reference implementation |
+
+---
+
+## Competitive Analysis
+
+For a deep-dive into GIMPS, PrimeGrid, and the broader prime-hunting ecosystem —
+including the technical gaps between darkreach and state of the art, and a phased
+catch-up roadmap — see **[competitive-analysis.md](competitive-analysis.md)**.
 
 ---
 

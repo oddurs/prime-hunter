@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Deploy primehunt to a remote server.
+# Deploy darkreach to a remote server.
 # Usage: ./deploy.sh <user@host> [--coordinator <url>]
 #
 # Installs Rust + GMP if missing, pulls latest code, builds with
@@ -17,14 +17,14 @@ COORDINATOR="${3:-}"
 REPO_URL="$(git remote get-url origin 2>/dev/null || echo '')"
 BRANCH="$(git branch --show-current)"
 
-echo "==> Deploying primehunt to ${TARGET}"
+echo "==> Deploying darkreach to ${TARGET}"
 
 ssh "${TARGET}" bash -s -- "${REPO_URL}" "${BRANCH}" <<'REMOTE_SCRIPT'
 set -euo pipefail
 
 REPO_URL="$1"
 BRANCH="$2"
-INSTALL_DIR="/opt/primehunt"
+INSTALL_DIR="/opt/darkreach"
 BIN_DIR="/usr/local/bin"
 
 echo "--- Installing dependencies ---"
@@ -58,8 +58,8 @@ source "$HOME/.cargo/env" 2>/dev/null || true
 RUSTFLAGS="-C target-cpu=native" cargo build --release
 
 echo "--- Installing binary ---"
-cp target/release/primehunt "${BIN_DIR}/primehunt"
-chmod +x "${BIN_DIR}/primehunt"
+cp target/release/darkreach "${BIN_DIR}/darkreach"
+chmod +x "${BIN_DIR}/darkreach"
 
 echo "--- Installing .env ---"
 if [ -f .env ]; then
@@ -68,12 +68,12 @@ if [ -f .env ]; then
 fi
 
 echo "--- Installing systemd units ---"
-cp deploy/primehunt-coordinator.service /etc/systemd/system/ 2>/dev/null || true
-cp deploy/primehunt-worker@.service /etc/systemd/system/ 2>/dev/null || true
+cp deploy/darkreach-coordinator.service /etc/systemd/system/ 2>/dev/null || true
+cp deploy/darkreach-worker@.service /etc/systemd/system/ 2>/dev/null || true
 systemctl daemon-reload
 
 echo "--- Done! ---"
-primehunt --help | head -1
+darkreach --help | head -1
 REMOTE_SCRIPT
 
 echo "==> Deploy to ${TARGET} complete."

@@ -24,8 +24,11 @@ Thumbs.db
 .claude/
 
 # Node
-frontend/node_modules/
+node_modules/
 frontend/.next/
+website/.next/
+website/out/
+frontend/out/
 
 # Logs
 *.log

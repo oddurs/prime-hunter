@@ -19,6 +19,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { toast } from "sonner";
+import { JsonBlock } from "@/components/json-block";
 import {
   CheckCircle2,
   Clock,
@@ -276,22 +277,12 @@ export default function PrimePage() {
 
           {parsedSearchParams && (
             <div className="mt-6">
-              <div className="text-xs font-medium text-muted-foreground mb-1">
-                Search parameters
-              </div>
-              <pre className="bg-muted rounded-md p-3 text-xs overflow-auto max-h-48">
-                {JSON.stringify(parsedSearchParams, null, 2)}
-              </pre>
+              <JsonBlock label="Search parameters" data={parsedSearchParams} maxHeight="max-h-48" />
             </div>
           )}
           {prime.search_params && !parsedSearchParams && (
             <div className="mt-6">
-              <div className="text-xs font-medium text-muted-foreground mb-1">
-                Search parameters
-              </div>
-              <pre className="bg-muted rounded-md p-3 text-xs overflow-auto max-h-48">
-                {prime.search_params}
-              </pre>
+              <JsonBlock label="Search parameters" data={prime.search_params} maxHeight="max-h-48" />
             </div>
           )}
         </CardContent>

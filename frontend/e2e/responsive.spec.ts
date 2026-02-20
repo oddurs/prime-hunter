@@ -7,7 +7,7 @@ test.describe("Responsive layout", () => {
     await page.setViewportSize({ width: 375, height: 812 });
     await page.goto("/");
     // Wait for page to load
-    await expect(page.locator("body")).toContainText(/dashboard|idle|primehunt/i, { timeout: 10000 });
+    await expect(page.locator("body")).toContainText(/dashboard|idle|darkreach/i, { timeout: 10000 });
     // On mobile, the desktop nav links should be hidden
     const desktopNav = page.locator("nav.hidden, nav.md\\:flex").first();
     // The page should still render correctly

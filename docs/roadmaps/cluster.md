@@ -11,7 +11,7 @@ Status: **MVP complete** — workers heartbeat to PostgreSQL, block-based work c
 - [x] `reclaim_stale_blocks()` RPC: reclaim blocks from dead workers
 - [x] `PgWorkerClient`: heartbeats directly to PostgreSQL (no coordinator URL needed)
 - [x] `CoordinationClient` trait: both HTTP and PG clients implement `is_stop_requested()`
-- [x] `primehunt work --search-job-id <ID>`: block-claiming worker loop
+- [x] `darkreach work --search-job-id <ID>`: block-claiming worker loop
 - [x] Dashboard HTTP handlers write to PG (backward compat with HTTP-based workers)
 - [x] WebSocket `build_update` reads fleet from PG
 - [x] Background task reclaims stale blocks every 30s
@@ -34,7 +34,7 @@ Read `workers` and `search_jobs` tables directly from Supabase in the frontend (
 Use `pg_advisory_lock` so multiple dashboard instances can run with one acting as the "active" coordinator for local process management (spawning searches, SSH deploys).
 
 ### Binary Distribution
-Auto-deploy the primehunt binary to remote hosts. Currently assumes the binary is pre-installed. Could use SCP + checksum verification.
+Auto-deploy the darkreach binary to remote hosts. Currently assumes the binary is pre-installed. Could use SCP + checksum verification.
 
 ### Checkpoint Sharing
 Upload checkpoint state to Supabase so block handoffs preserve partial progress. When a block is reclaimed, the new worker can resume from the previous worker's checkpoint instead of restarting the block.

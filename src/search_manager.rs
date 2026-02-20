@@ -1,7 +1,7 @@
 //! # SearchManager — Subprocess-Based Search Orchestration
 //!
 //! Manages concurrent search processes spawned by the dashboard. Each search
-//! runs as a child `primehunt` process with the appropriate subcommand and
+//! runs as a child `darkreach` process with the appropriate subcommand and
 //! parameters. The manager tracks up to [`MAX_CONCURRENT`] simultaneous
 //! searches and monitors their lifecycle (running, completed, failed).
 //!
@@ -282,7 +282,7 @@ impl SearchManager {
     pub fn new(port: u16, database_url: &str) -> Self {
         let binary_path = std::env::current_exe()
             .map(|p| p.to_string_lossy().to_string())
-            .unwrap_or_else(|_| "primehunt".to_string());
+            .unwrap_or_else(|_| "darkreach".to_string());
         SearchManager {
             searches: HashMap::new(),
             next_id: 1,

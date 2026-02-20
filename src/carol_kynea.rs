@@ -156,10 +156,15 @@ fn llr_test_big(candidate: &Integer, k: &Integer, exp: u64) -> Option<bool> {
 /// Carol_n = (2^(n-1) - 1) · 2^(n+1) - 1, so k = 2^(n-1) - 1 (odd for n ≥ 2), exp = n+1.
 fn test_carol(candidate: &Integer, n: u64, mr_rounds: u32) -> (IsPrime, &'static str) {
     if n >= 2 {
+        // Quick MR pre-screen (1 round) rejects ~75% of composites before
+        // the expensive O(n-2) LLR squaring loop.
+        if candidate.is_probably_prime(1) == IsPrime::No {
+            return (IsPrime::No, "");
+        }
         let exp = n + 1;
         if n <= 64 {
             let k = (1u64 << (n - 1)) - 1;
-            if let Some(result) = kbn::llr_test(candidate, k, exp) {
+            if let Some((result, _)) = kbn::llr_test(candidate, k, exp) {
                 return if result {
                     (IsPrime::Yes, "deterministic (LLR)")
                 } else {
@@ -192,10 +197,15 @@ fn test_carol(candidate: &Integer, n: u64, mr_rounds: u32) -> (IsPrime, &'static
 /// Kynea_n = (2^(n-1) + 1) · 2^(n+1) - 1, so k = 2^(n-1) + 1 (odd for n ≥ 2), exp = n+1.
 fn test_kynea(candidate: &Integer, n: u64, mr_rounds: u32) -> (IsPrime, &'static str) {
     if n >= 2 {
+        // Quick MR pre-screen (1 round) rejects ~75% of composites before
+        // the expensive O(n-2) LLR squaring loop.
+        if candidate.is_probably_prime(1) == IsPrime::No {
+            return (IsPrime::No, "");
+        }
         let exp = n + 1;
         if n <= 64 {
             let k = (1u64 << (n - 1)) + 1;
-            if let Some(result) = kbn::llr_test(candidate, k, exp) {
+            if let Some((result, _)) = kbn::llr_test(candidate, k, exp) {
                 return if result {
                     (IsPrime::Yes, "deterministic (LLR)")
                 } else {
@@ -340,12 +350,17 @@ pub fn search(
                         }
                         Some(pfgw::PfgwResult::Composite) => None,
                         _ => {
-                            let (r, cert) = test_carol(&carol, n, mr_rounds);
-                            if r != IsPrime::No {
-                                let digits = exact_digits(&carol);
-                                Some((expr, digits, cert.to_string(), "carol"))
-                            } else {
+                            // Adaptive P-1 pre-filter (Stage 1 + Stage 2, auto-tuned B1/B2)
+                            if crate::p1::adaptive_p1_filter(&carol) {
                                 None
+                            } else {
+                                let (r, cert) = test_carol(&carol, n, mr_rounds);
+                                if r != IsPrime::No {
+                                    let digits = exact_digits(&carol);
+                                    Some((expr, digits, cert.to_string(), "carol"))
+                                } else {
+                                    None
+                                }
                             }
                         }
                     }
@@ -369,12 +384,17 @@ pub fn search(
                         }
                         Some(pfgw::PfgwResult::Composite) => None,
                         _ => {
-                            let (r, cert) = test_kynea(&kynea, n, mr_rounds);
-                            if r != IsPrime::No {
-                                let digits = exact_digits(&kynea);
-                                Some((expr, digits, cert.to_string(), "kynea"))
-                            } else {
+                            // Adaptive P-1 pre-filter (Stage 1 + Stage 2, auto-tuned B1/B2)
+                            if crate::p1::adaptive_p1_filter(&kynea) {
                                 None
+                            } else {
+                                let (r, cert) = test_kynea(&kynea, n, mr_rounds);
+                                if r != IsPrime::No {
+                                    let digits = exact_digits(&kynea);
+                                    Some((expr, digits, cert.to_string(), "kynea"))
+                                } else {
+                                    None
+                                }
                             }
                         }
                     }
@@ -404,7 +424,7 @@ pub fn search(
                     expr, digits, certainty
                 );
             }
-            db.insert_prime_sync(rt, form, &expr, digits, search_params, &certainty)?;
+            db.insert_prime_sync(rt, form, &expr, digits, search_params, &certainty, None)?;
             if let Some(wc) = worker_client {
                 wc.report_prime(form, &expr, digits, search_params, &certainty);
             }
@@ -708,7 +728,7 @@ mod tests {
         // Small-k path (n <= 64)
         let k_small = (1u64 << (n - 1)) - 1;
         let exp = n + 1;
-        let result_small = kbn::llr_test(&c, k_small, exp);
+        let result_small = kbn::llr_test(&c, k_small, exp).map(|(b, _)| b);
 
         // Big-k path
         let k_big = (Integer::from(1u32) << (n - 1) as u32) - 1u32;

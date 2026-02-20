@@ -111,8 +111,8 @@ Additional optimization opportunities:
 ### Current Architecture
 
 - `deploy/deploy.sh` — SSH deployment script: installs Rust/GMP, clones/updates repo, builds with `-C target-cpu=native`, copies binary to `/usr/local/bin`, installs systemd units
-- `deploy/primehunt-coordinator.service` — Systemd unit for dashboard on port 8080, security-hardened (strict filesystem, no new privs, 2GB memory limit)
-- `deploy/primehunt-worker@.service` — Template unit for workers with `--coordinator` flag, supports instance numbers, auto-restarts every 10s
+- `deploy/darkreach-coordinator.service` — Systemd unit for dashboard on port 7001, security-hardened (strict filesystem, no new privs, 2GB memory limit)
+- `deploy/darkreach-worker@.service` — Template unit for workers with `--coordinator` flag, supports instance numbers, auto-restarts every 10s
 
 ### Deployment Flow
 

@@ -18,11 +18,13 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ViewHeader } from "@/components/view-header";
+import { EmptyState } from "@/components/empty-state";
 import { NewProjectDialog } from "@/components/new-project-dialog";
 import { ProjectCard } from "@/components/project-card";
 import { RecordComparison } from "@/components/record-comparison";
 import { PhaseTimeline } from "@/components/phase-timeline";
 import { CostTracker } from "@/components/cost-tracker";
+import { CostHistoryChart } from "@/components/charts/cost-history";
 import { useWs } from "@/contexts/websocket-context";
 import { API_BASE, numberWithCommas, formatTime } from "@/lib/format";
 import {
@@ -35,6 +37,8 @@ import {
   Pause,
   XCircle,
   Loader2,
+  Download,
+  FileCode,
 } from "lucide-react";
 
 export default function ProjectsPage() {
@@ -60,6 +64,44 @@ function ProjectsPageInner() {
 function ProjectList() {
   const { projects, records } = useWs();
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [bulkActioning, setBulkActioning] = useState(false);
+
+  const toggleSelect = useCallback((slug: string) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(slug)) next.delete(slug);
+      else next.add(slug);
+      return next;
+    });
+  }, []);
+
+  const clearSelection = useCallback(() => setSelected(new Set()), []);
+
+  const bulkAction = useCallback(
+    async (action: string) => {
+      setBulkActioning(true);
+      let ok = 0;
+      let fail = 0;
+      for (const slug of selected) {
+        try {
+          const res = await fetch(
+            `${API_BASE}/api/projects/${slug}/${action}`,
+            { method: "POST" }
+          );
+          if (res.ok) ok++;
+          else fail++;
+        } catch {
+          fail++;
+        }
+      }
+      if (ok > 0) toast.success(`${ok} project(s) ${action}d`);
+      if (fail > 0) toast.error(`${fail} project(s) failed to ${action}`);
+      setSelected(new Set());
+      setBulkActioning(false);
+    },
+    [selected]
+  );
 
   const active = useMemo(
     () => projects.filter((p) => p.status === "active"),
@@ -161,7 +203,14 @@ function ProjectList() {
                 {items.length === 0 ? (
                   <EmptyState message={`No ${tab} projects`} />
                 ) : (
-                  items.map((p) => <ProjectCard key={p.slug} project={p} />)
+                  items.map((p) => (
+                    <ProjectCard
+                      key={p.slug}
+                      project={p}
+                      selected={selected.has(p.slug)}
+                      onToggleSelect={toggleSelect}
+                    />
+                  ))
                 )}
               </TabsContent>
             );
@@ -170,6 +219,45 @@ function ProjectList() {
       </Tabs>
 
       <NewProjectDialog open={dialogOpen} onOpenChange={setDialogOpen} />
+
+      {/* Floating bulk action bar */}
+      {selected.size > 0 && (
+        <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 rounded-lg border bg-background/95 backdrop-blur px-4 py-2 shadow-lg">
+          <span className="text-sm font-medium mr-2">
+            {selected.size} selected
+          </span>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => bulkAction("activate")}
+            disabled={bulkActioning}
+          >
+            <Play className="h-3 w-3 mr-1" />
+            Activate
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => bulkAction("pause")}
+            disabled={bulkActioning}
+          >
+            <Pause className="h-3 w-3 mr-1" />
+            Pause
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => bulkAction("cancel")}
+            disabled={bulkActioning}
+          >
+            <XCircle className="h-3 w-3 mr-1" />
+            Cancel
+          </Button>
+          <Button size="sm" variant="ghost" onClick={clearSelection}>
+            Clear
+          </Button>
+        </div>
+      )}
     </div>
   );
 }
@@ -206,6 +294,9 @@ interface ProjectDetailData {
     search_job_id: number | null;
     started_at: string | null;
     completed_at: string | null;
+    depends_on?: string[];
+    activation_condition?: string | null;
+    completion_condition?: string;
   }>;
   events: Array<{
     id: number;
@@ -219,6 +310,11 @@ function ProjectDetail({ slug }: { slug: string }) {
   const [data, setData] = useState<ProjectDetailData | null>(null);
   const [loading, setLoading] = useState(true);
   const [actioning, setActioning] = useState(false);
+  const [showToml, setShowToml] = useState(false);
+  const [tomlData, setTomlData] = useState<{
+    original_toml: string | null;
+    current_toml: string;
+  } | null>(null);
 
   const fetchProject = useCallback(async () => {
     try {
@@ -420,6 +516,12 @@ function ProjectDetail({ slug }: { slug: string }) {
 
           <Card>
             <CardContent className="py-4">
+              <CostHistoryChart slug={slug} apiBase={API_BASE} />
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardContent className="py-4">
               <h3 className="text-sm font-medium mb-3">Details</h3>
               <dl className="space-y-2 text-xs">
                 <div className="flex justify-between">
@@ -445,18 +547,84 @@ function ProjectDetail({ slug }: { slug: string }) {
               </dl>
             </CardContent>
           </Card>
+
+          {/* TOML Export */}
+          <Card>
+            <CardContent className="py-4">
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="text-sm font-medium">TOML Export</h3>
+                <div className="flex gap-1">
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={async () => {
+                      try {
+                        const res = await fetch(
+                          `${API_BASE}/api/projects/${slug}/export`
+                        );
+                        if (res.ok) {
+                          const json = await res.json();
+                          setTomlData(json);
+                          setShowToml(true);
+                        }
+                      } catch {
+                        toast.error("Failed to export");
+                      }
+                    }}
+                  >
+                    <FileCode className="h-3 w-3 mr-1" />
+                    {showToml ? "Refresh" : "View"}
+                  </Button>
+                  {tomlData && (
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => {
+                        const blob = new Blob(
+                          [tomlData.current_toml],
+                          { type: "text/plain" }
+                        );
+                        const url = URL.createObjectURL(blob);
+                        const a = document.createElement("a");
+                        a.href = url;
+                        a.download = `${slug}.toml`;
+                        a.click();
+                        URL.revokeObjectURL(url);
+                      }}
+                    >
+                      <Download className="h-3 w-3 mr-1" />
+                      Save
+                    </Button>
+                  )}
+                </div>
+              </div>
+              {showToml && tomlData && (
+                <div className="space-y-3">
+                  {tomlData.original_toml && (
+                    <div>
+                      <p className="text-[10px] text-muted-foreground mb-1 font-medium">
+                        Original (imported)
+                      </p>
+                      <pre className="text-[10px] bg-muted rounded p-2 overflow-x-auto max-h-40 whitespace-pre-wrap font-mono">
+                        {tomlData.original_toml}
+                      </pre>
+                    </div>
+                  )}
+                  <div>
+                    <p className="text-[10px] text-muted-foreground mb-1 font-medium">
+                      Current state
+                    </p>
+                    <pre className="text-[10px] bg-muted rounded p-2 overflow-x-auto max-h-40 whitespace-pre-wrap font-mono">
+                      {tomlData.current_toml}
+                    </pre>
+                  </div>
+                </div>
+              )}
+            </CardContent>
+          </Card>
         </div>
       </div>
     </div>
   );
 }
 
-function EmptyState({ message }: { message: string }) {
-  return (
-    <Card>
-      <CardContent className="py-8 text-center text-muted-foreground">
-        {message}
-      </CardContent>
-    </Card>
-  );
-}

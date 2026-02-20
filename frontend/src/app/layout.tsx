@@ -60,7 +60,7 @@ export default function RootLayout({
   return (
     <html lang="en" className="dark" suppressHydrationWarning>
       <head>
-        <title>primehunt dashboard</title>
+        <title>darkreach dashboard</title>
         <link rel="manifest" href="/manifest.json" />
         <meta name="theme-color" content="#f78166" />
         <meta name="apple-mobile-web-app-capable" content="yes" />
@@ -71,7 +71,7 @@ export default function RootLayout({
         <link rel="apple-touch-icon" href="/icon-192.png" />
         <script
           dangerouslySetInnerHTML={{
-            __html: `try{document.documentElement.className=localStorage.getItem('primehunt-theme')||'dark'}catch(e){}`,
+            __html: `try{document.documentElement.className=localStorage.getItem('darkreach-theme')||'dark'}catch(e){}`,
           }}
         />
         <script

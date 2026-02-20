@@ -10,7 +10,7 @@ test.describe("Theme toggle", () => {
   test("persists theme across page reload", async ({ page }) => {
     // Set light theme in localStorage
     await page.addInitScript(() => {
-      localStorage.setItem("primehunt-theme", "light");
+      localStorage.setItem("darkreach-theme", "light");
     });
     await page.goto("/");
     const html = page.locator("html");
@@ -23,7 +23,7 @@ test.describe("Theme toggle", () => {
 
   test("dark theme class applied with no localStorage", async ({ page }) => {
     await page.addInitScript(() => {
-      localStorage.removeItem("primehunt-theme");
+      localStorage.removeItem("darkreach-theme");
     });
     await page.goto("/");
     const html = page.locator("html");

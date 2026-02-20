@@ -87,12 +87,12 @@ Attempting to prove 509,203 is the smallest **Riesel number** (a k where k * 2^n
 | 10223 * 2^31,172,165 + 1 | 9,383,761 | Proth / Sierpinski | Nov 2016 |
 | 107347 * 2^23,427,517 - 1 | ~7,050,000 | Riesel | Aug 2024 |
 
-## What primehunt does differently
+## What darkreach does differently
 
-`primehunt kbn` uses GMP's `is_probably_prime(25)` (Miller-Rabin) rather than Proth's theorem or LLR. This means:
+`darkreach kbn` uses GMP's `is_probably_prime(25)` (Miller-Rabin) rather than Proth's theorem or LLR. This means:
 
 - Results are **probabilistic** for large numbers (probability of false positive: $< 4^{-25}$)
 - It works for **any** k, b, n combination, not just b = 2
 - It does **not** provide the speed advantages of specialized tests
 
-For serious large-scale searching of k * 2^n +/- 1 forms, specialized tools like LLR, Prime95, or PFGW are orders of magnitude faster. `primehunt` is useful for exploration across arbitrary bases and multipliers.
+For serious large-scale searching of k * 2^n +/- 1 forms, specialized tools like LLR, Prime95, or PFGW are orders of magnitude faster. `darkreach` is useful for exploration across arbitrary bases and multipliers.

@@ -16,7 +16,7 @@ OEIS: [A002385](https://oeis.org/A002385)
 
 Since the number has more than 2 digits and is divisible by 11, it is composite. Only 11 itself (the 2-digit case) escapes this.
 
-**This generalizes to any base**: in base $b$, even-digit palindromes are always divisible by $b + 1$. So in base 2, even-digit binary palindromes are divisible by 3; in base 16, by 17; etc. `primehunt` exploits this by skipping all even digit counts.
+**This generalizes to any base**: in base $b$, even-digit palindromes are always divisible by $b + 1$. So in base 2, even-digit binary palindromes are divisible by 3; in base 16, by 17; etc. `darkreach` exploits this by skipping all even digit counts.
 
 ## Distribution
 

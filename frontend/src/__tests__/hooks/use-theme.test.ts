@@ -14,7 +14,7 @@ describe("useTheme", () => {
   });
 
   it("reads stored theme from localStorage", () => {
-    localStorage.setItem("primehunt-theme", "light");
+    localStorage.setItem("darkreach-theme", "light");
     const { result } = renderHook(() => useTheme());
     expect(result.current.theme).toBe("light");
   });
@@ -33,7 +33,7 @@ describe("useTheme", () => {
   it("persists theme to localStorage", () => {
     const { result } = renderHook(() => useTheme());
     act(() => result.current.setTheme("light"));
-    expect(localStorage.getItem("primehunt-theme")).toBe("light");
+    expect(localStorage.getItem("darkreach-theme")).toBe("light");
   });
 
   it("sets className on document.documentElement", () => {
@@ -45,7 +45,7 @@ describe("useTheme", () => {
   });
 
   it("ignores invalid stored values", () => {
-    localStorage.setItem("primehunt-theme", "invalid");
+    localStorage.setItem("darkreach-theme", "invalid");
     const { result } = renderHook(() => useTheme());
     expect(result.current.theme).toBe("dark");
   });

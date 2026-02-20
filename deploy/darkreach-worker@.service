@@ -1,0 +1,16 @@
+[Unit]
+Description=Darkreach Worker (%i)
+After=network.target
+
+[Service]
+Type=simple
+# Override ExecStart via drop-in or edit this template with actual search parameters.
+# Example: darkreach --coordinator http://COORD:7001 --worker-id %H kbn --k 3 --base 2 --min-n 1000 --max-n 100000
+EnvironmentFile=/opt/darkreach/.env
+ExecStart=/usr/local/bin/darkreach --coordinator http://COORDINATOR:7001 --worker-id %H-%i --checkpoint /opt/darkreach/darkreach-%i.checkpoint kbn --k 3 --base 2 --min-n 1000 --max-n 100000
+WorkingDirectory=/opt/darkreach
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

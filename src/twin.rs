@@ -110,10 +110,8 @@ pub fn search(
         kbn::bsgs_sieve(resume_from, max_n, k, base, &sieve_primes, sieve_min_n);
 
     let total_range = max_n - resume_from + 1;
-    let twin_survivors: u64 = plus_survives
-        .iter()
-        .zip(minus_survives.iter())
-        .filter(|(&p, &m)| p && m)
+    let twin_survivors: u64 = (0..plus_survives.len())
+        .filter(|&i| plus_survives.get(i) && minus_survives.get(i))
         .count() as u64;
     eprintln!(
         "Sieve complete: {} twin pair candidates of {} ({:.1}%)",
@@ -138,7 +136,7 @@ pub fn search(
         let survivors: Vec<u64> = (block_start..=block_end)
             .filter(|&n| {
                 let idx = (n - resume_from) as usize;
-                plus_survives[idx] && minus_survives[idx]
+                plus_survives.get(idx) && minus_survives.get(idx)
             })
             .collect();
 
@@ -160,7 +158,11 @@ pub fn search(
 
                 // Test +1 first (Proth is fast for composites)
                 let plus = Integer::from(&kb + 1u32);
-                let (r_plus, cert_plus) = kbn::test_prime(&plus, k, base, n, true, mr_rounds);
+                // Adaptive P-1 pre-filter (Stage 1 + Stage 2, auto-tuned B1/B2)
+                if crate::p1::adaptive_p1_filter(&plus) {
+                    return None;
+                }
+                let (r_plus, cert_plus, certificate_plus) = kbn::test_prime(&plus, k, base, n, true, mr_rounds);
                 if r_plus == IsPrime::No {
                     return None;
                 }
@@ -170,7 +172,11 @@ pub fn search(
                 if minus <= 0u32 {
                     return None;
                 }
-                let (r_minus, cert_minus) = kbn::test_prime(&minus, k, base, n, false, mr_rounds);
+                // Adaptive P-1 pre-filter (Stage 1 + Stage 2, auto-tuned B1/B2)
+                if crate::p1::adaptive_p1_filter(&minus) {
+                    return None;
+                }
+                let (r_minus, cert_minus, certificate_minus) = kbn::test_prime(&minus, k, base, n, false, mr_rounds);
                 if r_minus == IsPrime::No {
                     return None;
                 }
@@ -181,13 +187,16 @@ pub fn search(
                     ("deterministic", "deterministic") => "deterministic",
                     _ => "probabilistic",
                 };
-                Some((n, digits, certainty.to_string()))
+                // Prefer the +1 certificate (Proth), fall back to -1 (LLR)
+                let certificate = certificate_plus.or(certificate_minus);
+                let cert_json = certificate.as_ref().and_then(|c| serde_json::to_string(c).ok());
+                Some((n, digits, certainty.to_string(), cert_json))
             })
             .collect();
 
         progress.tested.fetch_add(block_len, Ordering::Relaxed);
 
-        for (n, digits, certainty) in found_twins {
+        for (n, digits, certainty, cert_json) in found_twins {
             let expr = format!("{}*{}^{} +/- 1", k, base, n);
             progress.found.fetch_add(1, Ordering::Relaxed);
             if let Some(eb) = event_bus {
@@ -204,7 +213,7 @@ pub fn search(
                     expr, digits, certainty
                 );
             }
-            db.insert_prime_sync(rt, "twin", &expr, digits, search_params, &certainty)?;
+            db.insert_prime_sync(rt, "twin", &expr, digits, search_params, &certainty, cert_json.as_deref())?;
             if let Some(wc) = worker_client {
                 wc.report_prime("twin", &expr, digits, search_params, &certainty);
             }
@@ -326,11 +335,11 @@ mod tests {
         let plus = kb_plus(3, 2, 6);
         let minus = kb_minus(3, 2, 6);
 
-        let (r_plus, cert_plus) = kbn::test_prime(&plus, 3, 2, 6, true, 25);
+        let (r_plus, cert_plus, _) = kbn::test_prime(&plus, 3, 2, 6, true, 25);
         assert_eq!(r_plus, IsPrime::Yes, "3*2^6+1=193 should be prime");
         assert_eq!(cert_plus, "deterministic");
 
-        let (r_minus, cert_minus) = kbn::test_prime(&minus, 3, 2, 6, false, 25);
+        let (r_minus, cert_minus, _) = kbn::test_prime(&minus, 3, 2, 6, false, 25);
         assert_eq!(r_minus, IsPrime::Yes, "3*2^6-1=191 should be prime");
         assert_eq!(cert_minus, "deterministic");
     }
@@ -347,7 +356,7 @@ mod tests {
         // Verify: when BOTH survive, at least check that the sieve was correct
         for n in sieve_min_n..=200 {
             let idx = (n - 1) as usize;
-            if !plus_surv[idx] {
+            if !plus_surv.get(idx) {
                 let p = kb_plus(k, base, n);
                 assert_eq!(
                     p.is_probably_prime(15),
@@ -356,7 +365,7 @@ mod tests {
                     n
                 );
             }
-            if !minus_surv[idx] {
+            if !minus_surv.get(idx) {
                 let m = kb_minus(k, base, n);
                 assert_eq!(
                     m.is_probably_prime(15),
@@ -371,14 +380,14 @@ mod tests {
         let twin_count = (sieve_min_n..=200)
             .filter(|&n| {
                 let idx = (n - 1) as usize;
-                plus_surv[idx] && minus_surv[idx]
+                plus_surv.get(idx) && minus_surv.get(idx)
             })
             .count();
         let plus_count = (sieve_min_n..=200)
-            .filter(|&n| plus_surv[(n - 1) as usize])
+            .filter(|&n| plus_surv.get((n - 1) as usize))
             .count();
         let minus_count = (sieve_min_n..=200)
-            .filter(|&n| minus_surv[(n - 1) as usize])
+            .filter(|&n| minus_surv.get((n - 1) as usize))
             .count();
         assert!(twin_count <= plus_count);
         assert!(twin_count <= minus_count);
@@ -435,10 +444,10 @@ mod tests {
         let plus = kb_plus(3, 2, 1);
         let minus = kb_minus(3, 2, 1);
 
-        let (r_plus, cert_plus) = kbn::test_prime(&plus, 3, 2, 1, true, 25);
+        let (r_plus, cert_plus, _) = kbn::test_prime(&plus, 3, 2, 1, true, 25);
         assert_ne!(r_plus, IsPrime::No, "3*2^1+1=7 should be prime");
 
-        let (r_minus, cert_minus) = kbn::test_prime(&minus, 3, 2, 1, false, 25);
+        let (r_minus, cert_minus, _) = kbn::test_prime(&minus, 3, 2, 1, false, 25);
         assert_ne!(r_minus, IsPrime::No, "3*2^1-1=5 should be prime");
 
         // Both should be deterministic (small numbers get GMP exact proof)
@@ -458,11 +467,11 @@ mod tests {
         for &n in &[1u64, 2, 6] {
             let idx = (n - 1) as usize;
             assert!(
-                plus_surv[idx],
+                plus_surv.get(idx),
                 "Known twin n={}: +1 should survive sieve", n
             );
             assert!(
-                minus_surv[idx],
+                minus_surv.get(idx),
                 "Known twin n={}: -1 should survive sieve", n
             );
         }

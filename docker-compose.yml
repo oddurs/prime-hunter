@@ -1,8 +1,8 @@
 services:
-  primehunt:
+  darkreach:
     build: .
     ports:
-      - "8080:8080"
+      - "7001:7001"
     environment:
       DATABASE_URL: ${DATABASE_URL}
     restart: unless-stopped
@@ -13,8 +13,8 @@ services:
   postgres:
     image: postgres:16
     environment:
-      POSTGRES_PASSWORD: primehunt
-      POSTGRES_DB: primehunt
+      POSTGRES_PASSWORD: darkreach
+      POSTGRES_DB: darkreach
     ports:
       - "5432:5432"
     volumes:

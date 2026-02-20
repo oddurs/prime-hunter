@@ -242,7 +242,7 @@ Stage 5: PRP/primality testing
 
 Many special forms have guaranteed algebraic factors:
 
-- **Even-digit palindromes (base b)**: Always divisible by b+1 (already handled in primehunt)
+- **Even-digit palindromes (base b)**: Always divisible by b+1 (already handled in darkreach)
 - **Aurifeuillean factorizations**: For specific (base, exponent) pairs, cyclotomic polynomials factor further. Example base 2: 2^(4k-2)+1 = (2^(2k-1)-2^k+1)(2^(2k-1)+2^k+1)
 - **Sophie Germain identity**: a^4+4b^4 = (a^2-2ab+2b^2)(a^2+2ab+2b^2)
 - **General condition**: For b = s^2*t (t square-free), Aurifeuillean factorizations exist when t=1 (mod 4) and n=t (mod 2t)
@@ -294,7 +294,7 @@ Adds **Lucas-V pseudoprime** check — an additional congruence on the V-sequenc
 
 **Extra strong Lucas test** (Q=1 variant): composites pass for at most **1/8** of bases (vs 4/15 for strong Lucas, 1/4 for Miller-Rabin). Runs in ~2/3 the time of strong Lucas-Selfridge.
 
-**Note:** GMP 6.2.0+ already uses BPSW in `mpz_probab_prime_p`. primehunt's `is_probably_prime(25)` gets BPSW + 1 extra MR round automatically.
+**Note:** GMP 6.2.0+ already uses BPSW in `mpz_probab_prime_p`. darkreach's `is_probably_prime(25)` gets BPSW + 1 extra MR round automatically.
 
 ### SuperBFPSW (November 2025)
 
@@ -326,7 +326,7 @@ Edwards curves (x^2+y^2=1+dx^2y^2) with a=-1 twisted coordinates achieve:
 
 ## New Prime Forms
 
-Ranked by fit with the existing primehunt architecture (Rust + rug/GMP + rayon).
+Ranked by fit with the existing darkreach architecture (Rust + rug/GMP + rayon).
 
 ### Tier A: Trivial to add (reuse existing infrastructure)
 
@@ -429,7 +429,7 @@ fn llr_test(k: u64, n: u64) -> bool {
 
 ## Performance Comparison: Current vs Optimized
 
-| Metric | Current primehunt | Optimized (Tier 1+2) | Optimized (All tiers) |
+| Metric | Current darkreach | Optimized (Tier 1+2) | Optimized (All tiers) |
 |--------|-------------------|----------------------|-----------------------|
 | Sieve depth | 78K primes | 664K+ primes | Auto-tuned, 10^8+ |
 | Sieve algorithm (kbn) | O(primes * block) | O(primes * sqrt(p)) via BSGS | GPU-accelerated BSGS |

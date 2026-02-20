@@ -1,0 +1,82 @@
+# Default values for darkreach Helm chart.
+
+# -- Container image configuration
+image:
+  repository: ghcr.io/oddurs/darkreach
+  tag: latest
+  pullPolicy: IfNotPresent
+
+# -- Coordinator (dashboard + API server)
+coordinator:
+  replicas: 1
+  port: 7001
+  resources:
+    requests:
+      cpu: 500m
+      memory: 512Mi
+    limits:
+      cpu: "2"
+      memory: 1Gi
+
+# -- Worker (compute nodes)
+worker:
+  # Static replica count (overridden by KEDA when enabled)
+  replicas: 1
+  resources:
+    requests:
+      cpu: "2"
+      memory: 2Gi
+    limits:
+      cpu: "8"
+      memory: 8Gi
+  # Worker-specific CLI flags
+  mrRounds: 15
+  sieveLimit: 0
+  prstMinDigits: 10000
+  pfgwMinDigits: 10000
+  # Graceful shutdown: finish current candidate before exit
+  terminationGracePeriodSeconds: 120
+  # Node selector for compute-optimized instances
+  nodeSelector: {}
+  tolerations: []
+
+# -- Database (external PostgreSQL / Supabase)
+database:
+  # Connection URL (set via secret or directly)
+  url: ""
+  # Use existing secret for DATABASE_URL
+  existingSecret: ""
+  existingSecretKey: "DATABASE_URL"
+
+# -- Ingress
+ingress:
+  enabled: false
+  className: nginx
+  host: darkreach.example.com
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "86400"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "86400"
+  tls:
+    enabled: false
+    secretName: darkreach-tls
+
+# -- KEDA auto-scaling
+keda:
+  enabled: false
+  minReplicas: 0
+  maxReplicas: 10
+  # Scale 1 worker per N available blocks
+  blocksPerWorker: 10
+  # Scale from zero when at least 1 block is available
+  activationThreshold: 1
+  cooldownPeriod: 300
+
+# -- Monitoring
+monitoring:
+  serviceMonitor:
+    enabled: false
+    interval: 30s
+    labels: {}
+
+# -- Static frontend directory (baked into image)
+staticDir: /app/frontend/out

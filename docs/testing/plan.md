@@ -1,4 +1,4 @@
-# Primehunt Test Plan
+# Darkreach Test Plan
 
 Comprehensive testing strategy covering all domains: engine algorithms, server infrastructure, frontend dashboard, database, deployment, and end-to-end workflows.
 
@@ -112,18 +112,18 @@ Use `assert_cmd` crate to test binary execution.
 
 | Test | Description |
 |------|-------------|
-| `help_flag` | `primehunt --help` exits 0, shows subcommands |
-| `factorial_small_range` | `primehunt factorial --start 1 --end 20` finds known primes |
-| `palindromic_small_range` | `primehunt palindromic --base 10 --min-digits 1 --max-digits 5` |
-| `kbn_small_range` | `primehunt kbn --k 1 --base 2 --min-n 2 --max-n 100` finds Mersenne primes |
-| `primorial_small_range` | `primehunt primorial --start 2 --end 30` |
-| `cullen_woodall_small` | `primehunt cullen_woodall --min-n 1 --max-n 30` |
-| `wagstaff_small` | `primehunt wagstaff --min-exp 3 --max-exp 50` |
-| `carol_kynea_small` | `primehunt carol_kynea --min-n 1 --max-n 30` |
-| `twin_small` | `primehunt twin --k 3 --base 2 --min-n 1 --max-n 100` |
-| `sophie_germain_small` | `primehunt sophie_germain --k 1 --base 2 --min-n 2 --max-n 100` |
-| `repunit_small` | `primehunt repunit --base 10 --min-n 2 --max-n 50` |
-| `gen_fermat_small` | `primehunt gen_fermat --fermat-exp 1 --min-base 2 --max-base 100` |
+| `help_flag` | `darkreach --help` exits 0, shows subcommands |
+| `factorial_small_range` | `darkreach factorial --start 1 --end 20` finds known primes |
+| `palindromic_small_range` | `darkreach palindromic --base 10 --min-digits 1 --max-digits 5` |
+| `kbn_small_range` | `darkreach kbn --k 1 --base 2 --min-n 2 --max-n 100` finds Mersenne primes |
+| `primorial_small_range` | `darkreach primorial --start 2 --end 30` |
+| `cullen_woodall_small` | `darkreach cullen_woodall --min-n 1 --max-n 30` |
+| `wagstaff_small` | `darkreach wagstaff --min-exp 3 --max-exp 50` |
+| `carol_kynea_small` | `darkreach carol_kynea --min-n 1 --max-n 30` |
+| `twin_small` | `darkreach twin --k 3 --base 2 --min-n 1 --max-n 100` |
+| `sophie_germain_small` | `darkreach sophie_germain --k 1 --base 2 --min-n 2 --max-n 100` |
+| `repunit_small` | `darkreach repunit --base 10 --min-n 2 --max-n 50` |
+| `gen_fermat_small` | `darkreach gen_fermat --fermat-exp 1 --min-base 2 --max-base 100` |
 | `checkpoint_resume` | Start search, kill, resume from checkpoint |
 | `invalid_args` | Missing required args → non-zero exit |
 | `database_url_env` | `DATABASE_URL` env var picked up |
@@ -371,7 +371,7 @@ pub const WAGSTAFF_EXPONENTS: &[u32] = &[3, 5, 7, 11, 13, 17, 19, 23, 31, 43, 61
 ## 4. Test Organization
 
 ```
-primehunt/
+darkreach/
 ├── src/                          # Source + unit tests (existing pattern)
 │   ├── sieve.rs                  # #[cfg(test)] mod tests { ... }
 │   ├── kbn.rs                    # #[cfg(test)] mod tests { ... }
@@ -516,7 +516,7 @@ jobs:
         image: postgres:16
         env:
           POSTGRES_PASSWORD: test
-          POSTGRES_DB: primehunt_test
+          POSTGRES_DB: darkreach_test
         ports: ['5432:5432']
     steps:
       - uses: actions/checkout@v4
@@ -524,7 +524,7 @@ jobs:
       - run: sudo apt-get install -y libgmp-dev
       - run: cargo test --test '*'
         env:
-          DATABASE_URL: postgres://postgres:test@localhost/primehunt_test
+          DATABASE_URL: postgres://postgres:test@localhost/darkreach_test
 
   rust-benchmarks:
     runs-on: ubuntu-latest

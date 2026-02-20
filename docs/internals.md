@@ -124,7 +124,7 @@ fn mont_mul(a: u64, b: u64, n: u64, n_prime: u64) -> u64 {
 
 ### Multi-Form Simultaneous Sieving
 
-Computing k*b^n mod p serves both +1 and -1 for free (primehunt already does this). For twin primes, quad sieve gives 4/(q-1) elimination rate per prime. srsieve2 sieves multiple k values simultaneously -- b^n mod p is shared.
+Computing k*b^n mod p serves both +1 and -1 for free (darkreach already does this). For twin primes, quad sieve gives 4/(q-1) elimination rate per prime. srsieve2 sieves multiple k values simultaneously -- b^n mod p is shared.
 
 ### Algebraic Factorizations
 

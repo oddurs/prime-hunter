@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Profile-Guided Optimization (PGO) build for primehunt.
+# Profile-Guided Optimization (PGO) build for darkreach.
 #
 # Usage: ./deploy/pgo-build.sh [--threads N] [--qos]
 #
@@ -27,7 +27,7 @@ for arg in "$@"; do
     EXTRA_ARGS="$EXTRA_ARGS $arg"
 done
 
-echo "=== PGO Build for primehunt ==="
+echo "=== PGO Build for darkreach ==="
 echo "Project: $PROJECT_DIR"
 echo ""
 
@@ -54,7 +54,7 @@ mkdir -p "$PROFILE_DIR"
 RUSTFLAGS="-Cprofile-generate=$PROFILE_DIR" \
     cargo build --release --manifest-path "$PROJECT_DIR/Cargo.toml" 2>&1
 
-BINARY="$PROJECT_DIR/target/release/primehunt"
+BINARY="$PROJECT_DIR/target/release/darkreach"
 echo "Instrumented binary: $BINARY"
 
 # Step 2: Run training workload

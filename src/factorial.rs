@@ -240,10 +240,8 @@ pub fn search(
                     return (IsPrime::No, None);
                 }
                 let plus = factorial.clone() + 1u32;
-                // P-1 pre-filter: eliminates ~1-5% of sieve survivors for large factorials
-                if plus.significant_bits() > 50_000
-                    && crate::p1::is_p1_composite(&plus, 1_000_000)
-                {
+                // Adaptive P-1 pre-filter (Stage 1 + Stage 2, auto-tuned B1/B2)
+                if crate::p1::adaptive_p1_filter(&plus) {
                     return (IsPrime::No, None);
                 }
                 // Try PFGW acceleration for large candidates
@@ -273,10 +271,8 @@ pub fn search(
                     return (IsPrime::No, None);
                 }
                 let minus = factorial.clone() - 1u32;
-                // P-1 pre-filter: eliminates ~1-5% of sieve survivors for large factorials
-                if minus.significant_bits() > 50_000
-                    && crate::p1::is_p1_composite(&minus, 1_000_000)
-                {
+                // Adaptive P-1 pre-filter (Stage 1 + Stage 2, auto-tuned B1/B2)
+                if crate::p1::adaptive_p1_filter(&minus) {
                     return (IsPrime::No, None);
                 }
                 // Try PFGW acceleration for large candidates
@@ -362,6 +358,7 @@ pub fn search(
                     digit_count,
                     search_params,
                     certainty,
+                    None,
                 )?;
                 if let Some(wc) = worker_client {
                     wc.report_prime("factorial", &expr, digit_count, search_params, certainty);

@@ -155,7 +155,7 @@ Automate checking discoveries against known OEIS sequences (A002981, A002982, A0
 
 ### Agent architecture
 
-Each server runs `primehunt agent --server <url> --token <token>`. Agents connect via WebSocket, receive assignments, report progress.
+Each server runs `darkreach agent --server <url> --token <token>`. Agents connect via WebSocket, receive assignments, report progress.
 
 ### Work distribution
 

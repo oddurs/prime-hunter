@@ -149,7 +149,7 @@ Overhead: ~n/L extra multiplications = ~0.1% with L=2000
 - Results stored in `gwnum.txt`, converges after ~10 samples per size
 - Up to **10% performance difference** between fastest and default FFT
 
-**Recommendation for primehunt:** Implement startup benchmarking of FFT/multiplication sizes needed for the current search range. Store results in a local cache file.
+**Recommendation for darkreach:** Implement startup benchmarking of FFT/multiplication sizes needed for the current search range. Store results in a local cache file.
 
 ### Memory Management Patterns for Rust/rug
 

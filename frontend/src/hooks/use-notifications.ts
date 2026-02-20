@@ -13,7 +13,7 @@
 
 import { useEffect, useState, useCallback } from "react";
 
-const STORAGE_KEY = "primehunt-notifications-enabled";
+const STORAGE_KEY = "darkreach-notifications-enabled";
 
 /**
  * Hook for Browser Notification API integration.

@@ -53,7 +53,7 @@ Independent verification requires:
 1. Register at oeis.org (new accounts limited to 3 pending submissions)
 2. Submit via [oeis.org/Submit.html](https://oeis.org/Submit.html) -- minimum 4 terms
 3. Four-stage review: Proposal -> Review -> Approval -> Live
-4. Software citation: `(Other) # Using primehunt (Rust/GMP)`
+4. Software citation: `(Other) # Using darkreach (Rust/GMP)`
 
 Key sequences:
 - [A002981](https://oeis.org/A002981): n where n!+1 is prime

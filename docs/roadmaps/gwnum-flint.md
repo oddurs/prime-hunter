@@ -1,6 +1,6 @@
 # GWNUM & FLINT Integration
 
-Comprehensive guide to integrating GWNUM (direct FFI and subprocess) and FLINT for accelerated primality testing and arithmetic in primehunt.
+Comprehensive guide to integrating GWNUM (direct FFI and subprocess) and FLINT for accelerated primality testing and arithmetic in darkreach.
 
 ---
 
@@ -66,7 +66,7 @@ flint = ["flint3-sys"]
 gwnum = ["gwnum-sys"]
 ```
 
-**Rationale:** Neither FLINT nor GWNUM should be required to build primehunt. CI runs tests with and without features. Users on ARM (Apple Silicon) can use FLINT but not GWNUM.
+**Rationale:** Neither FLINT nor GWNUM should be required to build darkreach. CI runs tests with and without features. Users on ARM (Apple Silicon) can use FLINT but not GWNUM.
 
 ---
 

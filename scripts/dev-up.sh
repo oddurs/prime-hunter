@@ -41,25 +41,25 @@ wait_for_http() {
 echo "Stopping stale dev processes..."
 kill_pid_file "$BACKEND_PID_FILE"
 kill_pid_file "$FRONTEND_PID_FILE"
-pkill -f "primehunt.*dashboard" 2>/dev/null || true
+pkill -f "darkreach.*dashboard" 2>/dev/null || true
 pkill -f "next dev" 2>/dev/null || true
 
-echo "Starting backend on :8080..."
-nohup bash -lc "cd '$ROOT' && cargo run -- dashboard --port 8080" \
+echo "Starting backend on :7001..."
+nohup bash -lc "cd '$ROOT' && cargo run -- dashboard --port 7001" \
   >"$BACKEND_LOG" 2>&1 < /dev/null &
 BACKEND_PID=$!
 echo "$BACKEND_PID" >"$BACKEND_PID_FILE"
-wait_for_http "http://localhost:8080/api/status" "Backend"
+wait_for_http "http://localhost:7001/api/status" "Backend"
 
-echo "Starting frontend on :3000..."
-nohup bash -lc "cd '$ROOT/frontend' && NEXT_PUBLIC_API_URL='http://localhost:8080' NEXT_PUBLIC_WS_URL='ws://localhost:8080/ws' npm run dev -- --port 3000" \
+echo "Starting frontend on :3001..."
+nohup bash -lc "cd '$ROOT/frontend' && NEXT_PUBLIC_API_URL='http://localhost:7001' NEXT_PUBLIC_WS_URL='ws://localhost:7001/ws' npm run dev -- --port 3001" \
   >"$FRONTEND_LOG" 2>&1 < /dev/null &
 FRONTEND_PID=$!
 echo "$FRONTEND_PID" >"$FRONTEND_PID_FILE"
-wait_for_http "http://localhost:3000" "Frontend"
+wait_for_http "http://localhost:3001" "Frontend"
 
 echo
 echo "Dev stack is up."
-echo "Frontend: http://localhost:3000"
-echo "Backend API: http://localhost:8080/api/status"
+echo "Frontend: http://localhost:3001"
+echo "Backend API: http://localhost:7001/api/status"
 echo "Logs: $BACKEND_LOG, $FRONTEND_LOG"

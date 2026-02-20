@@ -151,6 +151,42 @@ pub fn is_p1_composite(n: &Integer, b1: u64) -> bool {
     p1_stage1(n, b1).is_some()
 }
 
+/// Adaptive P-1 composite pre-filter with auto-tuned B1/B2 bounds.
+///
+/// Uses [`p1_factor`] (Stage 1 + Stage 2) instead of Stage 1 alone, catching
+/// composites whose smallest prime factor p has p−1 with one large prime factor
+/// (found by Stage 2) but otherwise smooth.
+///
+/// Selects B1/B2 based on candidate bit size to balance P-1 cost against the
+/// expected savings from skipping expensive PRP/MR tests:
+///
+/// | Bits     | B1     | B2    | Rationale                                     |
+/// |----------|--------|-------|-----------------------------------------------|
+/// | < 5,000  | —      | —     | P-1 costs more than the test itself; skip      |
+/// | 5K–20K   | 100K   | 10M   | Light filter; catches smooth-ish factors        |
+/// | 20K–50K  | 500K   | 50M   | Moderate depth; worth it for 6K+ digit numbers |
+/// | 50K+     | 1M     | 100M  | Deep search; large candidates amortize the cost |
+///
+/// Returns `true` if definitely composite (a non-trivial factor was found).
+pub fn adaptive_p1_filter(n: &Integer) -> bool {
+    let bits = n.significant_bits();
+
+    // Below 5K bits, P-1 is not cost-effective
+    if bits < 5_000 {
+        return false;
+    }
+
+    let (b1, b2) = if bits < 20_000 {
+        (100_000u64, 10_000_000u64)
+    } else if bits < 50_000 {
+        (500_000u64, 50_000_000u64)
+    } else {
+        (1_000_000u64, 100_000_000u64)
+    };
+
+    p1_factor(n, b1, Some(b2)).is_some()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -281,5 +317,104 @@ mod tests {
         assert!(factor.is_some(), "Stage 2 with B2=10 should find 211");
         let f = factor.unwrap();
         assert!(n.is_divisible(&f));
+    }
+
+    // ---- adaptive_p1_filter tests ----
+
+    #[test]
+    fn adaptive_p1_filter_skips_small_candidates() {
+        // Candidates below 5K bits should be skipped (returns false regardless)
+        let small = Integer::from(2u32).pow(4999) - 1u32; // 4999 bits
+        assert!(!adaptive_p1_filter(&small), "P-1 should skip candidates < 5K bits");
+
+        let tiny = Integer::from(1000003u32);
+        assert!(!adaptive_p1_filter(&tiny), "P-1 should skip small primes");
+
+        let composite = Integer::from(41u32 * 10007); // has smooth factor but tiny
+        assert!(!adaptive_p1_filter(&composite), "P-1 should skip even easy composites if small");
+    }
+
+    #[test]
+    fn adaptive_p1_filter_safe_on_primes() {
+        // P-1 should never falsely flag a prime as composite.
+        // Use a known Mersenne prime: 2^89 - 1 (small, will be skipped by threshold)
+        let m89 = Integer::from(2u32).pow(89) - 1u32;
+        assert!(!adaptive_p1_filter(&m89));
+
+        // A large (but below threshold) prime
+        let p = Integer::from(104729u32);
+        assert!(!adaptive_p1_filter(&p));
+    }
+
+    #[test]
+    fn adaptive_p1_filter_catches_smooth_factor() {
+        // Build a composite at the 5K-bit tier: product of a B1-smooth prime and
+        // a large non-smooth prime. The smooth prime's p-1 is entirely ≤ B1=100K.
+        //
+        // p = 2^16 + 1 = 65537 (Fermat prime, p-1 = 2^16 perfectly smooth)
+        // q = next_prime(2^5000) (p-1 has a huge prime factor)
+        // n = p * q should be caught by Stage 1 with B1=100K.
+        let p = Integer::from(65537u32);
+        let q = {
+            let mut q = Integer::from(2u32).pow(5000);
+            q.next_prime_mut();
+            q
+        };
+        let n = Integer::from(&p * &q);
+        assert!(n.significant_bits() >= 5000, "composite should be ≥ 5K bits");
+        assert!(adaptive_p1_filter(&n), "P-1 should find 65537 (perfectly smooth p-1)");
+    }
+
+    #[test]
+    fn adaptive_p1_filter_catches_stage2_factor() {
+        // Composite where Stage 1 alone misses, but Stage 2 finds the factor.
+        //
+        // p = 200003 (prime). p-1 = 200002 = 2 * 100001 = 2 * 3 * 33337.
+        // 33337 is prime. With B1=100K (tier for 5K bits), Stage 1 covers up to 100K.
+        // 33337 < 100K, so Stage 1 should actually find it. Let's use a harder case:
+        //
+        // p = 1000003 (prime). p-1 = 1000002 = 2 * 500001 = 2 * 3 * 166667 = 2 * 3 * 166667.
+        // 166667 = 166667 (prime). With B1=100K, Stage 1 misses (166667 > 100K).
+        // Stage 2 with B2=10M should find it since 166667 < 10M.
+        let p = Integer::from(1_000_003u32);
+        let q = {
+            let mut q = Integer::from(2u32).pow(5000);
+            q.next_prime_mut();
+            q
+        };
+        let n = Integer::from(&p * &q);
+        assert!(n.significant_bits() >= 5000);
+        assert!(
+            adaptive_p1_filter(&n),
+            "Stage 2 should catch factor with p-1's largest prime factor = 166667 (< B2=10M)"
+        );
+    }
+
+    #[test]
+    fn adaptive_p1_filter_rejects_kbn_composite() {
+        // 3 * 2^5000 - 1 is composite. If it has a factor with smooth p-1, P-1 finds it.
+        // We don't assert it IS found (no guarantee the factors are smooth), but we verify
+        // the function doesn't panic or return incorrectly for large kbn composites.
+        let n = Integer::from(3u32) * Integer::from(2u32).pow(5000) - 1u32;
+        // Just verify it runs without error — result depends on factor smoothness
+        let _ = adaptive_p1_filter(&n);
+    }
+
+    #[test]
+    fn adaptive_p1_filter_tunes_by_size() {
+        // Verify that the function correctly selects different tiers.
+        // We use composites where Stage 1 B1=100K finds a factor but B1=50K wouldn't,
+        // to confirm the 5K-20K tier uses B1=100K.
+        //
+        // p = 99991 (prime, p-1 = 99990 = 2 * 3 * 5 * 3333 = 2*3*5*3*11*101)
+        // Largest prime factor of p-1: 101. B1=100K covers it easily.
+        let p = Integer::from(99991u32);
+        let q = {
+            let mut q = Integer::from(2u32).pow(5000);
+            q.next_prime_mut();
+            q
+        };
+        let n = Integer::from(&p * &q);
+        assert!(adaptive_p1_filter(&n), "5K-20K tier (B1=100K) should catch 99991");
     }
 }

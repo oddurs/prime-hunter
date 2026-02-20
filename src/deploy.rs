@@ -16,7 +16,7 @@
 //!
 //! ## How It Works
 //!
-//! Each deployment spawns an SSH subprocess that runs `primehunt` on the
+//! Each deployment spawns an SSH subprocess that runs `darkreach` on the
 //! remote host. The `DeploymentManager` tracks active deployments by ID,
 //! polls remote PIDs for liveness, and stores status + errors for the
 //! dashboard to display. Supports custom SSH keys and coordinator URLs.
@@ -156,7 +156,7 @@ impl DeploymentManager {
     }
 }
 
-/// Build the SSH command string to launch a primehunt worker on a remote host.
+/// Build the SSH command string to launch a darkreach worker on a remote host.
 fn build_ssh_command(
     deployment_id: u64,
     coordinator_url: &str,
@@ -164,8 +164,8 @@ fn build_ssh_command(
     params: &SearchParams,
 ) -> String {
     let worker_id = format!("deploy-{}", deployment_id);
-    let cp_path = format!("/opt/primehunt/deploy-{}.checkpoint", deployment_id);
-    let log_path = format!("/opt/primehunt/deploy-{}.log", deployment_id);
+    let cp_path = format!("/opt/darkreach/deploy-{}.checkpoint", deployment_id);
+    let log_path = format!("/opt/darkreach/deploy-{}.log", deployment_id);
 
     let subcommand_args = match params {
         SearchParams::Factorial { start, end } => {
@@ -233,7 +233,7 @@ fn build_ssh_command(
     };
 
     format!(
-        "mkdir -p /opt/primehunt && DATABASE_URL='{}' nohup /usr/local/bin/primehunt \
+        "mkdir -p /opt/darkreach && DATABASE_URL='{}' nohup /usr/local/bin/darkreach \
          --coordinator {} --worker-id {} --checkpoint {} \
          {} > {} 2>&1 & echo $!",
         database_url, coordinator_url, worker_id, cp_path, subcommand_args, log_path
@@ -330,7 +330,7 @@ mod tests {
             "root".into(),
             "kbn".into(),
             r#"{"k":3,"base":2}"#.into(),
-            "http://coord:8080".into(),
+            "http://coord:7001".into(),
             "postgres://...".into(),
             None,
             None,
@@ -438,13 +438,13 @@ mod tests {
     fn build_ssh_command_factorial() {
         let cmd = build_ssh_command(
             1,
-            "http://coord:8080",
+            "http://coord:7001",
             "postgres://db",
             &SearchParams::Factorial { start: 1, end: 100 },
         );
         assert!(cmd.contains("factorial --start 1 --end 100"));
         assert!(cmd.contains("--worker-id deploy-1"));
-        assert!(cmd.contains("--coordinator http://coord:8080"));
+        assert!(cmd.contains("--coordinator http://coord:7001"));
         assert!(cmd.contains("DATABASE_URL='postgres://db'"));
         assert!(cmd.contains("deploy-1.checkpoint"));
         assert!(cmd.contains("deploy-1.log"));
@@ -456,7 +456,7 @@ mod tests {
     fn build_ssh_command_kbn() {
         let cmd = build_ssh_command(
             5,
-            "http://coord:8080",
+            "http://coord:7001",
             "postgres://db",
             &SearchParams::Kbn {
                 k: 3,
@@ -486,7 +486,7 @@ mod tests {
             SearchParams::GenFermat { fermat_exp: 1, min_base: 2, max_base: 100 },
         ];
         for (i, params) in forms.iter().enumerate() {
-            let cmd = build_ssh_command(i as u64 + 1, "http://c:8080", "postgres://db", params);
+            let cmd = build_ssh_command(i as u64 + 1, "http://c:7001", "postgres://db", params);
             assert!(cmd.contains("nohup"), "Missing nohup for form {}", i);
             assert!(cmd.contains(&format!("deploy-{}", i + 1)));
         }

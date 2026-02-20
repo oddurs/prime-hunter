@@ -1,6 +1,6 @@
 {
-  "name": "Primehunt Dashboard",
-  "short_name": "Primehunt",
+  "name": "Darkreach Dashboard",
+  "short_name": "Darkreach",
   "description": "Monitor and manage prime-hunting searches",
   "start_url": "/",
   "display": "standalone",

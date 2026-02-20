@@ -51,7 +51,15 @@ const objectiveIcons: Record<string, typeof Target> = {
   custom: Beaker,
 };
 
-export function ProjectCard({ project }: { project: ProjectSummary }) {
+export function ProjectCard({
+  project,
+  selected,
+  onToggleSelect,
+}: {
+  project: ProjectSummary;
+  selected?: boolean;
+  onToggleSelect?: (slug: string) => void;
+}) {
   const ObjIcon = objectiveIcons[project.objective] ?? Beaker;
 
   async function activate() {
@@ -83,6 +91,14 @@ export function ProjectCard({ project }: { project: ProjectSummary }) {
   return (
     <Card>
       <CardContent className="flex items-center gap-4 py-4">
+        {onToggleSelect && (
+          <input
+            type="checkbox"
+            checked={selected ?? false}
+            onChange={() => onToggleSelect(project.slug)}
+            className="h-4 w-4 rounded border-border accent-primary shrink-0"
+          />
+        )}
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 mb-1">
             <Link

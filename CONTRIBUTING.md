@@ -1,4 +1,4 @@
-# Contributing to primehunt
+# Contributing to darkreach
 
 ## Prerequisites
 
