@@ -19,11 +19,11 @@ SELECT
     sj.search_type AS form,
     wb.duration_secs,
     COALESCE(wb.cores_used, 1) AS cores_used,
-    (wb.range_end - wb.range_start) AS candidates,
+    (wb.block_end - wb.block_start) AS candidates,
     wb.completed_at
 FROM work_blocks wb
 JOIN search_jobs sj ON wb.search_job_id = sj.id
 WHERE wb.status = 'completed'
   AND wb.duration_secs IS NOT NULL
   AND wb.duration_secs > 0
-  AND (wb.range_end - wb.range_start) > 0;
+  AND (wb.block_end - wb.block_start) > 0;
