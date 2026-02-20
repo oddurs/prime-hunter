@@ -404,7 +404,7 @@ impl Database {
             opts = opts.password(pw);
         }
         let pool = PgPoolOptions::new()
-            .max_connections(5)
+            .max_connections(2)
             .connect_with(opts)
             .await?;
         Ok(Database { pool })
