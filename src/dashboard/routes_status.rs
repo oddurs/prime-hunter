@@ -26,16 +26,18 @@ pub(super) struct StatusResponse {
 
 pub(super) async fn handler_api_status(State(state): State<Arc<AppState>>) -> Json<StatusResponse> {
     let cp = checkpoint::load(&state.checkpoint_path);
-    match cp {
-        Some(c) => Json(StatusResponse {
-            active: true,
-            checkpoint: serde_json::to_value(&c).ok(),
-        }),
-        None => Json(StatusResponse {
-            active: false,
-            checkpoint: None,
-        }),
-    }
+    let has_running_jobs = state
+        .db
+        .get_search_jobs()
+        .await
+        .unwrap_or_default()
+        .iter()
+        .any(|j| j.status == "running");
+    let has_workers = !state.get_workers_from_pg().await.is_empty();
+    Json(StatusResponse {
+        active: cp.is_some() || has_running_jobs || has_workers,
+        checkpoint: cp.and_then(|c| serde_json::to_value(&c).ok()),
+    })
 }
 
 #[derive(Deserialize)]

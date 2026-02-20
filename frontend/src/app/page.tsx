@@ -225,19 +225,28 @@ export default function Dashboard() {
               }`}
             />
             <span className="text-sm flex-1">
-              {status?.active && status?.checkpoint ? (
-                <>
-                  <strong className="text-foreground">Active:</strong>{" "}
-                  {status.checkpoint.type === "Factorial" &&
-                    `Factorial search at n=${numberWithCommas(status.checkpoint.last_n ?? 0)}`}
-                  {status.checkpoint.type === "Palindromic" &&
-                    `Palindromic search at ${numberWithCommas(status.checkpoint.digit_count ?? 0)} digits`}
-                  {status.checkpoint.type === "Kbn" &&
-                    `k*b^n search at n=${numberWithCommas(status.checkpoint.last_n ?? 0)}`}
-                  {!["Factorial", "Palindromic", "Kbn"].includes(
-                    status.checkpoint.type
-                  ) && "Search in progress"}
-                </>
+              {status?.active ? (
+                status?.checkpoint ? (
+                  <>
+                    <strong className="text-foreground">Active:</strong>{" "}
+                    {status.checkpoint.type === "Factorial" &&
+                      `Factorial search at n=${numberWithCommas(status.checkpoint.last_n ?? 0)}`}
+                    {status.checkpoint.type === "Palindromic" &&
+                      `Palindromic search at ${numberWithCommas(status.checkpoint.digit_count ?? 0)} digits`}
+                    {status.checkpoint.type === "Kbn" &&
+                      `k*b^n search at n=${numberWithCommas(status.checkpoint.last_n ?? 0)}`}
+                    {!["Factorial", "Palindromic", "Kbn"].includes(
+                      status.checkpoint.type
+                    ) && "Search in progress"}
+                  </>
+                ) : (
+                  <>
+                    <strong className="text-foreground">Active:</strong>{" "}
+                    {fleet && fleet.total_workers > 0
+                      ? `${fleet.total_workers} worker${fleet.total_workers !== 1 ? "s" : ""} across ${fleet.total_cores} cores`
+                      : "Fleet search in progress"}
+                  </>
+                )
               ) : (
                 <>
                   <strong className="text-foreground">Idle</strong> — no active

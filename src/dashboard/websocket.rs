@@ -65,12 +65,14 @@ async fn ws_loop(
 
 pub(super) async fn build_update(state: &Arc<AppState>) -> Option<String> {
     let cp = checkpoint::load(&state.checkpoint_path);
-    let status = StatusResponse {
-        active: cp.is_some(),
-        checkpoint: cp.and_then(|c| serde_json::to_value(&c).ok()),
-    };
     let workers = state.get_workers_from_pg().await;
     let fleet_data = build_fleet_data(&workers);
+    let search_jobs = state.db.get_search_jobs().await.unwrap_or_default();
+    let has_running_jobs = search_jobs.iter().any(|j| j.status == "running");
+    let status = StatusResponse {
+        active: cp.is_some() || has_running_jobs || !workers.is_empty(),
+        checkpoint: cp.and_then(|c| serde_json::to_value(&c).ok()),
+    };
     {
         let worker_stats: Vec<(String, u64, u64)> = workers
             .iter()
@@ -81,7 +83,6 @@ pub(super) async fn build_update(state: &Arc<AppState>) -> Option<String> {
     let searches = lock_or_recover(&state.searches).get_all();
     let deployments = lock_or_recover(&state.deployments).get_all();
     let coord_metrics = lock_or_recover(&state.coordinator_metrics).clone();
-    let search_jobs = state.db.get_search_jobs().await.unwrap_or_default();
     let recent_notifications = state.event_bus.recent_notifications(20);
     let agent_tasks = state
         .db
