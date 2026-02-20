@@ -12,12 +12,12 @@ export function Section({ id, className, children, secondary = false }: SectionP
     <section
       id={id}
       className={cn(
-        "py-24 px-6",
+        "py-24 px-6 sm:px-8 lg:px-12",
         secondary && "bg-bg-secondary",
         className
       )}
     >
-      <div className="mx-auto max-w-6xl">{children}</div>
+      <div className="mx-auto max-w-7xl">{children}</div>
     </section>
   );
 }

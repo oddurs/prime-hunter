@@ -1,6 +1,6 @@
 /**
- * Darkreach logo component. Renders as an inline SVG with an optional
- * purple glow filter for the hero section.
+ * darkreach logo — infinity mark in brand purple.
+ * Renders as inline SVG with optional glow for the hero.
  */
 
 interface DarkReachLogoProps {
@@ -9,41 +9,40 @@ interface DarkReachLogoProps {
   className?: string;
 }
 
-export function DarkReachLogo({ size = 32, glow = false, className = "" }: DarkReachLogoProps) {
-  const id = glow ? "darkreach-glow" : undefined;
-
+export function DarkReachLogo({
+  size = 32,
+  glow = false,
+  className = "",
+}: DarkReachLogoProps) {
   return (
     <svg
       width={size}
-      height={size}
-      viewBox="0 0 100 100"
+      height={size * 0.72}
+      viewBox="-2 14 104 72"
       fill="none"
       xmlns="http://www.w3.org/2000/svg"
       className={className}
+      aria-label="darkreach logo"
     >
       {glow && (
         <defs>
-          <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
-            <feGaussianBlur stdDeviation="4" result="blur" />
+          <filter id="logo-glow" x="-50%" y="-50%" width="200%" height="200%">
+            <feGaussianBlur stdDeviation="3" result="blur" />
+            <feFlood floodColor="#bc8cff" floodOpacity="0.5" result="color" />
+            <feComposite in="color" in2="blur" operator="in" result="glow" />
             <feMerge>
-              <feMergeNode in="blur" />
+              <feMergeNode in="glow" />
+              <feMergeNode in="glow" />
               <feMergeNode in="SourceGraphic" />
             </feMerge>
           </filter>
         </defs>
       )}
-      <text
-        x="50"
-        y="78"
-        textAnchor="middle"
-        fontFamily="Georgia, 'Times New Roman', serif"
-        fontSize="90"
-        fontWeight="bold"
+      <path
+        d="m38.25 35.93c1.0547 0.69922 1.3438 2.1172 0.64453 3.1758-0.69922 1.0547-2.1172 1.3438-3.1758 0.64453-9.5586-6.3203-18.051-4.9102-18.051 10.25 0 26.418 22.184 7.3438 30.672-1.5781 8.6172-9.0586 17.23-18.117 33.125-20.562 3.7773-0.58203 7.457 0.35938 10.402 2.3867 2.9492 2.0234 5.1523 5.1289 5.9609 8.8711 0.74219 3.4062 1.1133 7.082 1.1211 10.777 0.007812 3.6836-0.35547 7.3633-1.0781 10.789-0.8125 3.832-3.082 6.9922-6.1094 9.0234-3.0234 2.0273-6.8086 2.9219-10.66 2.2227-6.9648-1.2695-13.457-3.957-19.355-7.8594-1.0547-0.69922-1.3438-2.1172-0.64453-3.1758 0.69922-1.0547 2.1211-1.3438 3.1758-0.64453 9.6133 6.3555 18.055 5.2188 18.055-10.25 0-26.418-22.184-7.3438-30.672 1.5781-8.6172 9.0586-17.23 18.117-33.125 20.562-3.7734 0.58203-7.4531-0.35938-10.402-2.3867-2.9492-2.0234-5.1484-5.1289-5.9609-8.8711-0.74219-3.4062-1.1172-7.082-1.1211-10.777-0.007812-3.6836 0.35156-7.3633 1.0781-10.789 0.8125-3.832 3.082-6.9922 6.1094-9.0234 3.0234-2.0273 6.8086-2.9219 10.66-2.2227 3.9102 0.71094 7.4805 1.8398 10.707 3.207 3.2422 1.375 6.125 2.9805 8.6484 4.6484z"
         fill="#bc8cff"
-        filter={glow ? "url(#glow)" : undefined}
-      >
-        Σ
-      </text>
+        filter={glow ? "url(#logo-glow)" : undefined}
+      />
     </svg>
   );
 }

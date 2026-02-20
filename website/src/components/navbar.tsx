@@ -91,7 +91,7 @@ export function Navbar() {
             : "bg-transparent"
         }`}
       >
-        <div className="mx-auto max-w-6xl flex items-center justify-between px-6 h-16">
+        <div className="mx-auto max-w-7xl flex items-center justify-between px-6 sm:px-8 lg:px-12 h-16">
           <Link href="/" className="flex items-center gap-2">
             <DarkReachLogo size={28} />
             <span className="text-text font-semibold text-lg">darkreach</span>

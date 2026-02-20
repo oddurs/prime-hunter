@@ -3,7 +3,7 @@ import Link from "next/link";
 
 export function Hero() {
   return (
-    <section className="relative min-h-[90vh] flex items-center justify-center dot-grid overflow-hidden">
+    <section className="relative min-h-[calc(100vh-4rem)] flex items-center justify-center dot-grid overflow-hidden">
       {/* Purple radial glow */}
       <div
         className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] rounded-full pointer-events-none"
