@@ -455,7 +455,9 @@ pub async fn run(
             }
             prune_state.event_bus.flush();
             {
-                let events = prune_state.event_bus.recent_events_since(last_event_id, 200);
+                let events = prune_state
+                    .event_bus
+                    .recent_events_since(last_event_id, 200);
                 if let Some(last) = events.last() {
                     last_event_id = last.id;
                 }
@@ -699,10 +701,18 @@ pub async fn run(
                 if let Err(e) = prune_state.db.rollup_metrics_hour(prev_hour).await {
                     eprintln!("Warning: failed to roll up metrics: {}", e);
                 }
-                if let Err(e) = prune_state.db.prune_metric_samples(metric_retention_days).await {
+                if let Err(e) = prune_state
+                    .db
+                    .prune_metric_samples(metric_retention_days)
+                    .await
+                {
                     eprintln!("Warning: failed to prune metric samples: {}", e);
                 }
-                if let Err(e) = prune_state.db.prune_metric_rollups(rollup_retention_days).await {
+                if let Err(e) = prune_state
+                    .db
+                    .prune_metric_rollups(rollup_retention_days)
+                    .await
+                {
                     eprintln!("Warning: failed to prune metric rollups: {}", e);
                 }
                 if let Err(e) = prune_state.db.prune_system_logs(log_retention_days).await {

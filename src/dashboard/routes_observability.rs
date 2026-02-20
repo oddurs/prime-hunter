@@ -96,8 +96,8 @@ pub(super) async fn handler_metrics(
         };
         series.push(serde_json::json!({
             "metric": metric,
-            "scope": q.scope,
-            "worker_id": q.worker_id,
+            "scope": q.scope.clone(),
+            "worker_id": q.worker_id.clone(),
             "points": points,
         }));
     }
@@ -164,7 +164,12 @@ pub(super) async fn handler_report(
 
     let avg_coord_cpu = state
         .db
-        .avg_metric_in_range(from, to, "coordinator.cpu_usage_percent", Some("coordinator"))
+        .avg_metric_in_range(
+            from,
+            to,
+            "coordinator.cpu_usage_percent",
+            Some("coordinator"),
+        )
         .await
         .unwrap_or(None);
 

@@ -11,11 +11,94 @@ use axum::extract::{Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::IntoResponse;
 use axum::Json;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use super::AppState;
 use crate::db::volunteers::VolunteerRow;
+
+// ── GET /api/volunteer/worker/latest ─────────────────────────────
+
+#[derive(Deserialize)]
+pub(super) struct LatestWorkerQuery {
+    #[serde(default)]
+    channel: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct WorkerReleaseManifest {
+    channels: std::collections::HashMap<String, WorkerReleaseChannel>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct WorkerReleaseChannel {
+    version: String,
+    published_at: String,
+    artifacts: Vec<WorkerReleaseArtifact>,
+    #[serde(default)]
+    notes: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct WorkerReleaseArtifact {
+    os: String,
+    arch: String,
+    url: String,
+    sha256: String,
+}
+
+fn worker_manifest_path() -> std::path::PathBuf {
+    std::env::var("DARKREACH_WORKER_RELEASE_MANIFEST")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| std::path::PathBuf::from("deploy/releases/worker-manifest.json"))
+}
+
+fn load_worker_manifest() -> anyhow::Result<WorkerReleaseManifest> {
+    let path = worker_manifest_path();
+    let raw = std::fs::read_to_string(&path)
+        .map_err(|e| anyhow::anyhow!("failed to read {}: {}", path.display(), e))?;
+    let parsed: WorkerReleaseManifest = serde_json::from_str(&raw)
+        .map_err(|e| anyhow::anyhow!("failed to parse {}: {}", path.display(), e))?;
+    Ok(parsed)
+}
+
+pub(super) async fn handler_worker_latest(
+    Query(query): Query<LatestWorkerQuery>,
+) -> impl IntoResponse {
+    let channel = query.channel.unwrap_or_else(|| "stable".to_string());
+    let manifest = match load_worker_manifest() {
+        Ok(v) => v,
+        Err(e) => {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(serde_json::json!({
+                    "error": "Worker release manifest unavailable",
+                    "detail": e.to_string(),
+                })),
+            );
+        }
+    };
+
+    let Some(release) = manifest.channels.get(&channel) else {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({
+                "error": format!("Unknown release channel: {}", channel),
+            })),
+        );
+    };
+
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({
+            "channel": channel,
+            "version": release.version,
+            "published_at": release.published_at,
+            "notes": release.notes,
+            "artifacts": release.artifacts,
+        })),
+    )
+}
 
 // ── Authentication ────────────────────────────────────────────────
 
