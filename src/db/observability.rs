@@ -427,7 +427,7 @@ impl Database {
                     a.search_type,
                     a.value AS tested_latest,
                     b.value AS tested_prev,
-                    EXTRACT(EPOCH FROM (a.ts - b.ts)) AS dt
+                    EXTRACT(EPOCH FROM (a.ts - b.ts))::float8 AS dt
                 FROM recent a
                 JOIN recent b
                   ON a.worker_id = b.worker_id
