@@ -67,9 +67,22 @@ impl AppState {
     pub(super) async fn get_workers_from_pg(&self) -> Vec<fleet::WorkerState> {
         // Prefer Redis for real-time worker state (sub-ms reads, automatic TTL expiry).
         // Falls back to PostgreSQL when Redis is not configured.
+        // Read from Redis first (sub-ms), fall back to PG on error or empty result.
+        // Workers that register via PG heartbeat (not HTTP) only appear in PG,
+        // so we also check PG when Redis returns an empty set.
         let rows = if self.db.redis().is_some() {
             match self.db.redis_get_all_workers().await {
-                Ok(rows) => rows,
+                Ok(rows) if !rows.is_empty() => rows,
+                Ok(_empty) => {
+                    // Redis has no workers — check PG (workers may register via PG RPC directly)
+                    match self.db.get_all_workers().await {
+                        Ok(rows) => rows,
+                        Err(e) => {
+                            warn!(error = %e, "failed to read workers from PG");
+                            return Vec::new();
+                        }
+                    }
+                }
                 Err(e) => {
                     warn!(error = %e, "redis worker read failed, falling back to PG");
                     match self.db.get_all_workers().await {
