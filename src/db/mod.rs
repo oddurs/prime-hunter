@@ -44,7 +44,11 @@ mod records;
 mod releases;
 mod roles;
 mod schedules;
-pub mod volunteers;
+pub mod operators;
+/// Backward compatibility re-export.
+pub mod volunteers {
+    pub use super::operators::*;
+}
 mod workers;
 pub use observability::{
     MetricPoint, MetricSample, MetricSeries, SystemLogEntry, SystemLogRow, WorkerRateRow,

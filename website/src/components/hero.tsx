@@ -1,7 +1,32 @@
+"use client";
+
+import { useEffect, useState } from "react";
 import { DarkReachLogo } from "./darkreach-logo";
 import Link from "next/link";
 
+const headlines = [
+  "Hunting record-breaking primes.",
+  "12 prime forms. One engine.",
+  "AI agents that optimize themselves.",
+  "Deterministic proofs, not guesses.",
+  "Distributed across a global fleet.",
+];
+
 export function Hero() {
+  const [index, setIndex] = useState(0);
+  const [fade, setFade] = useState(true);
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setFade(false);
+      setTimeout(() => {
+        setIndex((prev) => (prev + 1) % headlines.length);
+        setFade(true);
+      }, 300);
+    }, 4000);
+    return () => clearInterval(timer);
+  }, []);
+
   return (
     <section className="relative min-h-[calc(100vh-4rem)] flex items-center justify-center dot-grid overflow-hidden">
       {/* Purple radial glow */}
@@ -18,14 +43,21 @@ export function Hero() {
           <DarkReachLogo size={120} glow />
         </div>
 
-        <h1 className="text-5xl sm:text-6xl font-bold tracking-tight text-foreground mb-6">
+        <h1 className="text-5xl sm:text-6xl font-bold tracking-tight text-foreground mb-4">
           AI-driven distributed computing.
         </h1>
 
-        <p className="text-lg sm:text-xl text-muted-foreground max-w-2xl mx-auto mb-10">
+        <p
+          className={`text-xl sm:text-2xl text-accent-purple font-medium mb-6 h-8 transition-opacity duration-300 ${
+            fade ? "opacity-100" : "opacity-0"
+          }`}
+        >
+          {headlines[index]}
+        </p>
+
+        <p className="text-lg text-muted-foreground max-w-2xl mx-auto mb-10">
           darkreach autonomously researches, optimizes, and orchestrates
-          scientific discoveries across a fleet of servers. Currently hunting
-          primes.
+          scientific discoveries across a fleet of servers.
         </p>
 
         <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
@@ -33,7 +65,7 @@ export function Hero() {
             href="/download"
             className="inline-flex items-center px-6 py-3 rounded-md bg-accent-purple text-white font-medium hover:opacity-90 transition-opacity"
           >
-            Get Started
+            Start Hunting
           </Link>
           <a
             href="https://app.darkreach.ai"

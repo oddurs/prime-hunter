@@ -16,7 +16,7 @@ mod routes_releases;
 mod routes_searches;
 mod routes_status;
 mod routes_verify;
-mod routes_volunteer;
+mod routes_operator;
 mod routes_workers;
 mod websocket;
 
@@ -365,30 +365,30 @@ pub fn build_router(state: Arc<AppState>, static_dir: Option<&Path>) -> Router {
         // Volunteer public API (v1)
         .route(
             "/api/v1/register",
-            post(routes_volunteer::handler_v1_register),
+            post(routes_operator::handler_v1_register),
         )
         .route(
             "/api/v1/worker/register",
-            post(routes_volunteer::handler_v1_worker_register),
+            post(routes_operator::handler_v1_worker_register),
         )
         .route(
             "/api/v1/worker/heartbeat",
-            post(routes_volunteer::handler_v1_worker_heartbeat),
+            post(routes_operator::handler_v1_worker_heartbeat),
         )
         .route(
             "/api/v1/worker/latest",
-            get(routes_volunteer::handler_worker_latest),
+            get(routes_operator::handler_worker_latest),
         )
-        .route("/api/v1/work", get(routes_volunteer::handler_v1_work))
-        .route("/api/v1/result", post(routes_volunteer::handler_v1_result))
-        .route("/api/v1/stats", get(routes_volunteer::handler_v1_stats))
+        .route("/api/v1/work", get(routes_operator::handler_v1_work))
+        .route("/api/v1/result", post(routes_operator::handler_v1_result))
+        .route("/api/v1/stats", get(routes_operator::handler_v1_stats))
         .route(
             "/api/v1/leaderboard",
-            get(routes_volunteer::handler_v1_leaderboard),
+            get(routes_operator::handler_v1_leaderboard),
         )
         .route(
             "/api/volunteer/worker/latest",
-            get(routes_volunteer::handler_worker_latest),
+            get(routes_operator::handler_worker_latest),
         );
 
     if let Some(dir) = static_dir {
@@ -474,10 +474,10 @@ pub async fn run(
                 Err(e) => eprintln!("Warning: failed to reclaim stale blocks: {}", e),
                 _ => {}
             }
-            // Volunteer blocks get a 24-hour timeout (86400s) vs 2-min for internal workers
-            match prune_state.db.reclaim_stale_volunteer_blocks(86400).await {
-                Ok(n) if n > 0 => eprintln!("Reclaimed {} stale volunteer blocks", n),
-                Err(e) => eprintln!("Warning: failed to reclaim stale volunteer blocks: {}", e),
+            // Operator blocks get a 24-hour timeout (86400s) vs 2-min for internal workers
+            match prune_state.db.reclaim_stale_operator_blocks(86400).await {
+                Ok(n) if n > 0 => eprintln!("Reclaimed {} stale operator blocks", n),
+                Err(e) => eprintln!("Warning: failed to reclaim stale operator blocks: {}", e),
                 _ => {}
             }
             let fleet_workers = prune_state.get_workers_from_pg().await;

@@ -13,7 +13,7 @@
 import { useState, useRef, useCallback, useEffect } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Bell, BellOff, LogOut, Menu, Moon, Sun } from "lucide-react";
+import { Bell, BellOff, ChevronDown, LogOut, Menu, Moon, Sun } from "lucide-react";
 import { useWs } from "@/contexts/websocket-context";
 import { useAuth } from "@/contexts/auth-context";
 import { useTheme } from "@/hooks/use-theme";
@@ -152,22 +152,55 @@ export function AppHeader() {
     };
   }, [errorBudgetErrorsPerHour, errorBudgetWarningsPerHour]);
 
-  const navItems = [
-    { title: "Dashboard", href: "/", count: undefined },
-    { title: "Projects", href: "/projects", count: undefined },
-    { title: "Searches", href: "/searches", count: runningCount || undefined },
-    { title: "Observability", href: "/performance", count: undefined },
-    { title: "Logs", href: "/logs", count: undefined },
-    { title: "Releases", href: "/releases", count: undefined },
+  type NavLink = { title: string; href: string; count?: number };
+  type NavGroup = { title: string; items: NavLink[] };
+  type NavEntry = NavLink | NavGroup;
+
+  function isGroup(entry: NavEntry): entry is NavGroup {
+    return "items" in entry;
+  }
+
+  const navEntries: NavEntry[] = [
+    { title: "Dashboard", href: "/" },
+    {
+      title: "Discovery",
+      items: [
+        { title: "Browse", href: "/browse" },
+        { title: "Searches", href: "/searches", count: runningCount || undefined },
+        { title: "Projects", href: "/projects" },
+        { title: "Leaderboard", href: "/leaderboard" },
+      ],
+    },
+    {
+      title: "Operations",
+      items: [
+        { title: "Fleet", href: "/fleet" },
+        { title: "Observability", href: "/performance" },
+        { title: "Logs", href: "/logs" },
+        { title: "Releases", href: "/releases" },
+      ],
+    },
     { title: "Agents", href: "/agents", count: activeAgentCount || undefined },
-    { title: "Fleet", href: "/fleet", count: undefined },
-    { title: "Browse", href: "/browse", count: undefined },
-    { title: "Leaderboard", href: "/leaderboard", count: undefined },
-    { title: "Docs", href: "/docs", count: undefined },
+    { title: "Docs", href: "/docs" },
   ];
+
+  // Flat list for mobile menu
+  const navItems = navEntries.flatMap((entry) =>
+    isGroup(entry) ? entry.items : [entry]
+  );
 
   function isActive(href: string) {
     return href === "/" ? pathname === "/" : pathname.startsWith(href);
+  }
+
+  function isGroupActive(group: NavGroup) {
+    return group.items.some((item) => isActive(item.href));
+  }
+
+  /** Aggregate badge count for a dropdown group */
+  function groupCount(group: NavGroup) {
+    const total = group.items.reduce((sum, item) => sum + (item.count ?? 0), 0);
+    return total || undefined;
   }
 
   return (
@@ -182,13 +215,63 @@ export function AppHeader() {
         </Link>
 
         {/* Desktop nav */}
-        <nav className="hidden md:flex items-center gap-1 overflow-x-auto">
-          {navItems.map((item) => {
-            const active = isActive(item.href);
+        <nav className="hidden md:flex items-center gap-1">
+          {navEntries.map((entry) => {
+            if (isGroup(entry)) {
+              const active = isGroupActive(entry);
+              const count = groupCount(entry);
+              return (
+                <DropdownMenu key={entry.title}>
+                  <DropdownMenuTrigger asChild>
+                    <button
+                      className={cn(
+                        "relative flex items-center gap-1 px-3 py-1 text-sm font-medium transition-colors rounded-md",
+                        active
+                          ? "text-white"
+                          : "text-[var(--header-foreground)]/70 hover:text-[var(--header-foreground)] hover:bg-white/[0.12]"
+                      )}
+                    >
+                      {entry.title}
+                      {count != null && (
+                        <span className="inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 text-[11px] font-semibold leading-none rounded-full bg-white/[0.15] text-[var(--header-foreground)]">
+                          {count}
+                        </span>
+                      )}
+                      <ChevronDown className="size-3 opacity-60" />
+                      {active && (
+                        <span className="absolute bottom-[-13px] left-2 right-2 h-[2px] bg-[#f78166] rounded-full" />
+                      )}
+                    </button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="start" className="min-w-[160px]">
+                    {entry.items.map((item) => (
+                      <DropdownMenuItem key={item.href} asChild>
+                        <Link
+                          href={item.href}
+                          className={cn(
+                            "flex items-center justify-between gap-4 cursor-pointer",
+                            isActive(item.href) && "font-semibold"
+                          )}
+                        >
+                          {item.title}
+                          {item.count != null && (
+                            <span className="inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 text-[11px] font-semibold leading-none rounded-full bg-muted text-muted-foreground">
+                              {item.count}
+                            </span>
+                          )}
+                        </Link>
+                      </DropdownMenuItem>
+                    ))}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              );
+            }
+
+            const active = isActive(entry.href);
             return (
               <Link
-                key={item.href}
-                href={item.href}
+                key={entry.href}
+                href={entry.href}
                 className={cn(
                   "relative flex items-center gap-1.5 px-3 py-1 text-sm font-medium transition-colors rounded-md",
                   active
@@ -196,10 +279,10 @@ export function AppHeader() {
                     : "text-[var(--header-foreground)]/70 hover:text-[var(--header-foreground)] hover:bg-white/[0.12]"
                 )}
               >
-                {item.title}
-                {item.count != null && (
+                {entry.title}
+                {entry.count != null && (
                   <span className="inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 text-[11px] font-semibold leading-none rounded-full bg-white/[0.15] text-[var(--header-foreground)]">
-                    {item.count}
+                    {entry.count}
                   </span>
                 )}
                 {active && (
@@ -379,12 +462,45 @@ export function AppHeader() {
             </SheetTitle>
           </SheetHeader>
           <nav className="flex flex-col py-2">
-            {navItems.map((item) => {
-              const active = isActive(item.href);
+            {navEntries.map((entry) => {
+              if (isGroup(entry)) {
+                return (
+                  <div key={entry.title}>
+                    <div className="px-4 pt-4 pb-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/60">
+                      {entry.title}
+                    </div>
+                    {entry.items.map((item) => {
+                      const active = isActive(item.href);
+                      return (
+                        <SheetClose key={item.href} asChild>
+                          <Link
+                            href={item.href}
+                            className={cn(
+                              "flex items-center justify-between px-4 py-2.5 text-sm font-medium transition-colors",
+                              active
+                                ? "text-foreground bg-accent border-l-2 border-[#f78166]"
+                                : "text-muted-foreground hover:text-foreground hover:bg-accent/50"
+                            )}
+                          >
+                            {item.title}
+                            {item.count != null && (
+                              <span className="inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 text-xs font-semibold rounded-full bg-muted text-muted-foreground">
+                                {item.count}
+                              </span>
+                            )}
+                          </Link>
+                        </SheetClose>
+                      );
+                    })}
+                  </div>
+                );
+              }
+
+              const active = isActive(entry.href);
               return (
-                <SheetClose key={item.href} asChild>
+                <SheetClose key={entry.href} asChild>
                   <Link
-                    href={item.href}
+                    href={entry.href}
                     className={cn(
                       "flex items-center justify-between px-4 py-2.5 text-sm font-medium transition-colors",
                       active
@@ -392,10 +508,10 @@ export function AppHeader() {
                         : "text-muted-foreground hover:text-foreground hover:bg-accent/50"
                     )}
                   >
-                    {item.title}
-                    {item.count != null && (
+                    {entry.title}
+                    {entry.count != null && (
                       <span className="inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 text-xs font-semibold rounded-full bg-muted text-muted-foreground">
-                        {item.count}
+                        {entry.count}
                       </span>
                     )}
                   </Link>

@@ -73,7 +73,11 @@ pub mod sieve;
 pub mod sophie_germain;
 pub mod twin;
 pub mod verify;
-pub mod volunteer;
+pub mod operator;
+/// Backward compatibility re-export.
+pub mod volunteer {
+    pub use crate::operator::*;
+}
 pub mod wagstaff;
 pub mod worker_client;
 

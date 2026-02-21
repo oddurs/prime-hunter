@@ -1,8 +1,8 @@
-//! Volunteer account management — registration, trust scoring, credit ledger.
+//! Operator account management — registration, trust scoring, credit ledger.
 //!
-//! Handles CRUD operations for volunteer accounts and their worker machines,
+//! Handles CRUD operations for operator accounts and their worker machines,
 //! trust level progression (adaptive replication), and credit tracking for
-//! the public volunteer computing platform.
+//! the public operator computing platform.
 
 use super::Database;
 use anyhow::Result;
@@ -10,7 +10,7 @@ use serde::Serialize;
 
 /// Volunteer account row from the `volunteers` table.
 #[derive(Serialize, sqlx::FromRow)]
-pub struct VolunteerRow {
+pub struct OperatorRow {
     pub id: uuid::Uuid,
     pub username: String,
     pub email: String,
@@ -24,7 +24,7 @@ pub struct VolunteerRow {
 
 /// Trust record for a volunteer (adaptive replication).
 #[derive(Serialize, sqlx::FromRow)]
-pub struct VolunteerTrustRow {
+pub struct OperatorTrustRow {
     pub volunteer_id: uuid::Uuid,
     pub consecutive_valid: i32,
     pub total_valid: i32,
@@ -50,8 +50,8 @@ impl Database {
     // ── Registration ──────────────────────────────────────────────
 
     /// Register a new volunteer account. Returns the generated API key and username.
-    pub async fn register_volunteer(&self, username: &str, email: &str) -> Result<VolunteerRow> {
-        let row = sqlx::query_as::<_, VolunteerRow>(
+    pub async fn register_volunteer(&self, username: &str, email: &str) -> Result<OperatorRow> {
+        let row = sqlx::query_as::<_, OperatorRow>(
             "INSERT INTO volunteers (username, email)
              VALUES ($1, $2)
              RETURNING *",
@@ -74,8 +74,8 @@ impl Database {
     }
 
     /// Look up a volunteer by API key (used for authentication).
-    pub async fn get_volunteer_by_api_key(&self, api_key: &str) -> Result<Option<VolunteerRow>> {
-        let row = sqlx::query_as::<_, VolunteerRow>("SELECT * FROM volunteers WHERE api_key = $1")
+    pub async fn get_volunteer_by_api_key(&self, api_key: &str) -> Result<Option<OperatorRow>> {
+        let row = sqlx::query_as::<_, OperatorRow>("SELECT * FROM volunteers WHERE api_key = $1")
             .bind(api_key)
             .fetch_optional(&self.pool)
             .await?;
@@ -167,8 +167,8 @@ impl Database {
         &self,
         volunteer_id: uuid::Uuid,
         caps: &WorkerCapabilities,
-    ) -> Result<Option<VolunteerWorkBlock>> {
-        let row = sqlx::query_as::<_, VolunteerWorkBlock>(
+    ) -> Result<Option<OperatorWorkBlock>> {
+        let row = sqlx::query_as::<_, OperatorWorkBlock>(
             "UPDATE work_blocks SET
                status = 'claimed',
                claimed_by = $1::text,
@@ -232,7 +232,7 @@ impl Database {
             .await?;
 
             if let Some(job) = job {
-                return Ok(Some(VolunteerWorkBlock {
+                return Ok(Some(OperatorWorkBlock {
                     block_id: block.block_id,
                     search_job_id: block.search_job_id,
                     block_start: block.block_start,
@@ -277,8 +277,8 @@ impl Database {
     pub async fn get_volunteer_trust(
         &self,
         volunteer_id: uuid::Uuid,
-    ) -> Result<Option<VolunteerTrustRow>> {
-        let row = sqlx::query_as::<_, VolunteerTrustRow>(
+    ) -> Result<Option<OperatorTrustRow>> {
+        let row = sqlx::query_as::<_, OperatorTrustRow>(
             "SELECT * FROM volunteer_trust WHERE volunteer_id = $1",
         )
         .bind(volunteer_id)
@@ -466,7 +466,7 @@ pub struct WorkerCapabilities {
 
 /// Work block assigned to a volunteer (subset of work_blocks columns).
 #[derive(Serialize, sqlx::FromRow)]
-pub struct VolunteerWorkBlock {
+pub struct OperatorWorkBlock {
     pub block_id: i32,
     pub search_job_id: i64,
     pub block_start: i64,

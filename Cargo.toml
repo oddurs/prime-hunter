@@ -2,6 +2,13 @@
 name = "darkreach"
 version = "0.1.0"
 edition = "2021"
+description = "Distributed prime number discovery platform — 12 search forms, deterministic proofs, fleet coordination"
+repository = "https://github.com/oddurs/prime-hunter"
+homepage = "https://darkreach.ai"
+license = "MIT"
+readme = "README.md"
+keywords = ["prime-numbers", "number-theory", "primality-testing", "gmp", "distributed-computing"]
+categories = ["mathematics", "command-line-utilities", "science"]
 
 [features]
 default = []

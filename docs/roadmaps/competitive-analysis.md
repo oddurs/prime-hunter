@@ -627,3 +627,380 @@ Reference table showing current records and darkreach's competitive position.
 - [Conjectures 'R Us — Riesel](http://www.noprimeleftbehind.net/crus/Riesel-conjectures.htm)
 - [Palindromic Prime Records](https://www.worldofnumbers.com/palprim2.htm)
 - [Prime-Wiki PrimeGrid](https://www.rieselprime.de/ziki/PrimeGrid)
+
+---
+
+## 7. Landing Page Competitive Analysis (Feb 2026)
+
+Deep analysis of competitor and reference landing pages to inform darkreach.ai's
+homepage strategy. Every major prime-hunting project has a dated web presence —
+this is a significant opportunity for differentiation.
+
+### 7.1 Competitor Landing Pages
+
+#### GIMPS (mersenne.org)
+
+**Design era:** Mid-2000s. jQuery dropdown menus, dense text blocks, no responsive framework.
+
+**Page structure:**
+1. Header with login/register bar
+2. Hero: project name + featured discovery (M52, 41M digits)
+3. Live statistics dashboard (real-time computing metrics)
+4. News/updates feed (chronological announcements)
+5. "Make Math History" recruitment pitch
+6. Educational content for newcomers
+7. Footer with merchandise links
+
+**Lead messaging:** "Great Internet Mersenne Prime Search — Finding World Record Primes Since 1996."
+Leads with the world record achievement, then explains the project. Academic tone throughout.
+
+**Key stats displayed (live):**
+
+| Metric | Value |
+|--------|-------|
+| Computing power | 5,695,331 GFLOP/s |
+| Active devices | 3,099,191 CPUs & GPUs |
+| Mersenne primes known | 52 (18 by GIMPS) |
+| Tested below | 139.6M exponents |
+| Largest prime digits | 41,024,320 |
+
+**CTAs:** "Join GIMPS", "Download Software", $3,000 discovery award. Functional rather than
+persuasive — no urgency language, no onboarding funnel.
+
+**Strengths:**
+- Live stats dashboard is the single most compelling element — millions of active devices
+  creates visceral sense of scale
+- World record framing communicates significance to non-mathematicians
+- 28 years of history establishes unmatched credibility
+- Low barrier pitch: "All you need is a personal computer, patience, and a lot of luck"
+
+**Weaknesses:**
+- No visual hierarchy for scanning — dense text walls
+- No progress visualizations despite excellent data (no charts, no progress bars)
+- Buried onboarding behind dropdown menus
+- No social proof beyond stats (no testimonials, no contributor spotlights)
+- No hero image or illustration
+
+#### PrimeGrid (primegrid.com)
+
+**Design era:** Mid-2000s BOINC project template. Monospace fonts, no images beyond logo.
+
+**Page structure:**
+1. Logo + donation banner
+2. "Join PrimeGrid" 4-step instructions (first content block)
+3. Returning participant links
+4. Community resources
+5. Leaderboards (6 ranking pages)
+6. Active subprojects table with task counts
+7. Challenge information (Tour de Primes 2026)
+8. Statistics dashboard
+9. Recent significant primes with hardware specs
+10. News feed + newly reported primes
+11. Top crunchers leaderboard
+
+**Lead messaging:** No hero, no mission statement above the fold. Leads with procedural
+onboarding: "1. Download BOINC, 2. Enter URL, 3. Select subprojects, 4. Start computing."
+Purpose communicated indirectly through data, not copywriting.
+
+**Key stats displayed:**
+
+| Metric | Value |
+|--------|-------|
+| Total users | 357,266 |
+| Total hosts | 885,651 |
+| Tasks in progress | 321,149 |
+| Primes discovered | 100,684 |
+| Mega primes | 3,394 |
+| Computing power | 4,329 TFLOPS |
+
+**CTAs:** All plain-text hyperlinks. No styled buttons, no contrasting CTA colors. "Download",
+"Make a donation", "Create or Join a Team" — all equally weighted.
+
+**Strengths:**
+- Data density communicates legitimacy — 357K users and 100K primes need no marketing copy
+- Full transparency (server load, generation timestamps, per-subproject task counts)
+- Community challenges (9/year) create recurring engagement
+- Detailed discovery announcements celebrate contributors by name
+
+**Weaknesses:**
+- No hero section or emotional hook — newcomers who don't know prime hunting will bounce
+- No visual design to speak of — monospace text on white
+- High onboarding friction (download BOINC → enter URL → configure subprojects)
+- No storytelling about what prime hunting means or why it matters
+- No social proof beyond raw numbers
+
+#### Folding@home (foldingathome.org)
+
+**Design era:** Modern but traditional. Functional design with clear conversion funnel.
+
+**Page structure:**
+1. Navigation (8 items with dropdowns)
+2. Hero with platform-specific download buttons
+3. Latest blog posts (3 entries)
+4. "JOIN THE COMMUNITY" social links
+5. Three feature cards ("1 in a million" / "together" / "what's FOLDING?")
+6. Team/leadership section
+7. Partner logos (NVIDIA, AMD, Microsoft, AWS, Oracle, VMware, ARM)
+
+**Lead messaging:** "START FOLDING NOW" — imperative, action-first hero. Subheadline frames
+the value: "become a citizen scientist and contribute your compute power to help fight global
+health threats like COVID19, Alzheimer's Disease, and cancer." Immediately followed by trust
+line: "Our software is completely free, easy to install, and safe to use."
+
+**Messaging structure:** Action → Purpose → Reassurance.
+
+**CTAs:** Platform-specific download buttons (Linux, Windows, Mac) as the single dominant
+funnel. "JOIN THE COMMUNITY" as secondary. Donate as tertiary.
+
+**Strengths:**
+- Action-first hero — no preamble, immediately told what to do and why
+- Disease names (COVID-19, Alzheimer's, cancer) create emotional urgency
+- Trust reassurance ("free, easy, safe") addresses top three hesitations
+- Partner logos provide massive institutional credibility
+- Multiple community channels (Discord, forums) signal active participation
+
+**Weaknesses:**
+- No live stats on the homepage despite rich statistics backend
+- Blog posts are low-impact for conversion
+- Feature cards use vague inspirational copy rather than concrete metrics
+- No contributor stories or testimonials
+
+#### SETI@home (seti.berkeley.edu)
+
+**Design era:** Early 2010s placeholder. Minimal to the point of sparse.
+
+**Page structure:**
+1. Header
+2. Hero/description (one paragraph)
+3. Two CTA cards (SETI@home + Breakthrough Listen)
+4. Social media links
+5. Footer
+
+**Lead messaging:** "The Search for ExtraTerrestrial Intelligence at UC Berkeley."
+Identity-first, then description, then two project cards.
+
+**Strengths:** Mission is inherently fascinating; UC Berkeley backing.
+
+**Weaknesses:** Essentially a hub page. No statistics, no social proof, no visualizations,
+no onboarding flow, no explanation of technology or discoveries. Feels abandoned
+(SETI@home has been in hibernation since March 2020).
+
+#### BOINC (boinc.berkeley.edu)
+
+**Design era:** 2000s institutional/academic.
+
+**Page structure:**
+1. Logo/branding
+2. Value proposition ("Compute for Science")
+3. Dual-path CTA (Join Science United vs Download BOINC)
+4. Project news feed
+5. Learning resources
+6. Community links
+7. Support/contribution pathways
+
+**Lead messaging:** "Compute for Science" — clear, purpose-driven headline. Supporting copy
+emphasizes ease ("It's easy and safe") and breadth (~30 active science projects).
+
+**Strengths:**
+- Dual onboarding paths (casual via Science United vs power user via BOINC download)
+- Mission-driven messaging works for volunteer projects
+- UC Berkeley and NSF institutional credibility
+
+**Weaknesses:** Text-heavy, 2000s-era design. Minimal visual design. White/light background,
+no animation, no gradient effects.
+
+#### t5k.org (The Prime Pages)
+
+**Design era:** Early 2000s academic web.
+
+**Page structure:**
+1. Navigation header
+2. Hero with "31 MPH" speed limit sign image (playful prime reference)
+3. Dictionary-style prime number definition
+4. Database features
+5. Research/theory section (Riemann Hypothesis, proving methods)
+6. Collapsible FAQ
+7. Four-column footer
+
+**Lead messaging:** "The PrimePages: prime number research & records" — positions as
+the "Guinness Book of prime number records." Updated hourly.
+
+**Key stats:** 5,000 largest primes tracked, 50,000,000 primes listed, 2,000+ years of history.
+
+**Strengths:**
+- "Updated hourly" builds trust — this is a living resource
+- Layered depth: starts accessible (definitions), progresses to advanced (Riemann Hypothesis)
+- Verification status transparency
+- "Prime Curios" adds personality alongside academic rigor
+- Primality checker as interactive tool
+
+**Weaknesses:** Classic academic design, text-heavy, minimal visual hierarchy.
+
+---
+
+### 7.2 Modern Reference Landing Pages
+
+These are not competitors but represent the state of the art in landing page design.
+
+#### Render (render.com)
+
+**Pattern: Persuasion funnel.** Hero (attention) → Logo carousel (credibility) → 3-step
+walkthrough (simplicity) → Feature deep-dives → Testimonial → Final CTA.
+
+**Key techniques:**
+- Rotating hero headline showing different use cases — demonstrates breadth
+- "Click, click, done" 3-step onboarding — makes complex feel easy
+- Hard credibility numbers: "4.5 million builders", $100M funding at $1.5B valuation
+- Dark mode with purple-to-orange gradient accents
+- Real testimonial with name, title, company
+- CTA repeated at multiple scroll positions
+
+#### Vercel (vercel.com)
+
+**Pattern: Outcome-driven.** Hero → Quantified customer outcomes → Solution categories →
+Product features → Infrastructure → Templates.
+
+**Key techniques:**
+- Quantified outcomes instead of feature lists: "build times from 7 min to 40 sec"
+- Solution-first organization (by what you're building, not by product feature)
+- "Start Deploying" instead of "Sign Up" — action-oriented CTA language
+- Coined concept ("Framework-Defined Infrastructure") to position as category creator
+- Named case studies with real performance data
+
+---
+
+### 7.3 Cross-Cutting Patterns
+
+What the most effective landing pages all share:
+
+| Pattern | Who Does It | Impact |
+|---------|-------------|--------|
+| **Live/real-time data** | GIMPS, PrimeGrid | Creates "something is happening now" energy |
+| **Lead with biggest achievement** | GIMPS (M52), Folding@home (COVID-19) | Communicates significance instantly |
+| **3-step simplicity** | Render, Folding@home, BOINC | Reduces perceived friction |
+| **Quantified outcomes** | Vercel, Render, GIMPS | Concrete > vague |
+| **Partner/institutional logos** | Folding@home, BOINC, Render | Borrowed credibility |
+| **Action-oriented CTAs** | Vercel ("Start Deploying"), F@h ("START FOLDING NOW") | Creates momentum |
+| **Rotating/dynamic hero** | Render | Shows breadth without clutter |
+| **Contributor celebration** | PrimeGrid (discoverer names + hardware) | Humanizes the project |
+| **Challenge/event cadence** | PrimeGrid (9/year) | Recurring engagement hooks |
+
+---
+
+### 7.4 darkreach Landing Page Audit
+
+Current homepage sections vs what competitors and best practices suggest:
+
+| Section | darkreach Status | Gap | Priority |
+|---------|-----------------|-----|----------|
+| **Hero** | AI narrative, static headline | Add rotating headline cycling prime forms/achievements | Medium |
+| **Stats bar** | 5 metrics, hardcoded mock data | Connect to `api.darkreach.ai/api/stats` for live numbers | **High** |
+| **Feature grid** | 3 AI capability cards | Good — unique differentiator vs competitors | Keep |
+| **Pipeline** | 4-step technical visualization | Good depth | Keep |
+| **12 Prime Forms** | Form cards with formulas | Strong breadth display (PrimeGrid-style taxonomy) | Keep |
+| **Discoveries** | 10-row mock table | Connect to Supabase for real discoveries | **High** |
+| **Comparison** | 3-column matrix vs GIMPS/PrimeGrid | Add rows: live stats, challenge events, in-browser | Low |
+| **CTA** | Two code-block paths (worker/self-host) | Add simpler 1-click path; reduce friction | **High** |
+| **Missing: Live activity feed** | — | Real-time prime discovery stream (unique vs all competitors) | **High** |
+| **Missing: Progress visualization** | — | Search range coverage, "X% explored" progress bars | Medium |
+| **Missing: Contributor spotlight** | — | Featured discoverer with hardware and story | Medium |
+| **Missing: Goal/mission statement** | — | Clear "why" above fold for non-technical visitors | Medium |
+| **Missing: Testimonials/logos** | — | Even self-sourced ("Built with Rust + GMP + Rayon") | Low |
+
+---
+
+### 7.5 Recommendations (ordered by impact)
+
+#### Tier 1: Live data (the biggest differentiator)
+
+No prime-hunting project shows live data on their landing page. darkreach already
+has the infrastructure (Supabase Realtime, WebSocket, REST API).
+
+1. **Live stats bar** — Replace hardcoded numbers with `api.darkreach.ai/api/stats`.
+   Fallback to static values when API is unreachable. Show pulsing green dots
+   (already implemented in UI, just needs data source).
+
+2. **Real-time discovery feed** — A scrolling ticker or card stream showing primes
+   as they're found. Use Supabase Realtime `INSERT` subscription (same pattern as
+   dashboard's `use-prime-realtime.ts`). This would be genuinely unique — no
+   competitor has anything like it.
+
+3. **Live fleet stats** — "X workers across Y servers testing Z candidates/sec right now."
+   Pull from `/api/fleet` endpoint.
+
+#### Tier 2: Reduce onboarding friction
+
+Every competitor requires downloading software. darkreach's CTA currently shows
+multi-line terminal commands — high friction.
+
+4. **1-click worker download** — Pre-built binary download button with OS detection
+   (already have `os-detector.tsx` component). "Download for macOS" primary CTA,
+   with code blocks as secondary.
+
+5. **3-step visual walkthrough** — Render-style "Download → Configure → Hunt" with
+   icons and minimal text. Replace the current code-heavy CTA section.
+
+6. **In-browser demo** — Long-term: a WebAssembly sieve demo that runs in the
+   browser. Immediate differentiation vs BOINC-dependent projects.
+
+#### Tier 3: Social proof and storytelling
+
+7. **Contributor spotlight** — "Recent Discovery" featured card with discoverer
+   pseudonym, hardware specs, and form name. PrimeGrid does this in their news;
+   darkreach can do it more visually.
+
+8. **Achievement badges** — "First 18,000-digit prime", "392K primes found",
+   "12 search forms". Visual badges that communicate scale.
+
+9. **"Why prime hunting matters"** — A concise block explaining the mathematical
+   significance for non-technical visitors. Folding@home's disease names create
+   urgency; darkreach needs an equivalent emotional hook ("Every prime discovered
+   is a permanent contribution to mathematics").
+
+#### Tier 4: Engagement loops
+
+10. **Challenge events** — PrimeGrid runs 9/year. darkreach could run monthly
+    focused searches ("February: Twin Prime Sprint"). Announce on landing page.
+
+11. **Goal progress bar** — "Searching k·b^n±1 for n = 60,000..100,000" with
+    a visual progress indicator. GIMPS shows exponent frontier progress;
+    darkreach should too.
+
+12. **Leaderboard preview** — Top 3-5 contributors shown on the homepage with
+    primes found count. Links to full leaderboard page.
+
+---
+
+### 7.6 Competitive Positioning Summary
+
+```
+                    Modern Design
+                         ↑
+                         |
+              darkreach ●|
+                         |
+         ────────────────┼────────────────→ Live Data / Scale
+                         |
+               Folding@h ●
+                         |
+           BOINC ●       |        ● GIMPS
+                         |
+          SETI ●   t5k ● |  ● PrimeGrid
+                         |
+                    Dated Design
+```
+
+darkreach is already the only project with modern design. Adding live data to the
+landing page would move it into a quadrant no competitor occupies — modern design
+AND live data. This is the primary strategic opportunity.
+
+### References
+
+- [GIMPS](https://www.mersenne.org/)
+- [PrimeGrid](https://www.primegrid.com/)
+- [Folding@home](https://foldingathome.org/)
+- [SETI@home](https://seti.berkeley.edu/)
+- [BOINC](https://boinc.berkeley.edu/)
+- [t5k.org](https://t5k.org/)
+- [Render](https://render.com/) (modern landing page reference)
+- [Vercel](https://vercel.com/) (modern landing page reference)

@@ -6,13 +6,13 @@ labels: bug
 
 ## Description
 
-<!-- What happened? -->
+<!-- What happened? Be specific. -->
 
-## Expected behavior
+## Expected Behavior
 
 <!-- What should have happened? -->
 
-## Steps to reproduce
+## Steps to Reproduce
 
 1.
 2.
@@ -20,12 +20,18 @@ labels: bug
 
 ## Environment
 
-- OS:
-- Rust version:
-- darkreach version/commit:
+- **OS**: <!-- e.g., Ubuntu 24.04, macOS 15 -->
+- **Rust version**: <!-- `rustc --version` -->
+- **darkreach version/commit**: <!-- `git rev-parse --short HEAD` -->
+- **Search form**: <!-- e.g., factorial, kbn, palindromic -->
+- **GMP version**: <!-- `dpkg -l libgmp-dev` or `brew info gmp` -->
 
-## Logs / output
+## Logs / Output
 
 ```
 (paste relevant output here)
 ```
+
+## Additional Context
+
+<!-- Screenshots, checkpoint files, search parameters, etc. -->

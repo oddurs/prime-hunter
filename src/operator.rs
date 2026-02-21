@@ -1,17 +1,17 @@
-//! # Volunteer — Public Computing Platform Client
+//! # Operator — Public Computing Platform Client
 //!
-//! Implements the volunteer side of the darkreach distributed computing platform.
-//! Volunteers register an account, receive an API key, and run a work loop that
+//! Implements the operator side of the darkreach distributed computing platform.
+//! Operators register an account, receive an API key, and run a work loop that
 //! claims blocks from the coordinator, computes primality tests, and submits results.
 //!
 //! ## Architecture
 //!
 //! ```text
-//! Volunteer CLI                    Coordinator API
+//! Operator CLI                     Coordinator API
 //! ┌──────────────┐                ┌──────────────────────┐
-//! │ join          │ ──register──> │ POST /api/v1/register │
+//! │ register      │ ──register──> │ POST /api/v1/register │
 //! │               │ <──api_key── │                        │
-//! │ volunteer     │ ──claim────> │ GET  /api/v1/work      │
+//! │ run           │ ──claim────> │ GET  /api/v1/work      │
 //! │ (loop)        │ <──block───  │                        │
 //! │  compute()    │              │                        │
 //! │  submit()     │ ──result──>  │ POST /api/v1/result    │
@@ -40,7 +40,7 @@ use std::path::{Path, PathBuf};
 
 /// Local volunteer configuration, saved to `~/.darkreach/config.toml`.
 #[derive(Serialize, Deserialize)]
-pub struct VolunteerConfig {
+pub struct OperatorConfig {
     pub server: String,
     pub api_key: String,
     pub username: String,
@@ -86,7 +86,7 @@ pub struct PrimeReport {
 
 /// Personal stats from `GET /api/v1/stats`.
 #[derive(Deserialize)]
-pub struct VolunteerStats {
+pub struct OperatorStats {
     pub username: String,
     pub credit: i64,
     pub primes_found: i32,
@@ -135,16 +135,16 @@ pub struct UpdateResult {
 }
 
 /// Load volunteer config from `~/.darkreach/config.toml`.
-pub fn load_config() -> Result<VolunteerConfig> {
+pub fn load_config() -> Result<OperatorConfig> {
     let path = config_path()?;
     let content = std::fs::read_to_string(&path)
         .map_err(|_| anyhow::anyhow!("Not registered. Run `darkreach join` first."))?;
-    let config: VolunteerConfig = toml::from_str(&content)?;
+    let config: OperatorConfig = toml::from_str(&content)?;
     Ok(config)
 }
 
 /// Save volunteer config to `~/.darkreach/config.toml`.
-pub fn save_config(config: &VolunteerConfig) -> Result<()> {
+pub fn save_config(config: &OperatorConfig) -> Result<()> {
     let path = config_path()?;
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
@@ -164,7 +164,7 @@ fn config_path() -> Result<std::path::PathBuf> {
 }
 
 /// Register a new volunteer account with the coordinator.
-pub fn register(server: &str, username: &str, email: &str) -> Result<VolunteerConfig> {
+pub fn register(server: &str, username: &str, email: &str) -> Result<OperatorConfig> {
     let url = format!("{}/api/v1/register", server.trim_end_matches('/'));
     let body = serde_json::json!({
         "username": username,
@@ -174,7 +174,7 @@ pub fn register(server: &str, username: &str, email: &str) -> Result<VolunteerCo
     let response: RegisterResponse = ureq::post(&url).send_json(&body)?.body_mut().read_json()?;
 
     let worker_id = generate_worker_id();
-    let config = VolunteerConfig {
+    let config = OperatorConfig {
         server: server.to_string(),
         api_key: response.api_key,
         username: response.username,
@@ -185,7 +185,7 @@ pub fn register(server: &str, username: &str, email: &str) -> Result<VolunteerCo
 }
 
 /// Register this worker machine with the coordinator.
-pub fn register_worker(config: &VolunteerConfig) -> Result<()> {
+pub fn register_worker(config: &OperatorConfig) -> Result<()> {
     let url = format!(
         "{}/api/v1/worker/register",
         config.server.trim_end_matches('/')
@@ -211,7 +211,7 @@ pub fn register_worker(config: &VolunteerConfig) -> Result<()> {
 }
 
 /// Send a heartbeat to the coordinator.
-pub fn heartbeat(config: &VolunteerConfig) -> Result<()> {
+pub fn heartbeat(config: &OperatorConfig) -> Result<()> {
     let url = format!(
         "{}/api/v1/worker/heartbeat",
         config.server.trim_end_matches('/')
@@ -226,7 +226,7 @@ pub fn heartbeat(config: &VolunteerConfig) -> Result<()> {
 }
 
 /// Claim a work block from the coordinator.
-pub fn claim_work(config: &VolunteerConfig, cores: usize) -> Result<Option<WorkAssignment>> {
+pub fn claim_work(config: &OperatorConfig, cores: usize) -> Result<Option<WorkAssignment>> {
     let url = format!(
         "{}/api/v1/work?cores={}&ram_gb={}&has_gpu={}&os={}&arch={}",
         config.server.trim_end_matches('/'),
@@ -247,7 +247,7 @@ pub fn claim_work(config: &VolunteerConfig, cores: usize) -> Result<Option<WorkA
 }
 
 /// Submit a result to the coordinator.
-pub fn submit_result(config: &VolunteerConfig, submission: &ResultSubmission) -> Result<()> {
+pub fn submit_result(config: &OperatorConfig, submission: &ResultSubmission) -> Result<()> {
     let url = format!("{}/api/v1/result", config.server.trim_end_matches('/'));
     ureq::post(&url)
         .header("Authorization", &auth_header(config))
@@ -256,9 +256,9 @@ pub fn submit_result(config: &VolunteerConfig, submission: &ResultSubmission) ->
 }
 
 /// Get volunteer stats from the coordinator.
-pub fn get_stats(config: &VolunteerConfig) -> Result<VolunteerStats> {
+pub fn get_stats(config: &OperatorConfig) -> Result<OperatorStats> {
     let url = format!("{}/api/v1/stats", config.server.trim_end_matches('/'));
-    let stats: VolunteerStats = ureq::get(&url)
+    let stats: OperatorStats = ureq::get(&url)
         .header("Authorization", &auth_header(config))
         .call()?
         .body_mut()
@@ -294,7 +294,7 @@ pub fn get_latest_worker_release(
 
 /// Return latest release info when current binary differs from channel version.
 pub fn check_for_update(
-    config: &VolunteerConfig,
+    config: &OperatorConfig,
     channel: &str,
 ) -> Result<Option<WorkerReleaseInfo>> {
     let latest = get_latest_worker_release(&config.server, channel, Some(&config.worker_id))?;
@@ -398,7 +398,7 @@ pub fn stage_or_apply_update(release: &WorkerReleaseInfo, apply: bool) -> Result
 
 // ── Utility ──────────────────────────────────────────────────────
 
-fn auth_header(config: &VolunteerConfig) -> String {
+fn auth_header(config: &OperatorConfig) -> String {
     format!("Bearer {}", config.api_key)
 }
 
@@ -611,20 +611,25 @@ fn rand_u32() -> u32 {
     h.finish() as u32
 }
 
+/// Backward compatibility type alias.
+pub type VolunteerConfig = OperatorConfig;
+/// Backward compatibility type alias.
+pub type VolunteerStats = OperatorStats;
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn config_roundtrip() {
-        let config = VolunteerConfig {
+        let config = OperatorConfig {
             server: "https://darkreach.example.com".to_string(),
             api_key: "abc123".to_string(),
             username: "alice".to_string(),
             worker_id: "alice-host-12345678".to_string(),
         };
         let toml_str = toml::to_string_pretty(&config).unwrap();
-        let parsed: VolunteerConfig = toml::from_str(&toml_str).unwrap();
+        let parsed: OperatorConfig = toml::from_str(&toml_str).unwrap();
         assert_eq!(parsed.server, config.server);
         assert_eq!(parsed.api_key, config.api_key);
         assert_eq!(parsed.username, config.username);

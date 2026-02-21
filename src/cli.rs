@@ -1114,10 +1114,10 @@ pub fn run_project(cli: &Cli, action: &ProjectAction) -> Result<()> {
 
 /// Register as a volunteer and receive an API key.
 pub fn run_join(server: &str, username: &str, email: &str) -> Result<()> {
-    use darkreach::volunteer;
+    use darkreach::operator;
 
     eprintln!("Registering with {}...", server);
-    let config = volunteer::register(server, username, email)?;
+    let config = operator::register(server, username, email)?;
     eprintln!("Registration successful!");
     eprintln!("  Username:  {}", config.username);
     eprintln!("  API Key:   {}", config.api_key);
@@ -1129,11 +1129,11 @@ pub fn run_join(server: &str, username: &str, email: &str) -> Result<()> {
 
 /// Run the volunteer work loop (claim → compute → submit → repeat).
 pub fn run_volunteer(cli: &Cli) -> Result<()> {
-    use darkreach::{progress, volunteer};
+    use darkreach::{progress, operator};
     use tracing::{info, warn};
 
-    let config = volunteer::load_config()?;
-    volunteer::register_worker(&config)?;
+    let config = operator::load_config()?;
+    operator::register_worker(&config)?;
     let update_channel =
         std::env::var("DARKREACH_UPDATE_CHANNEL").unwrap_or_else(|_| "stable".to_string());
     let auto_update = std::env::var("DARKREACH_AUTO_UPDATE")
@@ -1142,7 +1142,7 @@ pub fn run_volunteer(cli: &Cli) -> Result<()> {
     let apply_update = std::env::var("DARKREACH_AUTO_UPDATE_APPLY")
         .ok()
         .is_some_and(|v| v == "1" || v.eq_ignore_ascii_case("true"));
-    match volunteer::check_for_update(&config, &update_channel) {
+    match operator::check_for_update(&config, &update_channel) {
         Ok(Some(rel)) => {
             info!(
                 current_version = env!("CARGO_PKG_VERSION"),
@@ -1152,7 +1152,7 @@ pub fn run_volunteer(cli: &Cli) -> Result<()> {
                 "Worker update available"
             );
             if auto_update {
-                match volunteer::stage_or_apply_update(&rel, apply_update) {
+                match operator::stage_or_apply_update(&rel, apply_update) {
                     Ok(res) => {
                         info!(
                             version = %res.version,
@@ -1236,11 +1236,11 @@ pub fn run_volunteer(cli: &Cli) -> Result<()> {
             break;
         }
 
-        if let Err(e) = volunteer::heartbeat(&config) {
+        if let Err(e) = operator::heartbeat(&config) {
             warn!(error = %e, "Heartbeat failed");
         }
 
-        let assignment = match volunteer::claim_work(&config, cores) {
+        let assignment = match operator::claim_work(&config, cores) {
             Ok(Some(a)) => a,
             Ok(None) => {
                 info!("No work available, sleeping 30s...");
@@ -1287,14 +1287,14 @@ pub fn run_volunteer(cli: &Cli) -> Result<()> {
         prog.stop();
         let _ = reporter.join();
 
-        let submission = volunteer::ResultSubmission {
+        let submission = operator::ResultSubmission {
             block_id: assignment.block_id,
             tested: tested as i64,
             found: found as i64,
             primes: vec![],
         };
 
-        match volunteer::submit_result(&config, &submission) {
+        match operator::submit_result(&config, &submission) {
             Ok(()) => {
                 blocks_completed += 1;
                 info!(
