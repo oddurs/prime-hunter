@@ -29,17 +29,17 @@ mr_screened_test_primes_pass
 estimate_digits_within_one_of_exact
 ```
 
-### 0.2 `fleet.rs` — Worker Registry (7 tests)
+### 0.2 `network.rs` — Node Registry (7 tests)
 
 ```
-new_fleet_is_empty
-register_adds_worker
+new_network_is_empty
+register_adds_node
 register_duplicate_overwrites
-heartbeat_known_worker_returns_true
-heartbeat_unknown_worker_returns_false
+heartbeat_known_node_returns_true
+heartbeat_unknown_node_returns_false
 send_command_delivered_on_heartbeat
-deregister_removes_worker
-prune_stale_removes_old_workers
+deregister_removes_node
+prune_stale_removes_old_nodes
 ```
 
 ### 0.3 `events.rs` — Event Bus (8 tests)
@@ -269,12 +269,14 @@ gen_fermat_finds_primes
 invalid_args_error_exit
 ```
 
-### 2.5 Worker Coordination Tests (`tests/coordination_integration.rs`) — 7 tests
+### 2.5 Node Coordination Tests (`tests/coordination_integration.rs`) — 7 tests
+
+> **Note:** Add operator API test categories for the new operator endpoints (`/api/operators/*`).
 
 ```
-worker_register_via_http
-worker_heartbeat_cycle
-pg_worker_heartbeat_rpc
+node_register_via_http
+node_heartbeat_cycle
+pg_node_heartbeat_rpc
 claim_block_via_pg
 complete_block_via_pg
 stale_block_reclaimed
@@ -373,7 +375,7 @@ use_stats — fetches stats, handles empty, handles error
 use_timeline — fetches buckets, parses dates
 use_distribution — fetches histogram, handles empty
 use_prime_realtime — subscribes, receives new prime, unsubscribes
-use_websocket — connects, receives fleet data, reconnects
+use_websocket — connects, receives network data, reconnects
 use_theme — defaults to system, toggles, persists
 use_mobile — detects mobile breakpoint, handles resize
 ```
@@ -384,7 +386,7 @@ use_mobile — detects mobile breakpoint, handles resize
 app_header — renders nav, highlights active, toggles theme
 metrics_bar — renders percentage, correct color threshold
 search_card — renders params, status badge, progress
-host_node_card — renders worker info, metrics
+host_node_card — renders node info, metrics
 prime_notifier — shows toast on new prime
 new_search_dialog — form validation, submit
 charts/discovery_timeline — renders with data, empty state
@@ -399,7 +401,7 @@ dashboard_page — renders stat cards, table, charts
 login_page — renders form, handles submit
 browse_page — renders filters, table, pagination
 searches_page — renders search list
-fleet_page — renders worker cards
+network_page — renders node cards
 docs_page — renders markdown, search
 ```
 

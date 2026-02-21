@@ -8,9 +8,10 @@ use anyhow::Result;
 use darkreach::{
     carol_kynea, cullen_woodall, db, events, factorial, gen_fermat, kbn, near_repdigit,
     palindromic, pg_worker, primorial, progress, project, repunit, sophie_germain, twin, verify,
-    wagstaff, worker_client, CoordinationClient,
+    wagstaff, CoordinationClient,
 };
 use std::sync::Arc;
+use tracing::{info, info_span, warn};
 
 use super::{Cli, Commands, ProjectAction};
 
@@ -24,9 +25,10 @@ pub fn run_search(cli: &Cli) -> Result<()> {
     })?;
 
     let num_cores = rayon::current_num_threads();
-    eprintln!(
-        "darkreach starting with {} CPU cores, {} Miller-Rabin rounds",
-        num_cores, cli.mr_rounds
+    info!(
+        cores = num_cores,
+        mr_rounds = cli.mr_rounds,
+        "darkreach starting"
     );
 
     let rt = tokio::runtime::Runtime::new()?;
@@ -46,49 +48,22 @@ pub fn run_search(cli: &Cli) -> Result<()> {
     let search_type = search_type_for(&cli.command);
     let search_params = search_params_for(&cli.command);
 
-    // Set up coordinator connection: --coordinator (HTTP) or DATABASE_URL (PG)
+    // Set up PG coordination client for heartbeat and stop-check
     let worker_id = cli.worker_id.clone().unwrap_or_else(get_hostname);
 
-    // Build a coordination client: HTTP if --coordinator is set, else PG
-    enum Client {
-        Http(worker_client::WorkerClient),
-        Pg(pg_worker::PgWorkerClient),
-    }
+    let pg_client = pg_worker::PgWorkerClient::new(
+        db.pool().clone(),
+        rt_handle.clone(),
+        &worker_id,
+        search_type,
+        &search_params,
+    );
 
-    let client = if let Some(url) = &cli.coordinator {
-        let c = worker_client::WorkerClient::new(url, &worker_id, search_type, &search_params);
-        Some(Client::Http(c))
-    } else {
-        let pg = pg_worker::PgWorkerClient::new(
-            db.pool().clone(),
-            rt_handle.clone(),
-            &worker_id,
-            search_type,
-            &search_params,
-        );
-        Some(Client::Pg(pg))
-    };
+    sync_progress_to_atomics(&progress, &pg_client.tested, &pg_client.found, &pg_client.current);
 
-    // Sync progress counters into the client's atomics
-    match &client {
-        Some(Client::Http(c)) => {
-            sync_progress_to_atomics(&progress, &c.tested, &c.found, &c.current)
-        }
-        Some(Client::Pg(c)) => sync_progress_to_atomics(&progress, &c.tested, &c.found, &c.current),
-        None => {}
-    }
+    let heartbeat_handle = Some(pg_client.start_heartbeat());
 
-    let heartbeat_handle = match &client {
-        Some(Client::Http(c)) => Some(c.start_heartbeat()),
-        Some(Client::Pg(c)) => Some(c.start_heartbeat()),
-        None => None,
-    };
-
-    let coord: Option<&dyn CoordinationClient> = match &client {
-        Some(Client::Http(c)) => Some(c),
-        Some(Client::Pg(c)) => Some(c),
-        None => None,
-    };
+    let coord: Option<&dyn CoordinationClient> = Some(&pg_client);
 
     let mr = cli.mr_rounds;
     let sl = cli.sieve_limit;
@@ -127,16 +102,12 @@ pub fn run_search(cli: &Cli) -> Result<()> {
     let _ = reporter_handle.join();
     progress.print_status();
 
-    match &client {
-        Some(Client::Http(c)) => c.deregister(),
-        Some(Client::Pg(c)) => c.deregister(),
-        None => {}
-    }
+    pg_client.deregister();
     if let Some(handle) = heartbeat_handle {
         let _ = handle.join();
     }
 
-    eprintln!("Search complete.");
+    info!("Search complete");
     result
 }
 
@@ -159,8 +130,8 @@ fn search_type_for(cmd: &Commands) -> &'static str {
         | Commands::Work { .. }
         | Commands::Verify { .. }
         | Commands::Project { .. }
-        | Commands::Join { .. }
-        | Commands::Volunteer => {
+        | Commands::Register { .. }
+        | Commands::Run => {
             unreachable!()
         }
     }
@@ -209,8 +180,8 @@ fn search_params_for(cmd: &Commands) -> String {
         | Commands::Work { .. }
         | Commands::Verify { .. }
         | Commands::Project { .. }
-        | Commands::Join { .. }
-        | Commands::Volunteer => {
+        | Commands::Register { .. }
+        | Commands::Run => {
             unreachable!()
         }
     }
@@ -425,8 +396,8 @@ fn dispatch_search(
         | Commands::Work { .. }
         | Commands::Verify { .. }
         | Commands::Project { .. }
-        | Commands::Join { .. }
-        | Commands::Volunteer => {
+        | Commands::Register { .. }
+        | Commands::Run => {
             unreachable!()
         }
     }
@@ -487,9 +458,12 @@ pub fn run_work_loop(
         .block_on(db.get_search_job(search_job_id))?
         .ok_or_else(|| anyhow::anyhow!("Search job {} not found", search_job_id))?;
 
-    eprintln!(
-        "Work mode: job {} ({}), claiming blocks from {}..{}",
-        search_job_id, job.search_type, job.range_start, job.range_end
+    info!(
+        search_job_id,
+        search_type = %job.search_type,
+        range_start = job.range_start,
+        range_end = job.range_end,
+        "Work mode started"
     );
 
     let search_params_str = serde_json::to_string(&job.params)?;
@@ -517,26 +491,58 @@ pub fn run_work_loop(
     let mr = cli.mr_rounds;
     let sl = cli.sieve_limit;
     let mut blocks_completed = 0u64;
+    let batch_size = 5;
+    let mut pending_blocks: std::collections::VecDeque<db::WorkBlockWithCheckpoint> =
+        std::collections::VecDeque::new();
 
     loop {
         if pg_client.is_stop_requested() {
-            eprintln!("Stop requested, exiting work loop");
+            info!("Stop requested, exiting work loop");
             break;
         }
 
-        let block = rt_handle.block_on(db.claim_work_block(search_job_id, &worker_id))?;
-        let block = match block {
-            Some(b) => b,
-            None => {
-                eprintln!("No more blocks available, work complete");
+        // Batch claim blocks when the local queue is empty
+        if pending_blocks.is_empty() {
+            let blocks = rt_handle.block_on(
+                db.claim_work_blocks(search_job_id, &worker_id, batch_size),
+            )?;
+            if blocks.is_empty() {
+                info!("No more blocks available, work complete");
                 break;
             }
-        };
+            info!(count = blocks.len(), "Claimed blocks (batch)");
+            pending_blocks.extend(blocks);
+        }
 
-        eprintln!(
-            "Claimed block {} (range {}..{})",
-            block.block_id, block.block_start, block.block_end
-        );
+        let block = pending_blocks.pop_front().unwrap();
+
+        // Tell the heartbeat thread which block we're working on
+        *pg_client.current_block_id.lock().unwrap() = Some(block.block_id);
+
+        // Resume from checkpoint if the block was reclaimed mid-progress
+        let effective_start = block
+            .block_checkpoint
+            .as_ref()
+            .and_then(|cp| cp.get("last_tested").and_then(|v| v.as_i64()))
+            .map(|last| last + 1)
+            .unwrap_or(block.block_start);
+
+        if effective_start > block.block_start {
+            info!(
+                block_id = block.block_id,
+                effective_start,
+                block_end = block.block_end,
+                original_start = block.block_start,
+                "Block resuming from checkpoint"
+            );
+        } else {
+            info!(
+                block_id = block.block_id,
+                block_start = block.block_start,
+                block_end = block.block_end,
+                "Processing block"
+            );
+        }
 
         progress
             .tested
@@ -545,19 +551,31 @@ pub fn run_work_loop(
             .found
             .store(0, std::sync::atomic::Ordering::Relaxed);
 
-        let block_result = run_search_block(
-            &job.search_type,
-            &job.params,
-            block.block_start,
-            block.block_end,
-            &progress,
-            db,
-            rt_handle,
-            &cli.checkpoint,
-            mr,
-            sl,
-            coord,
+        let span = info_span!(
+            "search_block",
+            job_id = search_job_id,
+            form = %job.search_type,
+            block_id = block.block_id,
+            range_start = effective_start,
+            range_end = block.block_end,
         );
+        let block_result = span.in_scope(|| {
+            run_search_block(
+                &job.search_type,
+                &job.params,
+                effective_start,
+                block.block_end,
+                &progress,
+                db,
+                rt_handle,
+                &cli.checkpoint,
+                mr,
+                sl,
+                coord,
+            )
+        });
+
+        *pg_client.current_block_id.lock().unwrap() = None;
 
         let tested = progress.tested.load(std::sync::atomic::Ordering::Relaxed);
         let found = progress.found.load(std::sync::atomic::Ordering::Relaxed);
@@ -570,13 +588,15 @@ pub fn run_work_loop(
                     found as i64,
                 ))?;
                 blocks_completed += 1;
-                eprintln!(
-                    "Block {} completed (tested={}, found={})",
-                    block.block_id, tested, found
+                info!(
+                    block_id = block.block_id,
+                    tested,
+                    found,
+                    "Block completed"
                 );
             }
             Err(e) => {
-                eprintln!("Block {} failed: {}", block.block_id, e);
+                warn!(block_id = block.block_id, error = %e, "Block failed");
                 rt_handle.block_on(db.fail_work_block(block.block_id))?;
             }
         }
@@ -587,12 +607,12 @@ pub fn run_work_loop(
     pg_client.deregister();
     let _ = heartbeat_handle.join();
 
-    eprintln!("Work loop finished: {} blocks completed", blocks_completed);
+    info!(blocks_completed, "Work loop finished");
 
     let summary = rt_handle.block_on(db.get_job_block_summary(search_job_id))?;
     if summary.available == 0 && summary.claimed == 0 {
         rt_handle.block_on(db.update_search_job_status(search_job_id, "completed", None))?;
-        eprintln!("Search job {} marked completed", search_job_id);
+        info!(search_job_id, "Search job marked completed");
     }
 
     Ok(())
@@ -1110,27 +1130,26 @@ pub fn run_project(cli: &Cli, action: &ProjectAction) -> Result<()> {
     Ok(())
 }
 
-// ── Volunteer Commands ──────────────────────────────────────────
+// ── Operator Commands ───────────────────────────────────────────
 
-/// Register as a volunteer and receive an API key.
-pub fn run_join(server: &str, username: &str, email: &str) -> Result<()> {
+/// Register as an operator and receive an API key.
+pub fn run_register(server: &str, username: &str, email: &str) -> Result<()> {
     use darkreach::operator;
 
-    eprintln!("Registering with {}...", server);
+    info!(server, "Registering with coordinator");
     let config = operator::register(server, username, email)?;
     eprintln!("Registration successful!");
     eprintln!("  Username:  {}", config.username);
     eprintln!("  API Key:   {}", config.api_key);
     eprintln!("  Worker ID: {}", config.worker_id);
     eprintln!("\nConfig saved to ~/.darkreach/config.toml");
-    eprintln!("Run `darkreach volunteer` to start contributing.");
+    eprintln!("Run `darkreach run` to start contributing.");
     Ok(())
 }
 
-/// Run the volunteer work loop (claim → compute → submit → repeat).
-pub fn run_volunteer(cli: &Cli) -> Result<()> {
+/// Run the operator work loop (claim → compute → submit → repeat).
+pub fn run_operator(cli: &Cli) -> Result<()> {
     use darkreach::{progress, operator};
-    use tracing::{info, warn};
 
     let config = operator::load_config()?;
     operator::register_worker(&config)?;
@@ -1181,7 +1200,7 @@ pub fn run_volunteer(cli: &Cli) -> Result<()> {
 
     let database_url = cli.database_url.as_deref().ok_or_else(|| {
         anyhow::anyhow!(
-            "DATABASE_URL is required for volunteer mode (set via --database-url or env)"
+            "DATABASE_URL is required for operator mode (set via --database-url or env)"
         )
     })?;
     let rt = tokio::runtime::Runtime::new()?;
@@ -1194,7 +1213,7 @@ pub fn run_volunteer(cli: &Cli) -> Result<()> {
         server = %config.server,
         username = %config.username,
         cores = cores,
-        "Volunteer mode starting"
+        "Operator mode starting"
     );
 
     let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -1232,7 +1251,7 @@ pub fn run_volunteer(cli: &Cli) -> Result<()> {
 
     loop {
         if stop.load(std::sync::atomic::Ordering::Relaxed) {
-            info!("Stop requested, exiting volunteer loop");
+            info!("Stop requested, exiting operator loop");
             break;
         }
 
@@ -1263,23 +1282,32 @@ pub fn run_volunteer(cli: &Cli) -> Result<()> {
         let prog = progress::Progress::new();
         let reporter = prog.start_reporter();
         let checkpoint = std::path::PathBuf::from(format!(
-            "volunteer_block_{}.checkpoint",
+            "operator_block_{}.checkpoint",
             assignment.block_id
         ));
 
-        let result = run_search_block(
-            &assignment.search_type,
-            &assignment.params,
-            assignment.block_start,
-            assignment.block_end,
-            &prog,
-            &db,
-            rt.handle(),
-            &checkpoint,
-            cli.mr_rounds,
-            cli.sieve_limit,
-            None,
+        let span = info_span!(
+            "search_block",
+            block_id = assignment.block_id,
+            form = %assignment.search_type,
+            range_start = assignment.block_start,
+            range_end = assignment.block_end,
         );
+        let result = span.in_scope(|| {
+            run_search_block(
+                &assignment.search_type,
+                &assignment.params,
+                assignment.block_start,
+                assignment.block_end,
+                &prog,
+                &db,
+                rt.handle(),
+                &checkpoint,
+                cli.mr_rounds,
+                cli.sieve_limit,
+                None,
+            )
+        });
 
         let tested = prog.tested.load(std::sync::atomic::Ordering::Relaxed);
         let found = prog.found.load(std::sync::atomic::Ordering::Relaxed);
@@ -1314,7 +1342,7 @@ pub fn run_volunteer(cli: &Cli) -> Result<()> {
         }
     }
 
-    info!(blocks_completed, "Volunteer loop finished");
+    info!(blocks_completed, "Operator loop finished");
     Ok(())
 }
 
@@ -1346,12 +1374,10 @@ pub fn configure_rayon(threads: Option<usize>, qos: bool) {
 
         match result {
             Ok(()) => {
-                eprintln!(
-                    "Rayon threads configured with macOS QoS: user-initiated (P-core scheduling)"
-                );
+                info!("Rayon threads configured with macOS QoS: user-initiated (P-core scheduling)");
             }
             Err(e) => {
-                eprintln!("Warning: could not configure rayon thread pool: {}", e);
+                warn!(error = %e, "Could not configure rayon thread pool");
             }
         }
         return;
@@ -1359,7 +1385,7 @@ pub fn configure_rayon(threads: Option<usize>, qos: bool) {
 
     #[cfg(not(target_os = "macos"))]
     if qos {
-        eprintln!("Warning: --qos flag is only effective on macOS, ignoring");
+        warn!("--qos flag is only effective on macOS, ignoring");
     }
 
     if num_threads > 0 {
@@ -1367,7 +1393,7 @@ pub fn configure_rayon(threads: Option<usize>, qos: bool) {
             .num_threads(num_threads)
             .build_global()
         {
-            eprintln!("Warning: could not configure rayon thread pool: {}", e);
+            warn!(error = %e, "Could not configure rayon thread pool");
         }
     }
 }

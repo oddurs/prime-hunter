@@ -2,7 +2,9 @@
 
 Backend infrastructure: work pipeline, checkpoints, distributed coordination, verification.
 
-**Key files:** `src/{dashboard,db,checkpoint,progress,fleet,worker_client,main}.rs`
+**Key files:** `src/{dashboard,db,checkpoint,progress,network,operator_client,main}.rs`
+
+> **Architecture note (Feb 2026):** SearchManager has been replaced by PG-backed search jobs (`search_jobs` + `work_blocks` tables). DeploymentManager has been removed (deployment via SSH removed). All coordination is now PG-only — no in-memory fleet, no HTTP coordinator heartbeat.
 
 ---
 
@@ -70,12 +72,12 @@ The `ecm` crate (v1.0.1) on crates.io provides Lenstra ECM factoring using rug a
 
 ## Distributed Search Coordination
 
-**Current:** Single-machine CLI tool with basic fleet registration.
+**Current:** Single-machine CLI tool with PG-backed network coordination.
 
-**Target:** Full coordination server that assigns work ranges to multiple machines, collects results, and avoids duplicate work.
+**Target:** Full coordination via PostgreSQL that assigns work ranges to multiple nodes, collects results, and avoids duplicate work.
 
 **Approach options:**
-- Simple: Shared database (the existing SQLite schema would work with a networked DB)
+- **Current approach:** PG-backed coordination via `search_jobs` + `work_blocks` tables with `FOR UPDATE SKIP LOCKED` claiming
 - Medium: REST API work-unit server (extend the existing Axum dashboard)
 - Full: BOINC integration (heavy but proven infrastructure)
 

@@ -45,6 +45,8 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Instant;
 
+use tracing::{debug, info};
+
 use crate::checkpoint::{self, Checkpoint};
 use crate::db::Database;
 use crate::events::{self, EventBus};
@@ -78,12 +80,8 @@ fn sieve_carol_kynea(
 
     for (pi, &q) in sieve_primes.iter().enumerate() {
         if pi % log_interval == 0 && pi > 0 {
-            eprintln!(
-                "  Carol/Kynea sieve: {}/{} primes ({:.0}%)",
-                pi,
-                total_primes,
-                pi as f64 / total_primes as f64 * 100.0
-            );
+            let pct = pi as f64 / total_primes as f64 * 100.0;
+            debug!(pi, total_primes, pct, "Carol/Kynea sieve progress");
         }
 
         // Carol and Kynea are never divisible by 2 or 3
@@ -136,12 +134,8 @@ fn llr_test_big(candidate: &Integer, k: &Integer, exp: u64) -> Option<bool> {
     let iters = exp - 2;
     for i in 0..iters {
         if exp > 50_000 && i % 10_000 == 0 && i > 0 {
-            eprintln!(
-                "  LLR: {}/{} squarings ({:.1}%)",
-                i,
-                iters,
-                i as f64 / iters as f64 * 100.0
-            );
+            let pct = i as f64 / iters as f64 * 100.0;
+            debug!(i, iters, pct, "LLR squaring progress");
         }
         u.square_mut();
         u -= 2u32;
@@ -253,15 +247,15 @@ pub fn search(
     let sieve_limit = sieve::resolve_sieve_limit(sieve_limit, candidate_bits, n_range);
 
     let sieve_primes = sieve::generate_primes(sieve_limit);
-    eprintln!(
-        "Sieve initialized with {} primes up to {}",
-        sieve_primes.len(),
-        sieve_limit
+    info!(
+        prime_count = sieve_primes.len(),
+        sieve_limit,
+        "sieve initialized"
     );
 
     let resume_from = match checkpoint::load(checkpoint_path) {
         Some(Checkpoint::CarolKynea { last_n, .. }) if last_n >= min_n && last_n < max_n => {
-            eprintln!("Resuming Carol/Kynea search from n={}", last_n + 1);
+            info!(resume_n = last_n + 1, "resuming Carol/Kynea search");
             last_n + 1
         }
         _ => min_n,
@@ -279,27 +273,26 @@ pub fn search(
         }
         n
     };
-    eprintln!("Sieve active for n >= {}", sieve_min_n);
+    info!(sieve_min_n, "sieve active");
 
-    eprintln!(
-        "Running Carol/Kynea sieve over n=[{}..{}] ({} candidates)...",
-        resume_from,
-        max_n,
-        max_n - resume_from + 1
+    info!(
+        from = resume_from,
+        to = max_n,
+        candidates = max_n - resume_from + 1,
+        "running Carol/Kynea sieve"
     );
     let (carol_survives, kynea_survives) =
         sieve_carol_kynea(resume_from, max_n, &sieve_primes, sieve_min_n);
     let carol_survivors: u64 = carol_survives.iter().filter(|&&b| b).count() as u64;
     let kynea_survivors: u64 = kynea_survives.iter().filter(|&&b| b).count() as u64;
     let total_range = max_n - resume_from + 1;
-    eprintln!(
-        "Sieve complete: Carol survivors {}/{} ({:.1}%), Kynea survivors {}/{} ({:.1}%)",
+    info!(
         carol_survivors,
-        total_range,
-        carol_survivors as f64 / total_range as f64 * 100.0,
         kynea_survivors,
         total_range,
-        kynea_survivors as f64 / total_range as f64 * 100.0,
+        carol_pct = carol_survivors as f64 / total_range as f64 * 100.0,
+        kynea_pct = kynea_survivors as f64 / total_range as f64 * 100.0,
+        "sieve complete"
     );
 
     let mut last_checkpoint = Instant::now();
@@ -425,9 +418,12 @@ pub fn search(
                     timestamp: Instant::now(),
                 });
             } else {
-                eprintln!(
-                    "*** PRIME FOUND: {} ({} digits, {}) ***",
-                    expr, digits, certainty
+                info!(
+                    form,
+                    expression = %expr,
+                    digits,
+                    certainty = %certainty,
+                    "prime found"
                 );
             }
             db.insert_prime_sync(rt, form, &expr, digits, search_params, &certainty, None)?;
@@ -445,10 +441,7 @@ pub fn search(
                     max_n: Some(max_n),
                 },
             )?;
-            eprintln!(
-                "Checkpoint saved at n={} (sieved out: {})",
-                block_end, total_sieved
-            );
+            info!(n = block_end, sieved_out = total_sieved, "checkpoint saved");
             last_checkpoint = Instant::now();
         }
 
@@ -461,10 +454,7 @@ pub fn search(
                     max_n: Some(max_n),
                 },
             )?;
-            eprintln!(
-                "Stop requested by coordinator, checkpoint saved at n={}",
-                block_end
-            );
+            info!(n = block_end, "stop requested by coordinator, checkpoint saved");
             return Ok(());
         }
 
@@ -472,7 +462,7 @@ pub fn search(
     }
 
     checkpoint::clear(checkpoint_path);
-    eprintln!("Carol/Kynea sieve eliminated {} candidates.", total_sieved);
+    info!(total_sieved, "Carol/Kynea search complete");
     Ok(())
 }
 

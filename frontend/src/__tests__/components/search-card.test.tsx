@@ -1,9 +1,22 @@
+/**
+ * @file Tests for the SearchCard component
+ * @module __tests__/components/search-card
+ *
+ * Validates the search card that displays a managed search process on the
+ * Searches page. Tests cover search type badge, status label, search ID,
+ * parameter rendering for kbn/factorial/palindromic forms, tested/found
+ * stats, status-dependent action buttons (Pause/Resume/Cancel), completed
+ * state (no buttons), and failed status with error message display.
+ *
+ * @see {@link ../../components/search-card} Source component
+ * @see {@link ../../hooks/use-websocket} ManagedSearch type
+ */
 import { describe, it, expect, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { SearchCard } from "@/components/search-card";
 import type { ManagedSearch } from "@/hooks/use-websocket";
 
-// Mock fetch for button handlers
+// Mock fetch for button handlers (Pause, Resume, Cancel API calls).
 vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true }));
 
 function makeSearch(overrides: Partial<ManagedSearch> = {}): ManagedSearch {
@@ -22,6 +35,8 @@ function makeSearch(overrides: Partial<ManagedSearch> = {}): ManagedSearch {
   };
 }
 
+// Tests the SearchCard: type badge, status, ID, form-specific params,
+// stats, action buttons per status, and error message display.
 describe("SearchCard", () => {
   it("renders search type badge", () => {
     render(<SearchCard search={makeSearch()} />);

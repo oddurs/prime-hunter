@@ -19,7 +19,7 @@
 | **Tests** | `tests/` + `benches/` | `tests/CLAUDE.md` | `docs/roadmaps/testing.md` |
 | **Agents** | `src/agent.rs` + frontend | `src/CLAUDE.md` | `docs/roadmaps/agents.md` |
 | **Projects** | `src/project/` + frontend | `src/CLAUDE.md` | `docs/roadmaps/projects.md` |
-| **Fleet** | `src/fleet.rs`, `src/pg_worker.rs` | `src/CLAUDE.md` | `docs/roadmaps/fleet.md` |
+| **Network** | `src/fleet.rs`, `src/pg_worker.rs` | `src/CLAUDE.md` | `docs/roadmaps/network.md` |
 
 ## Slash Commands
 
@@ -92,7 +92,7 @@ cd frontend && npm install && npm run build
 - `src/deploy.rs` — SSH deployment, service management, rolling updates
 - `src/events.rs` — Event bus for prime notifications and search status
 - `src/metrics.rs` + `src/prom_metrics.rs` — System metrics + Prometheus export
-- `src/volunteer.rs` — Volunteer worker management
+- `src/operator.rs` — Operator node management
 - `src/progress.rs` — Atomic counters + background 30s status reporter
 
 ### Frontend (`frontend/`)
@@ -162,6 +162,7 @@ cd frontend && npm run test:e2e  # Playwright E2E tests
 - All output goes to stderr (`eprintln!`). Results are logged to Supabase PostgreSQL via `sqlx`.
 - Global flags `--database-url` (or `DATABASE_URL` env) and `--checkpoint` go before the subcommand.
 - `insert_prime_sync` takes 7 args (including `certificate: Option<&str>`).
+- **Naming migration**: `volunteer` → `operator`, `worker` → `node`, `fleet` → `network`. Old names available as backward-compat re-exports.
 - All 12 search forms must check `worker_client.is_stop_requested()` in their block loop.
 - `checked_u32()` in `lib.rs`: always use instead of `n as u32` for `.pow()` / `<<` with u64 exponents.
 - `has_small_factor()`: compare via `*n != p` (PartialEq<u32>) to avoid heap-allocating Integer.

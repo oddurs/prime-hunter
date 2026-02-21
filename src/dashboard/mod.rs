@@ -4,7 +4,9 @@
 //! endpoints for prime data, and coordinates the distributed worker fleet via
 //! WebSocket and HTTP heartbeat.
 
+pub(crate) mod middleware_auth;
 mod routes_agents;
+mod routes_auth;
 mod routes_docs;
 mod routes_fleet;
 mod routes_health;
@@ -15,16 +17,17 @@ mod routes_projects;
 mod routes_releases;
 mod routes_searches;
 mod routes_status;
+mod routes_strategy;
 mod routes_verify;
 mod routes_operator;
-mod routes_workers;
 mod websocket;
 
-use crate::{
-    agent, db, deploy, events, fleet, metrics, project, prom_metrics, search_manager, verify,
-};
+use crate::{agent, db, events, fleet, metrics, project, prom_metrics, strategy, verify};
+use tracing::{info, warn, Instrument};
 use anyhow::Result;
+use axum::extract::Request;
 use axum::http::StatusCode;
+use axum::middleware::Next;
 use axum::routing::{get, post};
 use axum::Router;
 use chrono::{DateTime, Timelike, Utc};
@@ -36,6 +39,7 @@ use tower_http::cors::{Any, CorsLayer};
 use tower_http::limit::RequestBodyLimitLayer;
 use tower_http::services::ServeDir;
 use tower_http::timeout::TimeoutLayer;
+use tower_http::trace::TraceLayer;
 
 use std::path::Path;
 use std::sync::Arc;
@@ -50,9 +54,6 @@ pub struct AppState {
     pub database_url: String,
     pub checkpoint_path: PathBuf,
     pub coordinator_hostname: String,
-    pub fleet: Mutex<fleet::Fleet>,
-    pub searches: Mutex<search_manager::SearchManager>,
-    pub deployments: Mutex<deploy::DeploymentManager>,
     pub coordinator_metrics: Mutex<Option<metrics::HardwareMetrics>>,
     pub event_bus: events::EventBus,
     pub agents: Mutex<agent::AgentManager>,
@@ -87,11 +88,8 @@ impl AppState {
                 })
                 .collect(),
             Err(e) => {
-                eprintln!(
-                    "Warning: failed to read workers from PG: {}, using in-memory fleet",
-                    e
-                );
-                lock_or_recover(&self.fleet).get_all()
+                warn!(error = %e, "failed to read workers from PG");
+                Vec::new()
             }
         }
     }
@@ -100,16 +98,12 @@ impl AppState {
         db: db::Database,
         database_url: &str,
         checkpoint_path: PathBuf,
-        port: u16,
     ) -> Arc<Self> {
         Arc::new(AppState {
             db,
             database_url: database_url.to_string(),
             checkpoint_path,
             coordinator_hostname: gethostname(),
-            fleet: Mutex::new(fleet::Fleet::new()),
-            searches: Mutex::new(search_manager::SearchManager::new(port, database_url)),
-            deployments: Mutex::new(deploy::DeploymentManager::new()),
             coordinator_metrics: Mutex::new(None),
             event_bus: events::EventBus::new(),
             agents: Mutex::new(agent::AgentManager::new()),
@@ -123,6 +117,70 @@ pub(super) fn gethostname() -> String {
         .or_else(|_| std::env::var("HOST"))
         .or_else(|_| sysinfo::System::host_name().ok_or(std::env::VarError::NotPresent))
         .unwrap_or_else(|_| "unknown".to_string())
+}
+
+/// Middleware that records HTTP request duration into the Prometheus histogram,
+/// generates (or propagates) a request ID for correlation, and wraps the
+/// request in a tracing span using `.instrument()` for proper async propagation.
+async fn metrics_middleware(
+    axum::extract::State(state): axum::extract::State<Arc<AppState>>,
+    req: Request,
+    next: Next,
+) -> axum::response::Response {
+    let request_id = req
+        .headers()
+        .get("x-request-id")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+    let method = req.method().to_string();
+    let raw_path = req.uri().path().to_string();
+    let norm_path = normalize_path(&raw_path);
+    let start = std::time::Instant::now();
+
+    let span = tracing::info_span!(
+        "request",
+        request_id = %request_id,
+        method = %method,
+        path = %raw_path,
+    );
+    let response = next.run(req).instrument(span).await;
+
+    let duration = start.elapsed().as_secs_f64();
+    state
+        .prom_metrics
+        .http_request_duration
+        .get_or_create(&prom_metrics::HttpLabel {
+            method,
+            path: norm_path,
+        })
+        .observe(duration);
+
+    let mut response = response;
+    response.headers_mut().insert(
+        "x-request-id",
+        request_id.parse().unwrap(),
+    );
+    response
+}
+
+/// Normalize URL path to collapse high-cardinality segments (UUIDs, numeric IDs)
+/// into placeholders, preventing histogram label explosion.
+fn normalize_path(path: &str) -> String {
+    path.split('/')
+        .map(|seg| {
+            if seg.is_empty() {
+                seg.to_string()
+            } else if seg.chars().all(|c| c.is_ascii_digit()) {
+                ":id".to_string()
+            } else if seg.len() == 36 && seg.chars().filter(|c| *c == '-').count() == 4 {
+                ":uuid".to_string()
+            } else {
+                seg.to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("/")
 }
 
 pub fn build_router(state: Arc<AppState>, static_dir: Option<&Path>) -> Router {
@@ -150,26 +208,6 @@ pub fn build_router(state: Arc<AppState>, static_dir: Option<&Path>) -> Router {
         )
         .route("/api/fleet", get(routes_fleet::handler_api_fleet))
         .route(
-            "/api/fleet/deploy",
-            post(routes_fleet::handler_fleet_deploy),
-        )
-        .route(
-            "/api/fleet/deploy/{id}",
-            axum::routing::delete(routes_fleet::handler_fleet_deploy_stop),
-        )
-        .route(
-            "/api/fleet/deploy/{id}/pause",
-            post(routes_fleet::handler_fleet_deploy_pause),
-        )
-        .route(
-            "/api/fleet/deploy/{id}/resume",
-            post(routes_fleet::handler_fleet_deploy_resume),
-        )
-        .route(
-            "/api/fleet/deployments",
-            get(routes_fleet::handler_fleet_deployments),
-        )
-        .route(
             "/api/searches",
             get(routes_searches::handler_api_searches_list)
                 .post(routes_searches::handler_api_searches_create),
@@ -186,22 +224,6 @@ pub fn build_router(state: Arc<AppState>, static_dir: Option<&Path>) -> Router {
         .route(
             "/api/searches/{id}/resume",
             post(routes_searches::handler_api_searches_resume),
-        )
-        .route(
-            "/api/worker/register",
-            post(routes_workers::handler_worker_register),
-        )
-        .route(
-            "/api/worker/heartbeat",
-            post(routes_workers::handler_worker_heartbeat),
-        )
-        .route(
-            "/api/worker/prime",
-            post(routes_workers::handler_worker_prime),
-        )
-        .route(
-            "/api/worker/deregister",
-            post(routes_workers::handler_worker_deregister),
         )
         .route(
             "/api/fleet/workers/{worker_id}/stop",
@@ -240,6 +262,10 @@ pub fn build_router(state: Arc<AppState>, static_dir: Option<&Path>) -> Router {
         .route(
             "/api/observability/workers/top",
             get(routes_observability::handler_top_workers),
+        )
+        .route(
+            "/api/observability/catalog",
+            get(routes_observability::handler_catalog),
         )
         .route(
             "/api/agents/tasks",
@@ -354,15 +380,84 @@ pub fn build_router(state: Arc<AppState>, static_dir: Option<&Path>) -> Router {
             "/api/releases/rollback",
             post(routes_releases::handler_releases_rollback),
         )
+        // Strategy engine
+        .route(
+            "/api/strategy/status",
+            get(routes_strategy::handler_strategy_status),
+        )
+        .route(
+            "/api/strategy/decisions",
+            get(routes_strategy::handler_strategy_decisions),
+        )
+        .route(
+            "/api/strategy/scores",
+            get(routes_strategy::handler_strategy_scores),
+        )
+        .route(
+            "/api/strategy/config",
+            get(routes_strategy::handler_strategy_config_get)
+                .put(routes_strategy::handler_strategy_config_put),
+        )
+        .route(
+            "/api/strategy/decisions/{id}/override",
+            post(routes_strategy::handler_strategy_override),
+        )
+        .route(
+            "/api/strategy/tick",
+            post(routes_strategy::handler_strategy_tick),
+        )
         .route("/api/records", get(routes_projects::handler_api_records))
         .route(
             "/api/records/refresh",
             post(routes_projects::handler_api_records_refresh),
         )
+        .route(
+            "/api/auth/profile",
+            get(routes_auth::handler_api_profile),
+        )
+        .route("/api/auth/me", get(routes_auth::handler_api_me))
         .route("/healthz", get(routes_health::handler_healthz))
         .route("/readyz", get(routes_health::handler_readyz))
         .route("/metrics", get(routes_health::handler_metrics))
-        // Volunteer public API (v1)
+        // Operator public API (v1) — new canonical routes
+        .route(
+            "/api/v1/operators/register",
+            post(routes_operator::handler_v1_register),
+        )
+        .route(
+            "/api/v1/nodes/register",
+            post(routes_operator::handler_v1_worker_register),
+        )
+        .route(
+            "/api/v1/nodes/heartbeat",
+            post(routes_operator::handler_v1_worker_heartbeat),
+        )
+        .route(
+            "/api/v1/nodes/latest",
+            get(routes_operator::handler_worker_latest),
+        )
+        .route("/api/v1/nodes/work", get(routes_operator::handler_v1_work))
+        .route(
+            "/api/v1/nodes/result",
+            post(routes_operator::handler_v1_result),
+        )
+        .route(
+            "/api/v1/operators/stats",
+            get(routes_operator::handler_v1_stats),
+        )
+        .route(
+            "/api/v1/operators/leaderboard",
+            get(routes_operator::handler_v1_leaderboard),
+        )
+        .route(
+            "/api/v1/operators/me/nodes",
+            get(routes_operator::handler_v1_operator_nodes),
+        )
+        .route(
+            "/api/v1/operators/rotate-key",
+            post(routes_operator::handler_v1_rotate_key),
+        )
+        // Legacy routes (kept for backward compatibility, 2 release cycles)
         .route(
             "/api/v1/register",
             post(routes_operator::handler_v1_register),
@@ -404,6 +499,11 @@ pub fn build_router(state: Arc<AppState>, static_dir: Option<&Path>) -> Router {
             .allow_headers(Any),
     )
     .layer(CatchPanicLayer::new())
+    .layer(axum::middleware::from_fn_with_state(
+        state.clone(),
+        metrics_middleware,
+    ))
+    .layer(TraceLayer::new_for_http())
     .layer(RequestBodyLimitLayer::new(1024 * 1024))
     .layer(TimeoutLayer::with_status_code(
         StatusCode::REQUEST_TIMEOUT,
@@ -420,7 +520,7 @@ pub async fn run(
 ) -> Result<()> {
     let database = db::Database::connect(database_url).await?;
     let (ws_tx, _) = tokio::sync::broadcast::channel::<String>(256);
-    let state = AppState::with_db(database, database_url, checkpoint_path.to_path_buf(), port);
+    let state = AppState::with_db(database, database_url, checkpoint_path.to_path_buf());
     state.event_bus.set_ws_sender(ws_tx.clone());
     let app = build_router(state.clone(), static_dir);
 
@@ -432,6 +532,8 @@ pub async fn run(
         let mut last_metrics_sample = std::time::Instant::now() - Duration::from_secs(60);
         let mut last_worker_sample = std::time::Instant::now() - Duration::from_secs(120);
         let mut last_housekeeping = std::time::Instant::now() - Duration::from_secs(3600);
+        let mut last_strategy_tick = std::time::Instant::now() - Duration::from_secs(300);
+        let mut last_reliability_refresh = std::time::Instant::now() - Duration::from_secs(300);
         let mut last_event_id: u64 = 0;
         let mut last_tick = std::time::Instant::now();
         let mut event_counts = std::collections::HashMap::<String, i64>::new();
@@ -460,38 +562,129 @@ pub async fn run(
                 .min(i64::MAX as u128) as i64;
             let tick_drift_ms = tick_interval_ms - 30_000;
             last_tick = tick_now;
-            lock_or_recover(&prune_state.fleet).prune_stale(60);
             if let Err(e) = prune_state.db.prune_stale_workers(120).await {
-                eprintln!("Warning: failed to prune stale PG workers: {}", e);
+                warn!(error = %e, "failed to prune stale workers");
             }
             match prune_state.db.rotate_agent_budget_periods().await {
-                Ok(n) if n > 0 => eprintln!("Rotated {} budget periods", n),
-                Err(e) => eprintln!("Warning: failed to rotate budget periods: {}", e),
+                Ok(n) if n > 0 => info!(count = n, "rotated budget periods"),
+                Err(e) => warn!(error = %e, "failed to rotate budget periods"),
                 _ => {}
             }
             match prune_state.db.reclaim_stale_blocks(120).await {
-                Ok(n) if n > 0 => eprintln!("Reclaimed {} stale work blocks", n),
-                Err(e) => eprintln!("Warning: failed to reclaim stale blocks: {}", e),
+                Ok(n) if n > 0 => info!(count = n, "reclaimed stale work blocks"),
+                Err(e) => warn!(error = %e, "failed to reclaim stale blocks"),
                 _ => {}
             }
             // Operator blocks get a 24-hour timeout (86400s) vs 2-min for internal workers
             match prune_state.db.reclaim_stale_operator_blocks(86400).await {
-                Ok(n) if n > 0 => eprintln!("Reclaimed {} stale operator blocks", n),
-                Err(e) => eprintln!("Warning: failed to reclaim stale operator blocks: {}", e),
+                Ok(n) if n > 0 => info!(count = n, "reclaimed stale operator blocks"),
+                Err(e) => warn!(error = %e, "failed to reclaim stale operator blocks"),
                 _ => {}
             }
-            let fleet_workers = prune_state.get_workers_from_pg().await;
-            {
-                let worker_stats: Vec<(String, u64, u64)> = fleet_workers
-                    .iter()
-                    .map(|w| (w.worker_id.clone(), w.tested, w.found))
-                    .collect();
-                let mut mgr = lock_or_recover(&prune_state.searches);
-                mgr.sync_worker_stats(&worker_stats);
-                mgr.poll_completed();
+
+            // ── Verification pipeline: queue unverified operator blocks ──
+            match prune_state.db.get_unverified_operator_blocks(20).await {
+                Ok(blocks) => {
+                    for block in blocks {
+                        // Look up operator trust level
+                        let trust_level = if let Some(vol_id) = block.volunteer_id {
+                            prune_state
+                                .db
+                                .get_operator_trust(vol_id)
+                                .await
+                                .ok()
+                                .flatten()
+                                .map(|t| t.trust_level)
+                                .unwrap_or(1)
+                        } else {
+                            1
+                        };
+
+                        let quorum = verify::required_quorum(trust_level, &block.search_type);
+
+                        if quorum >= 2 {
+                            // Check if already queued for verification
+                            let already_queued = prune_state
+                                .db
+                                .has_pending_verification(block.block_id as i64)
+                                .await
+                                .unwrap_or(false);
+                            if !already_queued {
+                                // Fetch block details for verification queue
+                                if let Ok(Some(wb)) = prune_state
+                                    .db
+                                    .get_work_block_details(block.block_id as i64)
+                                    .await
+                                {
+                                    if let Err(e) = prune_state
+                                        .db
+                                        .queue_verification(
+                                            block.block_id as i64,
+                                            block.search_job_id,
+                                            wb.block_start,
+                                            wb.block_end,
+                                            wb.tested,
+                                            wb.found,
+                                            &wb.claimed_by,
+                                            block.volunteer_id,
+                                        )
+                                        .await
+                                    {
+                                        warn!(
+                                            block_id = block.block_id,
+                                            error = %e,
+                                            "failed to queue verification"
+                                        );
+                                    }
+                                }
+                            }
+                        } else {
+                            // Trusted or provable form: mark verified directly
+                            if let Err(e) = prune_state
+                                .db
+                                .mark_block_verified(block.block_id)
+                                .await
+                            {
+                                warn!(
+                                    block_id = block.block_id,
+                                    error = %e,
+                                    "failed to mark block verified"
+                                );
+                            }
+                            // Record valid result for trust advancement
+                            if let Some(vol_id) = block.volunteer_id {
+                                let _ = prune_state.db.record_valid_result(vol_id).await;
+                            }
+                        }
+                    }
+                }
+                Err(e) => warn!(error = %e, "failed to fetch unverified operator blocks"),
             }
+
+            // Refresh node reliability scores every 5 minutes
+            if last_reliability_refresh.elapsed() >= Duration::from_secs(300) {
+                last_reliability_refresh = std::time::Instant::now();
+                // Node reliability is computed on-the-fly via SQL function,
+                // so no explicit refresh needed. This is a placeholder for
+                // future batch refresh of materialized reliability data.
+            }
+
+            let fleet_workers = prune_state.get_workers_from_pg().await;
             if let Err(e) = project::orchestrate_tick(&prune_state.db).await {
-                eprintln!("Warning: project orchestration tick failed: {}", e);
+                warn!(error = %e, "project orchestration tick failed");
+            }
+            // Strategy engine tick (default every 300s / 5 minutes)
+            if last_strategy_tick.elapsed() >= Duration::from_secs(300) {
+                last_strategy_tick = std::time::Instant::now();
+                match strategy::strategy_tick(&prune_state.db).await {
+                    Ok(result) => {
+                        let count = result.decisions.len();
+                        if count > 0 {
+                            info!(count, "strategy decisions applied");
+                        }
+                    }
+                    Err(e) => warn!(error = %e, "strategy tick failed"),
+                }
             }
             prune_state.event_bus.flush();
             {
@@ -529,7 +722,7 @@ pub async fn run(
                         })
                         .collect();
                     if let Err(e) = prune_state.db.insert_system_logs(&logs).await {
-                        eprintln!("Warning: failed to persist event logs: {}", e);
+                        warn!(error = %e, "failed to persist event logs");
                     }
                 }
             }
@@ -550,12 +743,20 @@ pub async fn run(
                 .prom_metrics
                 .workers_connected
                 .set(fleet_workers.len() as i64);
-            {
-                let mgr = lock_or_recover(&prune_state.searches);
+
+            // Connection pool stats
+            let pool_size = prune_state.db.pool().size();
+            let pool_idle = prune_state.db.pool().num_idle();
+            prune_state.prom_metrics.db_pool_active.set((pool_size as i64) - (pool_idle as i64));
+            prune_state.prom_metrics.db_pool_idle.set(pool_idle as i64);
+            prune_state.prom_metrics.db_pool_max.set(2); // matches PgPoolOptions::max_connections(2)
+
+            if let Ok(jobs) = prune_state.db.get_search_jobs().await {
+                let active = jobs.iter().filter(|j| j.status == "running").count();
                 prune_state
                     .prom_metrics
                     .search_jobs_active
-                    .set(mgr.active_count() as i64);
+                    .set(active as i64);
             }
             let mut block_summary = None;
             if let Ok(summary) = prune_state.db.get_all_block_summary().await {
@@ -733,13 +934,13 @@ pub async fn run(
                     });
                 }
 
-                {
-                    let mgr = lock_or_recover(&prune_state.searches);
+                if let Ok(jobs) = prune_state.db.get_search_jobs().await {
+                    let active = jobs.iter().filter(|j| j.status == "running").count();
                     samples.push(db::MetricSample {
                         ts: now,
                         scope: "fleet".to_string(),
                         metric: "fleet.search_jobs_active".to_string(),
-                        value: mgr.active_count() as f64,
+                        value: active as f64,
                         labels: None,
                     });
                 }
@@ -929,7 +1130,7 @@ pub async fn run(
                 }
 
                 if let Err(e) = prune_state.db.insert_metric_samples(&samples).await {
-                    eprintln!("Warning: failed to persist metric samples: {}", e);
+                    warn!(error = %e, count = samples.len(), "failed to persist metric samples");
                 }
             }
 
@@ -943,7 +1144,7 @@ pub async fn run(
                     .unwrap_or(now);
                 let prev_hour = hour_start - chrono::Duration::hours(1);
                 if let Err(e) = prune_state.db.rollup_metrics_hour(prev_hour).await {
-                    eprintln!("Warning: failed to roll up metrics: {}", e);
+                    warn!(error = %e, "failed to roll up hourly metrics");
                 }
                 let day_start = now
                     .with_hour(0)
@@ -953,31 +1154,31 @@ pub async fn run(
                     .unwrap_or(now);
                 let prev_day = day_start - chrono::Duration::days(1);
                 if let Err(e) = prune_state.db.rollup_metrics_day(prev_day).await {
-                    eprintln!("Warning: failed to roll up daily metrics: {}", e);
+                    warn!(error = %e, "failed to roll up daily metrics");
                 }
                 if let Err(e) = prune_state
                     .db
                     .prune_metric_samples(metric_retention_days)
                     .await
                 {
-                    eprintln!("Warning: failed to prune metric samples: {}", e);
+                    warn!(error = %e, "failed to prune metric samples");
                 }
                 if let Err(e) = prune_state
                     .db
                     .prune_metric_rollups(rollup_retention_days)
                     .await
                 {
-                    eprintln!("Warning: failed to prune metric rollups: {}", e);
+                    warn!(error = %e, "failed to prune metric rollups");
                 }
                 if let Err(e) = prune_state
                     .db
                     .prune_metric_rollups_daily(daily_rollup_retention_days)
                     .await
                 {
-                    eprintln!("Warning: failed to prune daily rollups: {}", e);
+                    warn!(error = %e, "failed to prune daily rollups");
                 }
                 if let Err(e) = prune_state.db.prune_system_logs(log_retention_days).await {
-                    eprintln!("Warning: failed to prune system logs: {}", e);
+                    warn!(error = %e, "failed to prune system logs");
                 }
             }
         }
@@ -993,47 +1194,44 @@ pub async fn run(
             let primes = match verify_state.db.get_unverified_primes(10).await {
                 Ok(p) => p,
                 Err(e) => {
-                    eprintln!("Auto-verify: failed to fetch unverified primes: {}", e);
+                    warn!(error = %e, "auto-verify: failed to fetch unverified primes");
                     continue;
                 }
             };
             if primes.is_empty() {
                 continue;
             }
-            eprintln!("Auto-verify: checking {} primes", primes.len());
+            info!(count = primes.len(), "auto-verify: checking primes");
             for prime in &primes {
                 let prime_clone = prime.clone();
                 let result =
                     tokio::task::spawn_blocking(move || verify::verify_prime(&prime_clone)).await;
                 match result {
                     Ok(verify::VerifyResult::Verified { method, tier }) => {
-                        eprintln!(
-                            "  Auto-verified #{}: {} ({})",
-                            prime.id, prime.expression, method
-                        );
+                        info!(prime_id = prime.id, expression = %prime.expression, method = %method, tier, "auto-verified prime");
                         if let Err(e) = verify_state
                             .db
                             .mark_verified(prime.id, &method, tier as i16)
                             .await
                         {
-                            eprintln!("  Failed to mark #{} verified: {}", prime.id, e);
+                            warn!(prime_id = prime.id, error = %e, "failed to mark prime verified");
                         }
                     }
                     Ok(verify::VerifyResult::Failed { reason }) => {
-                        eprintln!("  Auto-verify #{} FAILED: {}", prime.id, reason);
+                        warn!(prime_id = prime.id, reason = %reason, "auto-verify failed");
                         if let Err(e) = verify_state
                             .db
                             .mark_verification_failed(prime.id, &reason)
                             .await
                         {
-                            eprintln!("  Failed to mark #{} failed: {}", prime.id, e);
+                            warn!(prime_id = prime.id, error = %e, "failed to mark prime verification failed");
                         }
                     }
                     Ok(verify::VerifyResult::Skipped { reason }) => {
-                        eprintln!("  Auto-verify #{} skipped: {}", prime.id, reason);
+                        tracing::debug!(prime_id = prime.id, reason = %reason, "auto-verify skipped");
                     }
                     Err(e) => {
-                        eprintln!("  Auto-verify #{} panicked: {}", prime.id, e);
+                        warn!(prime_id = prime.id, error = %e, "auto-verify task panicked");
                     }
                 }
             }
@@ -1079,7 +1277,7 @@ pub async fn run(
                     .complete_agent_task(c.task_id, status_str, result_json.as_ref(), tokens, cost)
                     .await
                 {
-                    eprintln!("Agent: failed to complete task {}: {}", c.task_id, e);
+                    warn!(task_id = c.task_id, error = %e, "agent: failed to complete task");
                 }
                 let summary = match &c.status {
                     agent::AgentStatus::Completed => "Task completed".to_string(),
@@ -1098,10 +1296,7 @@ pub async fn run(
                         .update_agent_budget_spending(tokens, cost)
                         .await;
                 }
-                eprintln!(
-                    "Agent task {} finished: {} (tokens={}, cost=${:.4})",
-                    c.task_id, status_str, tokens, cost
-                );
+                info!(task_id = c.task_id, status = status_str, tokens, cost, "agent task finished");
                 if let Ok(Some(completed_task)) = agent_state.db.get_agent_task(c.task_id).await {
                     if let Some(parent_id) = completed_task.parent_task_id {
                         if status_str == "failed" {
@@ -1114,10 +1309,7 @@ pub async fn run(
                                         .await
                                         .unwrap_or(0);
                                     if cancelled > 0 {
-                                        eprintln!(
-                                            "Agent: cancelled {} pending siblings of parent {}",
-                                            cancelled, parent_id
-                                        );
+                                        info!(parent_id, cancelled, "agent: cancelled pending siblings");
                                     }
                                 }
                             }
@@ -1143,7 +1335,7 @@ pub async fn run(
                                     None,
                                 )
                                 .await;
-                            eprintln!("Agent: parent task {} auto-{}", parent_id, parent.status);
+                            info!(parent_id, status = %parent.status, "agent: parent task auto-completed");
                         }
                     }
                 }
@@ -1174,11 +1366,7 @@ pub async fn run(
                         .await;
                 }
                 if !killed.is_empty() {
-                    eprintln!(
-                        "Agent: global budget exceeded, killed {} agents: {:?}",
-                        killed.len(),
-                        killed
-                    );
+                    warn!(count = killed.len(), task_ids = ?killed, "agent: global budget exceeded, killed agents");
                 }
                 continue;
             }
@@ -1190,14 +1378,11 @@ pub async fn run(
                 Ok(Some(t)) => t,
                 Ok(None) => continue,
                 Err(e) => {
-                    eprintln!("Agent: failed to claim task: {}", e);
+                    warn!(error = %e, "agent: failed to claim task");
                     continue;
                 }
             };
-            eprintln!(
-                "Agent: claimed task {} — \"{}\" (priority={}, model={:?})",
-                task.id, task.title, task.priority, task.agent_model
-            );
+            info!(task_id = task.id, title = %task.title, priority = task.priority, model = ?task.agent_model, "agent: claimed task");
             let _ = agent_state
                 .db
                 .insert_agent_event(
@@ -1227,7 +1412,7 @@ pub async fn run(
             match spawn_result {
                 Ok(_info) => {}
                 Err(e) => {
-                    eprintln!("Agent: failed to spawn for task {}: {}", task.id, e);
+                    warn!(task_id = task.id, error = %e, "agent: failed to spawn");
                     let _ = agent_state
                         .db
                         .complete_agent_task(
@@ -1257,30 +1442,30 @@ pub async fn run(
     let records_state = Arc::clone(&state);
     tokio::spawn(async move {
         tokio::time::sleep(Duration::from_secs(10)).await;
-        eprintln!("Records: initial refresh from t5k.org...");
+        info!("records: initial refresh from t5k.org");
         match project::refresh_all_records(&records_state.db).await {
-            Ok(n) => eprintln!("Records: refreshed {} forms", n),
-            Err(e) => eprintln!("Warning: records refresh failed: {}", e),
+            Ok(n) => info!(count = n, "records: refreshed forms"),
+            Err(e) => warn!(error = %e, "records: refresh failed"),
         }
         let mut interval = tokio::time::interval(Duration::from_secs(24 * 3600));
         interval.tick().await;
         loop {
             interval.tick().await;
-            eprintln!("Records: 24h refresh from t5k.org...");
+            info!("records: 24h refresh from t5k.org");
             match project::refresh_all_records(&records_state.db).await {
-                Ok(n) => eprintln!("Records: refreshed {} forms", n),
-                Err(e) => eprintln!("Warning: records refresh failed: {}", e),
+                Ok(n) => info!(count = n, "records: refreshed forms"),
+                Err(e) => warn!(error = %e, "records: refresh failed"),
             }
         }
     });
 
     let addr = std::net::SocketAddr::from(([0, 0, 0, 0], port));
-    eprintln!("Dashboard running at http://localhost:{}", port);
+    info!(port, "dashboard running");
     let listener = tokio::net::TcpListener::bind(addr).await?;
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal())
         .await?;
-    eprintln!("Dashboard shut down gracefully");
+    info!("dashboard shut down gracefully");
     Ok(())
 }
 
@@ -1290,11 +1475,43 @@ async fn shutdown_signal() {
     {
         let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
             .expect("failed to install SIGTERM handler");
-        tokio::select! { _ = ctrl_c => eprintln!("\nReceived SIGINT, shutting down..."), _ = sigterm.recv() => eprintln!("\nReceived SIGTERM, shutting down...") }
+        tokio::select! { _ = ctrl_c => info!("received SIGINT, shutting down"), _ = sigterm.recv() => info!("received SIGTERM, shutting down") }
     }
     #[cfg(not(unix))]
     {
         ctrl_c.await.ok();
-        eprintln!("\nReceived SIGINT, shutting down...");
+        info!("received SIGINT, shutting down");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normalize_path_preserves_api_routes() {
+        assert_eq!(normalize_path("/api/status"), "/api/status");
+        assert_eq!(normalize_path("/api/fleet"), "/api/fleet");
+        assert_eq!(normalize_path("/metrics"), "/metrics");
+    }
+
+    #[test]
+    fn normalize_path_collapses_numeric_ids() {
+        assert_eq!(normalize_path("/api/search_jobs/42"), "/api/search_jobs/:id");
+        assert_eq!(normalize_path("/api/primes/12345/verify"), "/api/primes/:id/verify");
+    }
+
+    #[test]
+    fn normalize_path_collapses_uuids() {
+        assert_eq!(
+            normalize_path("/api/agents/tasks/550e8400-e29b-41d4-a716-446655440000"),
+            "/api/agents/tasks/:uuid"
+        );
+    }
+
+    #[test]
+    fn normalize_path_handles_empty_and_root() {
+        assert_eq!(normalize_path("/"), "/");
+        assert_eq!(normalize_path(""), "");
     }
 }

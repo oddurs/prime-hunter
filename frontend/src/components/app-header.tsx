@@ -4,7 +4,7 @@
  * @module app-header
  *
  * Top navigation bar for the dashboard. Contains the darkreach logo,
- * page links (Dashboard, Browse, Searches, Fleet, Docs, Agents),
+ * page links (Dashboard, Browse, Searches, Network, Docs, Agents),
  * a connection status indicator, notification bell with in-app notifications,
  * theme toggle (dark/light), user avatar dropdown, and mobile hamburger menu.
  * Highlights the current route.
@@ -13,7 +13,7 @@
 import { useState, useRef, useCallback, useEffect } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Bell, BellOff, ChevronDown, LogOut, Menu, Moon, Sun } from "lucide-react";
+import { Bell, BellOff, ChevronDown, LogOut, Menu, Moon, Sun, User } from "lucide-react";
 import { useWs } from "@/contexts/websocket-context";
 import { useAuth } from "@/contexts/auth-context";
 import { useTheme } from "@/hooks/use-theme";
@@ -41,7 +41,7 @@ import {
 export function AppHeader() {
   const pathname = usePathname();
   const { connected, searches, agentTasks, notifications } = useWs();
-  const { user, signOut } = useAuth();
+  const { user, role, signOut } = useAuth();
   const { theme, toggleTheme } = useTheme();
   const { supported, permission, enabled, setEnabled } = useBrowserNotifications();
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -160,29 +160,41 @@ export function AppHeader() {
     return "items" in entry;
   }
 
-  const navEntries: NavEntry[] = [
-    { title: "Dashboard", href: "/" },
-    {
-      title: "Discovery",
-      items: [
+  const isAdmin = role === "admin";
+
+  const navEntries: NavEntry[] = isAdmin
+    ? [
+        { title: "Dashboard", href: "/" },
+        {
+          title: "Discovery",
+          items: [
+            { title: "Browse", href: "/browse" },
+            { title: "Searches", href: "/searches", count: runningCount || undefined },
+            { title: "Projects", href: "/projects" },
+            { title: "Leaderboard", href: "/leaderboard" },
+          ],
+        },
+        {
+          title: "Operations",
+          items: [
+            { title: "Network", href: "/network" },
+            { title: "Observability", href: "/performance" },
+            { title: "Logs", href: "/logs" },
+            { title: "Releases", href: "/releases" },
+            { title: "Strategy", href: "/strategy" },
+          ],
+        },
+        { title: "Agents", href: "/agents", count: activeAgentCount || undefined },
+        { title: "Docs", href: "/docs" },
+      ]
+    : [
+        { title: "Dashboard", href: "/" },
         { title: "Browse", href: "/browse" },
-        { title: "Searches", href: "/searches", count: runningCount || undefined },
-        { title: "Projects", href: "/projects" },
+        { title: "My Nodes", href: "/my-nodes" },
         { title: "Leaderboard", href: "/leaderboard" },
-      ],
-    },
-    {
-      title: "Operations",
-      items: [
-        { title: "Fleet", href: "/fleet" },
-        { title: "Observability", href: "/performance" },
-        { title: "Logs", href: "/logs" },
-        { title: "Releases", href: "/releases" },
-      ],
-    },
-    { title: "Agents", href: "/agents", count: activeAgentCount || undefined },
-    { title: "Docs", href: "/docs" },
-  ];
+        { title: "Account", href: "/account" },
+        { title: "Docs", href: "/docs" },
+      ];
 
   // Flat list for mobile menu
   const navItems = navEntries.flatMap((entry) =>
@@ -208,7 +220,7 @@ export function AppHeader() {
       <div className="mx-auto flex w-full max-w-6xl items-center gap-6">
         {/* Logo */}
         <Link href="/" className="flex items-center gap-2 flex-shrink-0">
-          <DarkReachLogo size={22} className="text-[#bc8cff]" />
+          <DarkReachLogo size={22} className="text-[#6366f1]" />
           <span className="font-semibold text-[var(--header-foreground)] tracking-tight text-sm">
             darkreach
           </span>
@@ -421,15 +433,33 @@ export function AppHeader() {
               <DropdownMenuContent align="end" className="w-56">
                 <DropdownMenuLabel className="font-normal">
                   <div className="flex flex-col gap-1">
-                    <p className="text-sm font-medium leading-none">
-                      {user.email?.split("@")[0] ?? "User"}
-                    </p>
+                    <div className="flex items-center gap-2">
+                      <p className="text-sm font-medium leading-none">
+                        {user.email?.split("@")[0] ?? "User"}
+                      </p>
+                      {role && (
+                        <span className={cn(
+                          "px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase leading-none",
+                          role === "admin"
+                            ? "bg-indigo-500/20 text-indigo-400"
+                            : "bg-emerald-500/20 text-emerald-400"
+                        )}>
+                          {role}
+                        </span>
+                      )}
+                    </div>
                     <p className="text-xs text-muted-foreground leading-none">
                       {user.email}
                     </p>
                   </div>
                 </DropdownMenuLabel>
                 <DropdownMenuSeparator />
+                <DropdownMenuItem asChild className="cursor-pointer">
+                  <Link href="/account">
+                    <User className="size-4" />
+                    Account
+                  </Link>
+                </DropdownMenuItem>
                 <DropdownMenuItem
                   onClick={() => signOut()}
                   className="cursor-pointer"
@@ -457,7 +487,7 @@ export function AppHeader() {
         <SheetContent side="left" className="w-64 p-0">
           <SheetHeader className="border-b px-4 py-3">
             <SheetTitle className="flex items-center gap-2">
-              <DarkReachLogo size={20} className="text-[#bc8cff]" />
+              <DarkReachLogo size={20} className="text-[#6366f1]" />
               darkreach
             </SheetTitle>
           </SheetHeader>

@@ -409,7 +409,7 @@ fn darkreach_home_dir() -> Result<PathBuf> {
     Ok(PathBuf::from(home).join(".darkreach"))
 }
 
-fn should_verify_worker_signature() -> bool {
+pub fn should_verify_worker_signature() -> bool {
     std::env::var("DARKREACH_VERIFY_WORKER_SIG")
         .ok()
         .is_some_and(|v| v == "1" || v.eq_ignore_ascii_case("true"))
@@ -426,7 +426,7 @@ fn worker_pubkey_path() -> Result<PathBuf> {
     Ok(p)
 }
 
-fn binary_name_for_platform() -> &'static str {
+pub fn binary_name_for_platform() -> &'static str {
     #[cfg(windows)]
     {
         "darkreach.exe"
@@ -437,7 +437,7 @@ fn binary_name_for_platform() -> &'static str {
     }
 }
 
-fn sha256_file(path: &Path) -> Result<String> {
+pub fn sha256_file(path: &Path) -> Result<String> {
     let mut file = File::open(path)?;
     let mut hasher = Sha256::new();
     let mut buf = [0u8; 8192];
@@ -459,7 +459,7 @@ fn download_to_path(url: &str, out_path: &Path) -> Result<()> {
     Ok(())
 }
 
-fn verify_signature(artifact_path: &Path, sig_path: &Path, pubkey_path: &Path) -> Result<()> {
+pub fn verify_signature(artifact_path: &Path, sig_path: &Path, pubkey_path: &Path) -> Result<()> {
     let status = std::process::Command::new("openssl")
         .arg("dgst")
         .arg("-sha256")
@@ -478,7 +478,7 @@ fn verify_signature(artifact_path: &Path, sig_path: &Path, pubkey_path: &Path) -
     Ok(())
 }
 
-fn find_darkreach_binary(root: &Path) -> Option<PathBuf> {
+pub fn find_darkreach_binary(root: &Path) -> Option<PathBuf> {
     let mut stack = vec![root.to_path_buf()];
     while let Some(dir) = stack.pop() {
         let entries = std::fs::read_dir(&dir).ok()?;
@@ -498,7 +498,7 @@ fn find_darkreach_binary(root: &Path) -> Option<PathBuf> {
     None
 }
 
-fn make_executable(path: &Path) -> Result<()> {
+pub fn make_executable(path: &Path) -> Result<()> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -568,11 +568,11 @@ fn cpu_model() -> String {
     }
 }
 
-fn worker_os() -> &'static str {
+pub fn worker_os() -> &'static str {
     std::env::consts::OS
 }
 
-fn worker_arch() -> &'static str {
+pub fn worker_arch() -> &'static str {
     std::env::consts::ARCH
 }
 
@@ -618,8 +618,28 @@ pub type VolunteerStats = OperatorStats;
 
 #[cfg(test)]
 mod tests {
+    //! Tests for the Operator subsystem — public computing platform client.
+    //!
+    //! Validates configuration serialization (TOML round-trips), API payload
+    //! serialization (JSON for register, heartbeat, result, stats, leaderboard),
+    //! update artifact deserialization, file integrity (SHA-256), binary discovery,
+    //! and platform utility functions.
+    //!
+    //! ## Testing Strategy
+    //!
+    //! - **Config**: TOML round-trip ensures ~/.darkreach/config.toml persists correctly
+    //! - **API payloads**: JSON serialization for all request/response types
+    //! - **Security**: SHA-256 file hash against known test vectors (NIST)
+    //! - **Binary discovery**: recursive directory search for update extraction
+    //! - **Platform**: worker_os, worker_arch, hostname not empty on real hardware
+
     use super::*;
 
+    // ── Configuration Persistence ──────────────────────────────────
+
+    /// Validates TOML round-trip for OperatorConfig. The config file at
+    /// ~/.darkreach/config.toml must survive serialize/deserialize without
+    /// data loss, as it stores the API key needed for all coordinator requests.
     #[test]
     fn config_roundtrip() {
         let config = OperatorConfig {
@@ -635,6 +655,10 @@ mod tests {
         assert_eq!(parsed.username, config.username);
     }
 
+    // ── API Payload Serialization ─────────────────────────────────
+
+    /// Validates that ResultSubmission serializes to JSON with all required
+    /// fields for the POST /api/v1/result endpoint.
     #[test]
     fn result_submission_serializes() {
         let sub = ResultSubmission {
@@ -654,18 +678,27 @@ mod tests {
         assert!(json.contains("3*2^100+1"));
     }
 
+    // ── Utility Functions ────────────────────────────────────────
+
+    /// Verifies the time-and-PID-based random generator produces valid u32 values.
+    /// Used for generating unique worker IDs on registration.
     #[test]
     fn rand_u32_produces_values() {
         let a = rand_u32();
         assert!(a <= u32::MAX);
     }
 
+    /// hostname() shells out to the `hostname` command and must return a
+    /// non-empty string on any real machine. Used for worker registration.
     #[test]
     fn hostname_returns_nonempty() {
         let h = hostname();
         assert!(!h.is_empty());
     }
 
+    /// Worker IDs must follow the format "hostname-XXXXXXXX" where XXXXXXXX
+    /// is an 8-hex-digit suffix. This format is parsed by the coordinator for
+    /// deduplication and display.
     #[test]
     fn worker_id_format() {
         let id = generate_worker_id();
@@ -673,6 +706,11 @@ mod tests {
         assert!(id.len() > 9); // hostname-XXXXXXXX
     }
 
+    // ── File Integrity ──────────────────────────────────────────
+
+    /// Validates SHA-256 against the NIST test vector for "abc". This hash
+    /// function is used to verify update artifact integrity after download,
+    /// preventing corrupted or tampered binaries from being installed.
     #[test]
     fn sha256_file_matches_known_value() {
         let dir = tempfile::tempdir().unwrap();
@@ -685,6 +723,11 @@ mod tests {
         );
     }
 
+    // ── Binary Discovery ─────────────────────────────────────────
+
+    /// Validates that find_darkreach_binary performs recursive directory
+    /// traversal to locate the binary within extracted update archives.
+    /// Archives may nest the binary in subdirectories.
     #[test]
     fn find_darkreach_binary_recurses() {
         let dir = tempfile::tempdir().unwrap();
@@ -694,5 +737,287 @@ mod tests {
         std::fs::write(&bin, b"bin").unwrap();
         let found = find_darkreach_binary(dir.path()).unwrap();
         assert_eq!(found, bin);
+    }
+
+    /// Validates Bearer token format for the Authorization header.
+    /// All authenticated coordinator requests use this format.
+    #[test]
+    fn auth_header_format() {
+        let config = OperatorConfig {
+            server: "https://example.com".to_string(),
+            api_key: "test-key-123".to_string(),
+            username: "alice".to_string(),
+            worker_id: "w1".to_string(),
+        };
+        assert_eq!(auth_header(&config), "Bearer test-key-123");
+    }
+
+    /// Platform binary name must start with "darkreach" (bare on Unix,
+    /// with .exe on Windows).
+    #[test]
+    fn binary_name_for_platform_not_empty() {
+        let name = binary_name_for_platform();
+        assert!(!name.is_empty());
+        assert!(name.starts_with("darkreach"));
+    }
+
+    // ── API Response Deserialization ──────────────────────────────
+
+    /// Validates WorkAssignment deserialization from the GET /api/v1/work
+    /// response. The block_start/block_end range defines the search space
+    /// assigned to this worker.
+    #[test]
+    fn work_assignment_deserializes() {
+        let json = r#"{
+            "block_id": 42,
+            "search_job_id": 7,
+            "search_type": "factorial",
+            "params": {"start": 1, "end": 100},
+            "block_start": 1,
+            "block_end": 50
+        }"#;
+        let wa: WorkAssignment = serde_json::from_str(json).unwrap();
+        assert_eq!(wa.block_id, 42);
+        assert_eq!(wa.search_job_id, 7);
+        assert_eq!(wa.search_type, "factorial");
+        assert_eq!(wa.block_start, 1);
+        assert_eq!(wa.block_end, 50);
+    }
+
+    /// Validates OperatorStats deserialization including the trust_level
+    /// field used for the trust escalation model (1 -> 2 -> 3).
+    #[test]
+    fn operator_stats_deserializes() {
+        let json = r#"{
+            "username": "alice",
+            "credit": 12345,
+            "primes_found": 7,
+            "trust_level": 2,
+            "rank": 3
+        }"#;
+        let stats: OperatorStats = serde_json::from_str(json).unwrap();
+        assert_eq!(stats.username, "alice");
+        assert_eq!(stats.credit, 12345);
+        assert_eq!(stats.primes_found, 7);
+        assert_eq!(stats.trust_level, 2);
+        assert_eq!(stats.rank, Some(3));
+    }
+
+    /// New operators with no completed work have null rank. The Option<i64>
+    /// field must deserialize correctly from JSON null.
+    #[test]
+    fn operator_stats_deserializes_null_rank() {
+        let json = r#"{
+            "username": "bob",
+            "credit": 0,
+            "primes_found": 0,
+            "trust_level": 1,
+            "rank": null
+        }"#;
+        let stats: OperatorStats = serde_json::from_str(json).unwrap();
+        assert!(stats.rank.is_none());
+    }
+
+    /// Validates leaderboard entry deserialization including optional team field.
+    #[test]
+    fn leaderboard_entry_deserializes() {
+        let json = r#"{
+            "rank": 1,
+            "username": "alice",
+            "team": "primes-r-us",
+            "credit": 999999,
+            "primes_found": 42,
+            "worker_count": 8
+        }"#;
+        let entry: LeaderboardEntry = serde_json::from_str(json).unwrap();
+        assert_eq!(entry.rank, 1);
+        assert_eq!(entry.team, Some("primes-r-us".to_string()));
+        assert_eq!(entry.worker_count, 8);
+    }
+
+    /// Solo operators have no team. The team field must accept JSON null.
+    #[test]
+    fn leaderboard_entry_deserializes_no_team() {
+        let json = r#"{
+            "rank": 5,
+            "username": "solo",
+            "team": null,
+            "credit": 100,
+            "primes_found": 1,
+            "worker_count": 1
+        }"#;
+        let entry: LeaderboardEntry = serde_json::from_str(json).unwrap();
+        assert!(entry.team.is_none());
+    }
+
+    // ── Worker Update System ─────────────────────────────────────
+
+    /// Validates artifact deserialization including the optional sig_url
+    /// for signature verification when DARKREACH_VERIFY_WORKER_SIG=1.
+    #[test]
+    fn worker_release_artifact_deserializes() {
+        let json = r#"{
+            "os": "linux",
+            "arch": "x86_64",
+            "url": "https://example.com/darkreach-linux-x86_64.tar.gz",
+            "sha256": "abcdef1234567890",
+            "sig_url": "https://example.com/darkreach-linux-x86_64.tar.gz.sig"
+        }"#;
+        let art: WorkerReleaseArtifact = serde_json::from_str(json).unwrap();
+        assert_eq!(art.os, "linux");
+        assert_eq!(art.arch, "x86_64");
+        assert_eq!(art.sig_url, Some("https://example.com/darkreach-linux-x86_64.tar.gz.sig".to_string()));
+    }
+
+    /// Artifacts without a signature URL must deserialize with sig_url=None.
+    /// Signature verification is opt-in via environment variable.
+    #[test]
+    fn worker_release_artifact_no_sig_url() {
+        let json = r#"{
+            "os": "macos",
+            "arch": "aarch64",
+            "url": "https://example.com/darkreach-macos-aarch64.tar.gz",
+            "sha256": "fedcba0987654321"
+        }"#;
+        let art: WorkerReleaseArtifact = serde_json::from_str(json).unwrap();
+        assert!(art.sig_url.is_none());
+    }
+
+    /// Validates full release info deserialization including channel, version,
+    /// and nested artifact array.
+    #[test]
+    fn worker_release_info_deserializes() {
+        let json = r#"{
+            "channel": "stable",
+            "version": "1.2.3",
+            "published_at": "2026-02-20T12:00:00Z",
+            "notes": "Bug fixes",
+            "artifacts": [
+                {
+                    "os": "linux",
+                    "arch": "x86_64",
+                    "url": "https://example.com/dl",
+                    "sha256": "abc123"
+                }
+            ]
+        }"#;
+        let info: WorkerReleaseInfo = serde_json::from_str(json).unwrap();
+        assert_eq!(info.channel, "stable");
+        assert_eq!(info.version, "1.2.3");
+        assert_eq!(info.artifacts.len(), 1);
+        assert_eq!(info.notes, Some("Bug fixes".to_string()));
+    }
+
+    // ── Result Submission Variants ────────────────────────────────
+
+    /// Validates result submission with a primality certificate attached.
+    /// Certificates are JSON-encoded proof chains used for independent
+    /// verification by the coordinator.
+    #[test]
+    fn result_submission_with_certificate() {
+        let sub = ResultSubmission {
+            block_id: 10,
+            tested: 500,
+            found: 1,
+            primes: vec![PrimeReport {
+                expression: "5!+1".to_string(),
+                form: "factorial".to_string(),
+                digits: 3,
+                proof_method: "pocklington".to_string(),
+                certificate: Some("{\"type\":\"Pocklington\",\"factors\":[]}".to_string()),
+            }],
+        };
+        let json = serde_json::to_string(&sub).unwrap();
+        assert!(json.contains("certificate"));
+        assert!(json.contains("Pocklington"));
+    }
+
+    /// A single work block may discover multiple primes (especially for
+    /// small-range searches). The primes array must serialize correctly.
+    #[test]
+    fn result_submission_multiple_primes() {
+        let sub = ResultSubmission {
+            block_id: 1,
+            tested: 100,
+            found: 3,
+            primes: vec![
+                PrimeReport {
+                    expression: "2!+1".to_string(),
+                    form: "factorial".to_string(),
+                    digits: 1,
+                    proof_method: "deterministic".to_string(),
+                    certificate: None,
+                },
+                PrimeReport {
+                    expression: "3!-1".to_string(),
+                    form: "factorial".to_string(),
+                    digits: 1,
+                    proof_method: "deterministic".to_string(),
+                    certificate: None,
+                },
+                PrimeReport {
+                    expression: "3*2^5+1".to_string(),
+                    form: "kbn".to_string(),
+                    digits: 2,
+                    proof_method: "proth".to_string(),
+                    certificate: None,
+                },
+            ],
+        };
+        let json = serde_json::to_string(&sub).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed["primes"].as_array().unwrap().len(), 3);
+    }
+
+    // ── Edge Cases ──────────────────────────────────────────────
+
+    /// A directory with no darkreach binary must return None, not panic.
+    /// This happens when the update archive has an unexpected layout.
+    #[test]
+    fn find_darkreach_binary_returns_none_when_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        // Create a directory with some other files but no darkreach binary
+        std::fs::write(dir.path().join("other.txt"), b"not a binary").unwrap();
+        assert!(find_darkreach_binary(dir.path()).is_none());
+    }
+
+    /// SHA-256 of an empty file must match the well-known empty-string digest.
+    /// This is a degenerate case that should not crash the hash function.
+    #[test]
+    fn sha256_file_empty_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("empty.txt");
+        std::fs::write(&p, b"").unwrap();
+        let hash = sha256_file(&p).unwrap();
+        // SHA-256 of empty string
+        assert_eq!(
+            hash,
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        );
+    }
+
+    /// All four config fields (server, api_key, username, worker_id) must
+    /// appear in the serialized TOML output.
+    #[test]
+    fn config_toml_contains_all_fields() {
+        let config = OperatorConfig {
+            server: "https://api.darkreach.ai".to_string(),
+            api_key: "secret".to_string(),
+            username: "test_user".to_string(),
+            worker_id: "host-aabbccdd".to_string(),
+        };
+        let toml_str = toml::to_string_pretty(&config).unwrap();
+        assert!(toml_str.contains("server"));
+        assert!(toml_str.contains("api_key"));
+        assert!(toml_str.contains("username"));
+        assert!(toml_str.contains("worker_id"));
+    }
+
+    /// Platform detection must return non-empty strings for OS and arch.
+    /// These values are sent to the coordinator for artifact matching.
+    #[test]
+    fn worker_os_and_arch_not_empty() {
+        assert!(!worker_os().is_empty());
+        assert!(!worker_arch().is_empty());
     }
 }

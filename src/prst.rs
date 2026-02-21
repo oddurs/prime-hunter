@@ -217,8 +217,36 @@ pub fn parse_output(stdout: &str) -> PrstResult {
 
 #[cfg(test)]
 mod tests {
+    //! Tests for PRST subprocess output parsing and integration.
+    //!
+    //! PRST (successor to LLR2) handles k*b^n+/-1 candidates using GWNUM
+    //! internally for 50-100x speedup. This test module validates parse_output()
+    //! against all known PRST output patterns: Proth test, LLR test, Morrison
+    //! test, PRP results, composites, and edge cases (empty/unknown output).
+    //!
+    //! ## PRST Output Patterns
+    //!
+    //! | Output text | Result | is_deterministic |
+    //! |-------------|--------|-----------------|
+    //! | "is prime!" + "Proth" | Proth test proof | true |
+    //! | "is prime!" + "LLR" | LLR test proof | true |
+    //! | "is prime!" + "Morrison" | Morrison proof | true |
+    //! | "is prime!" (alone) | Generic PRST proof | true |
+    //! | "is a probable prime" | PRP | false |
+    //! | "PRP" | PRP | false |
+    //! | "is not prime" | Composite | N/A |
+    //! | "composite" | Composite | N/A |
+    //! | (unrecognized) | Unavailable | N/A |
+    //!
+    //! The integration test (marked `#[ignore]`) requires the PRST binary
+    //! installed and tests 3*2^50000+1 (a known Proth prime).
+
     use super::*;
 
+    // ── Proven Primes (Deterministic) ────────────────────────────────
+
+    /// Proth test proof: for k*2^n+1 where k < 2^n, PRST runs the Proth
+    /// test (a^((N-1)/2) = -1 mod N) which produces a deterministic proof.
     #[test]
     fn parse_proth_prime() {
         let output = "3*2^50000+1 is prime! (Proth test)";
@@ -234,6 +262,8 @@ mod tests {
         }
     }
 
+    /// LLR test proof: for k*2^n-1 where k < 2^n, PRST runs the
+    /// Lucas-Lehmer-Riesel test (u_{n-2} = 0 mod N) for a deterministic proof.
     #[test]
     fn parse_llr_prime() {
         let output = "3*2^50000-1 is prime! (LLR test)";
@@ -249,6 +279,8 @@ mod tests {
         }
     }
 
+    /// Morrison N+1 proof: for forms where N+1 has a large known factor,
+    /// PRST can produce a Morrison proof. Less common than Proth/LLR.
     #[test]
     fn parse_morrison_prime() {
         let output = "5*3^10000+1 is prime! (Morrison test)";
@@ -264,6 +296,10 @@ mod tests {
         }
     }
 
+    // ── Probable Primes (PRP) ──────────────────────────────────────
+
+    /// Standard PRP output: "is a probable prime". PRST found no
+    /// deterministic proof method applicable but the strong Fermat test passed.
     #[test]
     fn parse_probable_prime() {
         let output = "7*3^10000+1 is a probable prime";
@@ -277,6 +313,7 @@ mod tests {
         }
     }
 
+    /// Alternative PRP output format: "PRP" tag in the output.
     #[test]
     fn parse_prp_tag() {
         let output = "Testing 7*3^10000+1 ... PRP";
@@ -290,6 +327,9 @@ mod tests {
         }
     }
 
+    // ── Composites ────────────────────────────────────────────────
+
+    /// Standard composite output: "is not prime".
     #[test]
     fn parse_composite() {
         let output = "3*2^50001+1 is not prime";
@@ -299,6 +339,7 @@ mod tests {
         }
     }
 
+    /// Alternative composite output: just the word "composite".
     #[test]
     fn parse_composite_alt() {
         let output = "3*2^50001+1 composite";
@@ -308,6 +349,10 @@ mod tests {
         }
     }
 
+    // ── Edge Cases ────────────────────────────────────────────────
+
+    /// Unrecognized output returns Unavailable with the first 200 chars
+    /// of the output included in the reason for debugging.
     #[test]
     fn parse_unknown_output() {
         let output = "some unexpected text";
@@ -319,6 +364,7 @@ mod tests {
         }
     }
 
+    /// Empty output (PRST crashed or timed out) returns Unavailable.
     #[test]
     fn parse_empty_output() {
         match parse_output("") {
@@ -327,6 +373,10 @@ mod tests {
         }
     }
 
+    // ── Digit Threshold ───────────────────────────────────────────
+
+    /// Validates estimate_digits for PRST's min_digits threshold. Small
+    /// numbers are below the threshold; 2^100000 (~30103 digits) exceeds it.
     #[test]
     fn threshold_digit_check() {
         // Verify the digit estimation works correctly for threshold decisions
@@ -340,6 +390,11 @@ mod tests {
         assert!(crate::estimate_digits(&large) > 10_000);
     }
 
+    // ── Integration Tests (require PRST binary) ────────────────────
+
+    /// Tests PRST execution with 3*2^50000+1, a known Proth prime. PRST
+    /// should produce a deterministic Proth test proof. Writes ABC-format
+    /// input file and parses subprocess output.
     #[test]
     #[ignore] // Requires PRST binary installed
     fn prst_integration_known_prime() {

@@ -1,6 +1,6 @@
 # Ops Roadmap
 
-Deployment, build optimization, fleet management, and hardware-specific tuning.
+Deployment, build optimization, network management, and hardware-specific tuning.
 
 **Key files:** `deploy/`
 
@@ -108,9 +108,9 @@ Additional optimization opportunities:
 
 ## Observability Defaults
 
-The coordinator persists system logs and time-series metrics for long-term dashboards.
+The central service persists system logs and time-series metrics for long-term dashboards.
 
-- **Metric sampling:** every 60s for coordinator/fleet, every 120s for per-worker samples
+- **Metric sampling:** every 60s for central service/network, every 120s for per-node samples
 - **Raw retention:** 7 days (metrics)
 - **Hourly rollups:** 365 days
 - **Daily rollups:** 1825 days
@@ -133,34 +133,34 @@ API endpoints:
 
 ---
 
-## Fleet Deployment
+## Network Deployment
+
+> **Architecture note (Feb 2026):** SSH-based deployment has been removed. Nodes now self-update via the release control plane (`/api/releases/worker`). The `deploy.sh` script and `--coordinator` flag are deprecated. All coordination is PG-only.
 
 ### Current Architecture
 
-- `deploy/deploy.sh` — SSH deployment script: installs Rust/GMP, clones/updates repo, builds with `-C target-cpu=native`, copies binary to `/usr/local/bin`, installs systemd units
 - `deploy/darkreach-coordinator.service` — Systemd unit for dashboard on port 7001, security-hardened (strict filesystem, no new privs, 2GB memory limit)
-- `deploy/darkreach-worker@.service` — Template unit for workers with `--coordinator` flag, supports instance numbers, auto-restarts every 10s
+- `deploy/darkreach-worker@.service` — Template unit for nodes with `DATABASE_URL`, supports instance numbers, auto-restarts every 10s
 
-### Deployment Flow
+### Node Self-Update Model
 
-```
-deploy.sh → SSH to target → install deps → clone/pull → cargo build --release → systemctl enable/start
-```
-
-Workers register with coordinator via HTTP heartbeat every 10 seconds. Stale workers pruned after 60s timeout.
+Nodes check for updates on startup and periodically via the release API:
+- `GET /api/v1/worker/latest?channel=stable` — discover latest version
+- Auto-download, verify SHA-256, stage binary, restart
+- Controlled by `DARKREACH_AUTO_UPDATE=1` and `DARKREACH_AUTO_UPDATE_APPLY=1`
+- Channelized rollouts (canary/stable) with percent-based rollout and instant rollback
 
 ### Automation Improvements
 
-- Ansible or similar for multi-host deployment
 - Health monitoring and alerting
-- Automated binary distribution (avoid building on each host)
+- Automated binary distribution via release control plane
 - Log aggregation from systemd journal
 
 ---
 
 ## Phased Deployment Plan
 
-**Core principle: Scale software before hardware.** GWNUM integration provides 50-100x speedup at large number sizes — worth more than $10,000/month in hardware. Buying a fleet before GWNUM works is burning money.
+**Core principle: Scale software before hardware.** GWNUM integration provides 50-100x speedup at large number sizes — worth more than $10,000/month in hardware. Buying a network before GWNUM works is burning money.
 
 Full server cost analysis and provider comparison: [server-setup.md](../server-setup.md)
 
@@ -191,7 +191,7 @@ Full server cost analysis and provider comparison: [server-setup.md](../server-s
 
 **Why wait:** Without GWNUM, these 48-core servers would run GMP at 1/50th to 1/100th the potential speed. Each core-month at GMP speed equals ~1 core-day at GWNUM speed for large candidates.
 
-### Phase 3: Full Fleet ($550-760/mo)
+### Phase 3: Full Network ($550-760/mo)
 
 **Hardware:** Add AX102 (Ryzen 7950X3D, 16 cores) for factorial + 1-3x more AX162-S
 

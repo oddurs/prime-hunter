@@ -751,17 +751,31 @@ const PROVABLE_FORMS: &[&str] = &[
 /// Trust levels (from `volunteer_trust` table):
 /// - 0: Untrusted (invalid result detected) → always quorum=2
 /// - 1: New (default) → quorum=2 (double-check all)
-/// - 2: Reliable (10+ consecutive valid) → quorum=1 for provable forms
-/// - 3: Trusted (100+ consecutive valid) → quorum=1 for all forms
+/// - 2: Proven (10+ consecutive valid) → quorum=1 for provable forms, 2 for PRP
+/// - 3: Trusted (100+ valid, ≥0.95 reliability) → quorum=1 for all forms
+/// - 4: Core (500+ valid, long-term) → quorum=1, can serve as verifier
+///
+/// High-value results (≥100K digits) always get triple-check regardless of trust.
 ///
 /// This follows the BOINC adaptive replication model: new volunteers
 /// are double-checked, experienced ones are trusted, and any invalid
 /// result resets trust.
 pub fn required_quorum(trust_level: i16, form: &str) -> i16 {
     match trust_level {
+        4 => 1,                                   // Core: single-check, can verify others
         3 => 1,                                   // Trusted: single-check all
-        2 if PROVABLE_FORMS.contains(&form) => 1, // Reliable + provable: proof is verification
+        2 if PROVABLE_FORMS.contains(&form) => 1, // Proven + provable: proof is verification
         _ => 2,                                   // New/untrusted or PRP form: double-check
+    }
+}
+
+/// Determine quorum for a high-value result (≥100K digits).
+/// Always returns 3 (triple-check) regardless of trust level.
+pub fn required_quorum_high_value(trust_level: i16, form: &str, digits: u64) -> i16 {
+    if digits >= 100_000 {
+        3
+    } else {
+        required_quorum(trust_level, form)
     }
 }
 
@@ -772,22 +786,73 @@ pub fn is_provable_form(form: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    //! # Tests for the 3-Tier Independent Verification Pipeline
+    //!
+    //! Validates the complete verification chain that audits primes already
+    //! stored in the database. The pipeline operates in three stages:
+    //!
+    //! 1. **Expression parsing**: Each of the 12 prime forms has a dedicated
+    //!    parser that reconstructs the `rug::Integer` from its human-readable
+    //!    expression string (e.g., "73! + 1", "3*2^50000+1", "R(317)").
+    //!
+    //! 2. **Tier 1 (deterministic)**: Re-runs the same proof used at discovery
+    //!    time -- Proth, LLR, Pocklington, or Morrison. Only available for forms
+    //!    with deterministic proofs.
+    //!
+    //! 3. **Tier 2 (BPSW + MR)**: Independent code path using GMP's BPSW test
+    //!    (1 round) plus 10 extra Miller-Rabin rounds with fixed bases [31..71],
+    //!    deliberately different from discovery-time bases.
+    //!
+    //! 4. **Tier 3 (PFGW)**: External tool cross-verification using GWNUM
+    //!    internally. Provides independent implementation verification.
+    //!
+    //! Additionally tests the **volunteer quorum logic** which determines how
+    //! many independent checks are required based on trust level and prime form
+    //! (following the BOINC adaptive replication model).
+    //!
+    //! ## Testing Strategy
+    //!
+    //! - **Parser correctness**: Each form's expression parser is tested with
+    //!   known values, verifying the reconstructed integer matches expectations.
+    //! - **Tier 1 positive/negative**: Known primes should verify; wrong candidates
+    //!   and composites should fail or skip.
+    //! - **Tier 2 soundness**: Verifies primes pass, composites fail, and
+    //!   pseudoprimes (Carmichael numbers, Fermat pseudoprimes) are rejected.
+    //! - **Error handling**: Invalid expressions, unknown forms, and digit
+    //!   count mismatches produce appropriate error results.
+    //! - **Quorum logic**: Trust levels 0-3 with provable vs PRP-only forms.
+    //!
+    //! ## References
+    //!
+    //! - Baillie-PSW pseudoprime test (no known counterexample as of 2025)
+    //! - Korselt's criterion for Carmichael numbers (561 = 3*11*17)
+    //! - OEIS A001567: Fermat pseudoprimes to base 2
+
     use super::*;
 
-    // --- reconstruct_candidate tests ---
+    // ── Expression Parser Tests ────────────────────────────────────────
+    //
+    // Each prime form has a parser that reconstructs the candidate integer
+    // from its stored expression string. These tests verify round-trip
+    // correctness: build expression -> parse -> compare to known value.
 
+    /// Parse "5! + 1" -> 121 (5! = 120, +1 = 121).
+    /// Tests the factorial parser's plus-sign branch.
     #[test]
     fn reconstruct_factorial_plus() {
         let c = reconstruct_candidate("factorial", "5! + 1").unwrap();
         assert_eq!(c, Integer::from(121u32)); // 5! + 1 = 121
     }
 
+    /// Parse "7! - 1" -> 5039 (7! = 5040, -1 = 5039, a prime from OEIS A002982).
     #[test]
     fn reconstruct_factorial_minus() {
         let c = reconstruct_candidate("factorial", "7! - 1").unwrap();
         assert_eq!(c, Integer::from(5039u32)); // 7! - 1 = 5039
     }
 
+    /// Parse "7# + 1" -> 211 (7# = 2*3*5*7 = 210, +1 = 211, prime).
+    /// OEIS A014545: primorial primes of the form p#+1.
     #[test]
     fn reconstruct_primorial_plus() {
         let c = reconstruct_candidate("primorial", "7# + 1").unwrap();
@@ -795,6 +860,8 @@ mod tests {
         assert_eq!(c, Integer::from(211u32));
     }
 
+    /// Parse "5# - 1" -> 29 (5# = 2*3*5 = 30, -1 = 29, prime).
+    /// OEIS A057704: primorial primes of the form p#-1.
     #[test]
     fn reconstruct_primorial_minus() {
         let c = reconstruct_candidate("primorial", "5# - 1").unwrap();
@@ -802,6 +869,8 @@ mod tests {
         assert_eq!(c, Integer::from(29u32));
     }
 
+    /// Parse "3*2^5 + 1" -> 97 (Proth prime: k=3, b=2, n=5, 3*32+1=97).
+    /// Proth's theorem applies since k=3 < 2^5=32.
     #[test]
     fn reconstruct_kbn_plus() {
         let c = reconstruct_candidate("kbn", "3*2^5 + 1").unwrap();
@@ -809,6 +878,7 @@ mod tests {
         assert_eq!(c, Integer::from(97u32));
     }
 
+    /// Parse "3*2^5 - 1" -> 95 (composite: 5*19, Riesel form).
     #[test]
     fn reconstruct_kbn_minus() {
         let c = reconstruct_candidate("kbn", "3*2^5 - 1").unwrap();
@@ -816,12 +886,16 @@ mod tests {
         assert_eq!(c, Integer::from(95u32));
     }
 
+    /// Parse a raw decimal palindrome "10301" -> 10301 (prime palindrome).
+    /// Palindromic expressions are stored as plain decimal strings.
     #[test]
     fn reconstruct_palindromic() {
         let c = reconstruct_candidate("palindromic", "10301").unwrap();
         assert_eq!(c, Integer::from(10301u32));
     }
 
+    /// Parse near-repdigit with m=0: "10^3 - 1 - 8*10^1" -> 919.
+    /// Format 1 (single power): 999 - 80 = 919 (prime palindrome).
     #[test]
     fn reconstruct_near_repdigit_m0() {
         // "10^3 - 1 - 8*10^1" = 999 - 80 = 919
@@ -829,6 +903,8 @@ mod tests {
         assert_eq!(c, Integer::from(919u32));
     }
 
+    /// Parse near-repdigit with m!=0: "10^5 - 1 - 4*(10^3 + 10^1)" -> 95959.
+    /// Format 2 (sum of two powers): 99999 - 4*(1000+10) = 99999 - 4040 = 95959.
     #[test]
     fn reconstruct_near_repdigit_m_nonzero() {
         // "10^5 - 1 - 4*(10^3 + 10^1)" = 99999 - 4*(1000 + 10) = 99999 - 4040 = 95959
@@ -836,6 +912,8 @@ mod tests {
         assert_eq!(c, Integer::from(95959u32));
     }
 
+    /// Parse Wagstaff: "(2^11+1)/3" -> 683 (Wagstaff prime, OEIS A000978).
+    /// Wagstaff primes have the form (2^p+1)/3 for odd prime p.
     #[test]
     fn reconstruct_wagstaff() {
         let c = reconstruct_candidate("wagstaff", "(2^11+1)/3").unwrap();
@@ -843,6 +921,8 @@ mod tests {
         assert_eq!(c, Integer::from(683u32));
     }
 
+    /// Parse Carol prime: "(2^7-1)^2-2" -> 16127 (Carol prime, OEIS A091515).
+    /// Carol numbers have the form (2^n - 1)^2 - 2 = 4^n - 2^(n+1) - 1.
     #[test]
     fn reconstruct_carol() {
         let c = reconstruct_candidate("carol_kynea", "(2^7-1)^2-2").unwrap();
@@ -850,6 +930,8 @@ mod tests {
         assert_eq!(c, Integer::from(16127u32));
     }
 
+    /// Parse Kynea prime: "(2^7+1)^2-2" -> 16639 (Kynea prime, OEIS A091516).
+    /// Kynea numbers have the form (2^n + 1)^2 - 2 = 4^n + 2^(n+1) - 1.
     #[test]
     fn reconstruct_kynea() {
         let c = reconstruct_candidate("carol_kynea", "(2^7+1)^2-2").unwrap();
@@ -857,6 +939,9 @@ mod tests {
         assert_eq!(c, Integer::from(16639u32));
     }
 
+    /// Parse twin prime expression: "1*2^6 +/- 1" -> 63 (returns the smaller twin).
+    /// Twin primes k*b^n +/- 1 are stored with the "+/-" notation; the parser
+    /// returns k*b^n - 1 (the smaller of the pair).
     #[test]
     fn reconstruct_twin() {
         let c = reconstruct_candidate("twin", "1*2^6 +/- 1").unwrap();
@@ -864,6 +949,10 @@ mod tests {
         assert_eq!(c, Integer::from(63u32));
     }
 
+    /// Parse Sophie Germain expression: "3*2^4-1" -> 47 (Sophie Germain prime).
+    /// A Sophie Germain prime p has the property that 2p+1 is also prime.
+    /// 47 is Sophie Germain since 2*47+1 = 95 = 5*19... actually 47's safe
+    /// prime is checked separately; here we just verify the parser.
     #[test]
     fn reconstruct_sophie_germain() {
         let c = reconstruct_candidate("sophie_germain", "3*2^4-1").unwrap();
@@ -871,6 +960,8 @@ mod tests {
         assert_eq!(c, Integer::from(47u32));
     }
 
+    /// Parse repunit: "R(10, 7)" -> 1111111 (base-10 repunit with 7 digits).
+    /// R(b, n) = (b^n - 1) / (b - 1). Repunit primes: OEIS A004023 (base 10).
     #[test]
     fn reconstruct_repunit() {
         let c = reconstruct_candidate("repunit", "R(10, 7)").unwrap();
@@ -878,6 +969,9 @@ mod tests {
         assert_eq!(c, Integer::from(1111111u32));
     }
 
+    /// Parse generalized Fermat: "6^(2^3) + 1" -> 1679617.
+    /// Generalized Fermat numbers have the form b^(2^n) + 1.
+    /// The classical Fermat numbers use b=2 (OEIS A000215).
     #[test]
     fn reconstruct_gen_fermat() {
         let c = reconstruct_candidate("gen_fermat", "6^(2^3) + 1").unwrap();
@@ -885,8 +979,18 @@ mod tests {
         assert_eq!(c, Integer::from(1679617u32));
     }
 
-    // --- Tier 1 tests ---
+    // ── Tier 1: Deterministic Re-Proof ───────────────────────────────
+    //
+    // Re-runs the same deterministic test used at discovery time.
+    // Only available for forms with deterministic proofs (kbn, factorial,
+    // primorial). Returns Skipped for probabilistic primes and forms
+    // without a tier-1 test (palindromic, wagstaff).
 
+    /// Verify tier-1 re-proves a Proth prime: 3*2^5 + 1 = 97.
+    ///
+    /// Proth's theorem (1878): if p = k*2^n + 1 with k < 2^n and there
+    /// exists a with a^((p-1)/2) = -1 (mod p), then p is prime.
+    /// The tier-1 test re-runs this single modular exponentiation.
     #[test]
     fn tier1_kbn_proth_prime() {
         // 3*2^5 + 1 = 97 (prime, Proth-provable)
@@ -897,6 +1001,11 @@ mod tests {
         }
     }
 
+    /// Verify tier-1 re-proves a Riesel prime via LLR: 3*2^7 - 1 = 383.
+    ///
+    /// Lucas-Lehmer-Riesel test (Riesel, 1969): for N = k*2^n - 1 with
+    /// k odd, k < 2^n, the sequence u_i = u_{i-1}^2 - 2 (mod N) with
+    /// u_0 = V_k(P,1) satisfies u_{n-2} = 0 iff N is prime.
     #[test]
     fn tier1_kbn_llr_prime() {
         // 3*2^7 - 1 = 383 (prime, LLR-provable)
@@ -907,6 +1016,10 @@ mod tests {
         }
     }
 
+    /// Verify tier-1 re-proves a factorial prime via Pocklington: 11!+1.
+    ///
+    /// 11!+1 = 39916801 (prime, OEIS A002981). Pocklington N-1 proof uses
+    /// the known factorization of 11! = 2^8 * 3^4 * 5^2 * 7 * 11.
     #[test]
     fn tier1_factorial_plus() {
         // 11! + 1 = 39916801 (prime)
@@ -917,6 +1030,10 @@ mod tests {
         }
     }
 
+    /// Verify tier-1 re-proves 4!-1 = 23 via Morrison's N+1 proof.
+    ///
+    /// N+1 = 4! = 24 = 2^3 * 3. Morrison uses Lucas V-sequences with
+    /// a suitable P where Jacobi(P^2-4, N) = -1.
     #[test]
     fn tier1_factorial_minus() {
         // 4! - 1 = 23 (prime)
@@ -927,6 +1044,10 @@ mod tests {
         }
     }
 
+    /// Verify tier-1 skips when proof_method is "probabilistic".
+    ///
+    /// Probabilistic primes have no deterministic proof to re-run.
+    /// The tier-1 test should return Skipped, falling through to tier 2.
     #[test]
     fn tier1_skips_probabilistic() {
         let c = Integer::from(97u32);
@@ -936,8 +1057,17 @@ mod tests {
         }
     }
 
-    // --- Tier 2 tests ---
+    // ── Tier 2: BPSW + Independent MR ────────────────────────────────
+    //
+    // Uses a deliberately different code path from discovery-time tests:
+    // 1. Trial division by small primes (has_small_factor)
+    // 2. GMP BPSW (1 round = strong PRP + Lucas test)
+    // 3. 10 extra Fermat tests with fixed bases [31,37,41,...,71]
+    //
+    // This catches Carmichael numbers (which fool Fermat's test) and
+    // strong pseudoprimes (which fool single-base MR).
 
+    /// Verify tier-2 accepts a known prime: 104729 (the 10000th prime).
     #[test]
     fn tier2_verifies_known_prime() {
         let c = Integer::from(104729u32); // prime
@@ -947,6 +1077,8 @@ mod tests {
         }
     }
 
+    /// Verify tier-2 rejects a trivial composite: 104730 (even number).
+    /// Caught immediately by the trial division step (has_small_factor).
     #[test]
     fn tier2_rejects_composite() {
         let c = Integer::from(104730u32); // even → composite
@@ -956,6 +1088,12 @@ mod tests {
         }
     }
 
+    /// Verify tier-2 rejects the smallest Carmichael number: 561 = 3*11*17.
+    ///
+    /// Carmichael numbers satisfy a^(n-1) = 1 (mod n) for all a coprime to n
+    /// (Korselt's criterion), fooling Fermat's test. However, they fail the
+    /// BPSW test (no known BPSW pseudoprime exists as of 2025) and are caught
+    /// by the trial division step since 561 has small factor 3.
     #[test]
     fn tier2_rejects_carmichael() {
         // 561 = 3*11*17, the smallest Carmichael number
@@ -966,8 +1104,17 @@ mod tests {
         }
     }
 
-    // --- Full verify_prime tests ---
+    // ── Full verify_prime Pipeline Tests ──────────────────────────────
+    //
+    // Tests the complete verify_prime() function which orchestrates:
+    // reconstruct -> digit check -> tier1 -> tier2 -> (optionally) tier3.
 
+    /// Verify full pipeline for a deterministic kbn prime (tier 1 succeeds).
+    ///
+    /// 3*2^5 + 1 = 97 (Proth prime). The pipeline should:
+    /// 1. Reconstruct 97 from "3*2^5 + 1"
+    /// 2. Verify digit count matches (2 digits)
+    /// 3. Re-run Proth test -> tier 1 verified
     #[test]
     fn verify_prime_kbn_deterministic() {
         let detail = PrimeDetail {
@@ -985,6 +1132,11 @@ mod tests {
         }
     }
 
+    /// Verify full pipeline for a palindromic prime (no tier-1, falls to tier 2).
+    ///
+    /// 10301 is prime but palindromic form has no deterministic proof.
+    /// Tier 1 returns Skipped, so the pipeline falls through to tier 2
+    /// (BPSW + fixed-base MR), which confirms primality.
     #[test]
     fn verify_prime_palindromic_probabilistic() {
         // 10301 is prime, but palindromic has no tier-1 test → tier 2
@@ -1003,8 +1155,17 @@ mod tests {
         }
     }
 
-    // --- PFGW cross-verification tests ---
+    // ── Tier 3: PFGW Cross-Verification ──────────────────────────────
+    //
+    // PFGW uses GWNUM internally (completely independent from GMP),
+    // providing verification via a different mathematical library.
+    // In test context, PFGW is not installed, so these tests verify
+    // graceful handling of the "not initialized" case.
 
+    /// Verify PFGW returns Skipped when the PFGW binary is not available.
+    ///
+    /// In the test environment, PFGW is not installed. The verify_pfgw
+    /// function should detect this and return Skipped rather than panicking.
     #[test]
     fn verify_pfgw_returns_skipped_when_not_initialized() {
         // PFGW is not initialized in test context, so verify_pfgw should return Skipped
@@ -1015,6 +1176,12 @@ mod tests {
         }
     }
 
+    /// Verify PFGW mode selection does not panic for any form.
+    ///
+    /// factorial+1 -> NMinus1Proof (-tp), factorial-1 -> NPlus1Proof (-tm),
+    /// wagstaff -> PRP mode, palindromic -> PRP mode with decimal string.
+    /// Even though PFGW is unavailable, the mode selection logic should
+    /// execute without errors.
     #[test]
     fn verify_pfgw_mode_selection() {
         // Verify that factorial+1 uses NMinus1Proof and factorial-1 uses NPlus1Proof
@@ -1027,6 +1194,11 @@ mod tests {
         let _ = verify_pfgw("palindromic", "10301", &Integer::from(10301u32));
     }
 
+    /// Verify the pipeline rejects a prime with mismatched digit count.
+    ///
+    /// The sanity check compares the stored digit count against the
+    /// reconstructed integer's actual digits. A mismatch (> 1 digit
+    /// difference) indicates data corruption and should be flagged.
     #[test]
     fn verify_prime_digit_mismatch() {
         let detail = PrimeDetail {
@@ -1044,20 +1216,27 @@ mod tests {
         }
     }
 
-    // --- convert_repunit_to_pfgw tests ---
+    // ── Repunit PFGW Format Conversion ───────────────────────────────
+    //
+    // PFGW expects algebraic notation "(b^n-1)/(b-1)" rather than
+    // our "R(b, n)" shorthand. These tests verify the conversion.
 
+    /// Convert R(10, 7) -> "(10^7-1)/(9)" for base-10 repunits.
     #[test]
     fn repunit_pfgw_format_base10() {
         let result = convert_repunit_to_pfgw("R(10, 7)");
         assert_eq!(result, "(10^7-1)/(9)");
     }
 
+    /// Convert R(2, 31) -> "(2^31-1)/(1)" for Mersenne-like repunits.
+    /// Note: (2^n-1)/1 = 2^n-1 (Mersenne numbers are base-2 repunits).
     #[test]
     fn repunit_pfgw_format_base2() {
         let result = convert_repunit_to_pfgw("R(2, 31)");
         assert_eq!(result, "(2^31-1)/(1)");
     }
 
+    /// Non-R() expressions pass through unchanged (fallback path).
     #[test]
     fn repunit_pfgw_format_fallback() {
         // Non-R() expression passes through unchanged
@@ -1078,8 +1257,17 @@ mod tests {
         }
     }
 
-    // --- Quorum logic tests ---
+    // ── Volunteer Quorum Logic (BOINC-style Adaptive Replication) ────
+    //
+    // Determines the minimum number of independent checks required for
+    // volunteer-submitted results based on trust level:
+    //   Level 0 (untrusted): always quorum=2 (detected invalid results)
+    //   Level 1 (new):       always quorum=2 (default for new volunteers)
+    //   Level 2 (reliable):  quorum=1 for provable forms, 2 for PRP-only
+    //   Level 3 (trusted):   always quorum=1
 
+    /// Untrusted volunteers (trust=0) always require double-checking.
+    /// This prevents a malicious volunteer from injecting false results.
     #[test]
     fn quorum_untrusted_always_double() {
         assert_eq!(required_quorum(0, "kbn"), 2);
@@ -1087,6 +1275,7 @@ mod tests {
         assert_eq!(required_quorum(0, "wagstaff"), 2);
     }
 
+    /// New volunteers (trust=1, the default) always require double-checking.
     #[test]
     fn quorum_new_always_double() {
         assert_eq!(required_quorum(1, "kbn"), 2);
@@ -1094,6 +1283,12 @@ mod tests {
         assert_eq!(required_quorum(1, "factorial"), 2);
     }
 
+    /// Reliable volunteers (trust=2, 10+ valid) get single-check for provable forms.
+    ///
+    /// For forms with deterministic proofs (Proth, LLR, Pocklington, etc.),
+    /// the proof certificate itself serves as verification. PRP-only forms
+    /// (wagstaff, repunit) still require double-checking since there is no
+    /// proof to verify.
     #[test]
     fn quorum_reliable_single_for_provable() {
         assert_eq!(required_quorum(2, "kbn"), 1);
@@ -1104,6 +1299,7 @@ mod tests {
         assert_eq!(required_quorum(2, "repunit"), 2);
     }
 
+    /// Trusted volunteers (trust=3, 100+ valid) get single-check for all forms.
     #[test]
     fn quorum_trusted_single_for_all() {
         assert_eq!(required_quorum(3, "kbn"), 1);
@@ -1112,11 +1308,309 @@ mod tests {
         assert_eq!(required_quorum(3, "factorial"), 1);
     }
 
+    /// Core volunteers (trust=4, 500+ valid) get single-check and can verify.
+    #[test]
+    fn quorum_core_single_for_all() {
+        assert_eq!(required_quorum(4, "kbn"), 1);
+        assert_eq!(required_quorum(4, "wagstaff"), 1);
+        assert_eq!(required_quorum(4, "repunit"), 1);
+        assert_eq!(required_quorum(4, "factorial"), 1);
+    }
+
+    /// High-value results (≥100K digits) always get triple-check.
+    #[test]
+    fn quorum_high_value_always_triple() {
+        assert_eq!(required_quorum_high_value(4, "kbn", 100_000), 3);
+        assert_eq!(required_quorum_high_value(3, "factorial", 200_000), 3);
+        assert_eq!(required_quorum_high_value(1, "kbn", 50_000), 2); // below threshold
+        assert_eq!(required_quorum_high_value(3, "kbn", 99_999), 1); // just below
+    }
+
+    /// Verify the is_provable_form classification for key forms.
+    ///
+    /// Provable forms have deterministic proof methods (certificates).
+    /// PRP-only forms (wagstaff, repunit, palindromic) do not.
     #[test]
     fn provable_forms_check() {
         assert!(is_provable_form("kbn"));
         assert!(is_provable_form("factorial"));
         assert!(!is_provable_form("wagstaff"));
         assert!(!is_provable_form("repunit"));
+    }
+
+    // ── Error Handling Tests ─────────────────────────────────────────
+
+    /// Verify unknown form name returns an error.
+    #[test]
+    fn reconstruct_unknown_form_errors() {
+        let result = reconstruct_candidate("unknown_form", "42");
+        assert!(result.is_err(), "Unknown form should return error");
+    }
+
+    /// Verify factorial parser rejects expressions missing the '!' character.
+    #[test]
+    fn reconstruct_factorial_invalid_expression() {
+        let result = reconstruct_candidate("factorial", "no_bang_here");
+        assert!(result.is_err(), "Missing '!' should error");
+    }
+
+    /// Verify kbn parser rejects expressions missing the '*' separator.
+    #[test]
+    fn reconstruct_kbn_invalid_expression() {
+        // Missing '*'
+        let result = reconstruct_candidate("kbn", "3 2^5 + 1");
+        assert!(result.is_err(), "Missing '*' should error");
+    }
+
+    /// Parse a small Wagstaff prime: (2^5+1)/3 = 33/3 = 11.
+    #[test]
+    fn reconstruct_wagstaff_small_prime() {
+        // (2^5+1)/3 = 33/3 = 11 (prime)
+        let c = reconstruct_candidate("wagstaff", "(2^5+1)/3").unwrap();
+        assert_eq!(c, Integer::from(11u32));
+    }
+
+    /// Verify Cullen/Woodall parsing delegates to kbn parser.
+    /// Cullen numbers n*2^n+1 use the same k*b^n+1 format.
+    #[test]
+    fn reconstruct_cullen_woodall_as_kbn() {
+        // Cullen: 141*2^141 + 1 — parse_cullen_woodall delegates to parse_kbn
+        let c = reconstruct_candidate("cullen_woodall", "3*2^3 + 1").unwrap();
+        // 3 * 8 + 1 = 25
+        assert_eq!(c, Integer::from(25u32));
+    }
+
+    /// Parse generalized Fermat F_2 = 2^(2^2)+1 = 17 (Fermat prime).
+    /// The classical Fermat primes are F_n = 2^(2^n)+1 for n = 0,1,2,3,4.
+    /// OEIS A019434.
+    #[test]
+    fn reconstruct_gen_fermat_small() {
+        // 2^(2^2) + 1 = 2^4 + 1 = 17 (Fermat prime F2)
+        let c = reconstruct_candidate("gen_fermat", "2^(2^2) + 1").unwrap();
+        assert_eq!(c, Integer::from(17u32));
+    }
+
+    /// Parse base-2 repunit: R(2, 5) = (2^5-1)/(2-1) = 31 (Mersenne prime M_5).
+    #[test]
+    fn reconstruct_repunit_base2() {
+        // R(2, 5) = (2^5 - 1) / (2 - 1) = 31
+        let c = reconstruct_candidate("repunit", "R(2, 5)").unwrap();
+        assert_eq!(c, Integer::from(31u32));
+    }
+
+    // ── Additional Tier Tests ────────────────────────────────────────
+
+    /// Verify tier-1 skips Wagstaff primes (no deterministic proof exists).
+    ///
+    /// Wagstaff primes (2^p+1)/3 have no known deterministic primality test.
+    /// All Wagstaff results are PRP only, so tier-1 should skip with a
+    /// message mentioning "Wagstaff".
+    #[test]
+    fn tier1_skips_wagstaff() {
+        // Wagstaff has no deterministic proof
+        let c = Integer::from(683u32); // (2^11+1)/3
+        match verify_tier1("wagstaff", "(2^11+1)/3", &c, "deterministic") {
+            VerifyResult::Skipped { reason } => {
+                assert!(reason.contains("Wagstaff"), "Should mention Wagstaff: {}", reason);
+            }
+            other => panic!("Expected Skipped for wagstaff, got {:?}", other),
+        }
+    }
+
+    /// Verify tier-1 skips palindromic primes (no form-specific proof).
+    #[test]
+    fn tier1_skips_palindromic() {
+        let c = Integer::from(10301u32);
+        match verify_tier1("palindromic", "10301", &c, "deterministic") {
+            VerifyResult::Skipped { .. } => {}
+            other => panic!("Expected Skipped for palindromic, got {:?}", other),
+        }
+    }
+
+    /// Verify tier-1 re-proves 7#+1 = 211 via Pocklington (primorial prime).
+    /// 7# = 210 = 2*3*5*7, so N-1 = 210 has fully known factorization.
+    #[test]
+    fn tier1_primorial_plus() {
+        // 7# + 1 = 211 (prime)
+        let c = Integer::from(211u32);
+        match verify_tier1("primorial", "7# + 1", &c, "deterministic") {
+            VerifyResult::Verified { tier, .. } => assert_eq!(tier, 1),
+            other => panic!("Expected Verified for 7#+1=211, got {:?}", other),
+        }
+    }
+
+    /// Verify tier-1 re-proves 5#-1 = 29 via Morrison (primorial prime).
+    /// N+1 = 5# = 30 = 2*3*5, fully factored for Morrison's proof.
+    #[test]
+    fn tier1_primorial_minus() {
+        // 5# - 1 = 29 (prime)
+        let c = Integer::from(29u32);
+        match verify_tier1("primorial", "5# - 1", &c, "deterministic") {
+            VerifyResult::Verified { tier, .. } => assert_eq!(tier, 1),
+            other => panic!("Expected Verified for 5#-1=29, got {:?}", other),
+        }
+    }
+
+    /// Verify tier-2 accepts Mersenne prime M_13 = 2^13-1 = 8191.
+    /// OEIS A000668: known Mersenne primes.
+    #[test]
+    fn tier2_verifies_mersenne_prime() {
+        // 2^13 - 1 = 8191 (Mersenne prime)
+        let c = Integer::from(8191u32);
+        match verify_tier2(&c) {
+            VerifyResult::Verified { tier, .. } => assert_eq!(tier, 2),
+            other => panic!("Expected Verified for Mersenne prime 8191, got {:?}", other),
+        }
+    }
+
+    /// Verify tier-2 rejects Fermat pseudoprime 341 = 11*31.
+    ///
+    /// 341 is the smallest pseudoprime to base 2: 2^340 = 1 (mod 341)
+    /// despite 341 being composite (OEIS A001567). The BPSW test or
+    /// trial division catches it.
+    #[test]
+    fn tier2_rejects_fermat_pseudoprime() {
+        // 341 = 11 * 31, a Fermat pseudoprime to base 2
+        let c = Integer::from(341u32);
+        match verify_tier2(&c) {
+            VerifyResult::Failed { .. } => {}
+            other => panic!("Expected Failed for pseudoprime 341, got {:?}", other),
+        }
+    }
+
+    /// Verify tier-2 catches 6 via trial division (first pipeline step).
+    /// Small composites with small factors are caught before any MR test runs.
+    #[test]
+    fn tier2_rejects_small_composite_via_trial_division() {
+        // 6 should be caught by has_small_factor
+        let c = Integer::from(6u32);
+        match verify_tier2(&c) {
+            VerifyResult::Failed { reason } => {
+                assert!(reason.contains("small factor"), "Should fail via trial division: {}", reason);
+            }
+            other => panic!("Expected Failed for 6, got {:?}", other),
+        }
+    }
+
+    /// Verify tier-2 accepts 999999937 (the largest 9-digit prime).
+    /// Tests that the full BPSW + 10-round MR pipeline works for larger values.
+    #[test]
+    fn tier2_verifies_large_prime() {
+        // A larger prime: 999999937 (largest 9-digit prime)
+        let c = Integer::from(999999937u32);
+        match verify_tier2(&c) {
+            VerifyResult::Verified { tier, .. } => assert_eq!(tier, 2),
+            other => panic!("Expected Verified for 999999937, got {:?}", other),
+        }
+    }
+
+    // ── Full Pipeline Additional Tests ───────────────────────────────
+
+    /// Verify full pipeline for 7!-1 = 5039 (factorial prime, OEIS A002982).
+    /// Pipeline: reconstruct -> tier-1 Morrison proof -> verified.
+    #[test]
+    fn verify_prime_factorial_minus() {
+        // 7!-1 = 5039 (prime)
+        let detail = PrimeDetail {
+            id: 10,
+            form: "factorial".into(),
+            expression: "7! - 1".into(),
+            digits: 4,
+            found_at: chrono::Utc::now(),
+            search_params: "{}".into(),
+            proof_method: "deterministic".into(),
+        };
+        match verify_prime(&detail) {
+            VerifyResult::Verified { tier, .. } => assert_eq!(tier, 1),
+            other => panic!("Expected Verified tier 1 for 7!-1, got {:?}", other),
+        }
+    }
+
+    /// Verify full pipeline for Wagstaff (2^11+1)/3 = 683 (skips to tier 2).
+    ///
+    /// Wagstaff has no tier-1 proof, and proof_method is "probabilistic",
+    /// so the pipeline falls through to tier-2 BPSW+MR verification.
+    #[test]
+    fn verify_prime_wagstaff_probabilistic() {
+        // (2^11+1)/3 = 683 (prime), wagstaff skips tier 1 → tier 2
+        let detail = PrimeDetail {
+            id: 11,
+            form: "wagstaff".into(),
+            expression: "(2^11+1)/3".into(),
+            digits: 3,
+            found_at: chrono::Utc::now(),
+            search_params: "{}".into(),
+            proof_method: "probabilistic".into(),
+        };
+        match verify_prime(&detail) {
+            VerifyResult::Verified { tier, .. } => assert_eq!(tier, 2),
+            other => panic!("Expected Verified tier 2 for Wagstaff, got {:?}", other),
+        }
+    }
+
+    /// Verify full pipeline fails gracefully on an unparseable expression.
+    /// The reconstruction step should fail, returning Failed with "reconstruct" reason.
+    #[test]
+    fn verify_prime_invalid_expression() {
+        let detail = PrimeDetail {
+            id: 12,
+            form: "factorial".into(),
+            expression: "garbage".into(),
+            digits: 1,
+            found_at: chrono::Utc::now(),
+            search_params: "{}".into(),
+            proof_method: "deterministic".into(),
+        };
+        match verify_prime(&detail) {
+            VerifyResult::Failed { reason } => {
+                assert!(reason.contains("reconstruct"), "Should fail on reconstruction: {}", reason);
+            }
+            other => panic!("Expected Failed for invalid expression, got {:?}", other),
+        }
+    }
+
+    // ── Provable Forms Exhaustive Check ──────────────────────────────
+
+    /// Verify the complete list of provable vs non-provable forms.
+    ///
+    /// Provable: factorial, primorial, near_repdigit, kbn, cullen_woodall,
+    /// carol_kynea, twin, sophie_germain, gen_fermat (9 forms).
+    /// Non-provable (PRP only): wagstaff, repunit, palindromic (3 forms).
+    #[test]
+    fn provable_forms_complete_list() {
+        // All provable forms should be recognized
+        let expected_provable = [
+            "factorial", "primorial", "near_repdigit", "kbn",
+            "cullen_woodall", "carol_kynea", "twin", "sophie_germain", "gen_fermat",
+        ];
+        for form in &expected_provable {
+            assert!(is_provable_form(form), "{} should be provable", form);
+        }
+        // Non-provable forms
+        let expected_non_provable = ["wagstaff", "repunit", "palindromic"];
+        for form in &expected_non_provable {
+            assert!(!is_provable_form(form), "{} should not be provable", form);
+        }
+    }
+
+    // ── Quorum Edge Cases ────────────────────────────────────────────
+
+    /// Verify negative trust levels default to double-checking (matched by _ arm).
+    /// Trust levels below 0 are invalid but should be handled gracefully.
+    #[test]
+    fn quorum_negative_trust_defaults_to_double() {
+        // Trust level below 0 should default to double-check (matched by _ arm)
+        assert_eq!(required_quorum(-1, "kbn"), 2);
+        assert_eq!(required_quorum(-5, "factorial"), 2);
+    }
+
+    // ── PFGW Repunit Conversion Edge Cases ───────────────────────────
+
+    /// Verify repunit-to-PFGW conversion handles internal spaces correctly.
+    /// "R( 10 , 19 )" should still parse as "(10^19-1)/(9)".
+    #[test]
+    fn repunit_pfgw_format_with_spaces() {
+        let result = convert_repunit_to_pfgw("R( 10 , 19 )");
+        assert_eq!(result, "(10^19-1)/(9)");
     }
 }

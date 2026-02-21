@@ -7,6 +7,7 @@
 use crate::db::Database;
 use anyhow::Result;
 use serde::Serialize;
+use tracing::{info, warn};
 
 /// Known t5k.org Top 20 page IDs for each form.
 /// Used by `fetch_t5k_record` to scrape current world records.
@@ -146,16 +147,19 @@ pub async fn refresh_all_records(db: &Database) -> Result<u32> {
                 )
                 .await?;
                 updated += 1;
-                eprintln!(
-                    "Record updated: {} — {} ({} digits, by {})",
-                    form, record.expression, record.digits, record.holder
+                info!(
+                    form,
+                    expression = %record.expression,
+                    digits = record.digits,
+                    holder = %record.holder,
+                    "record updated"
                 );
             }
             Ok(None) => {
-                eprintln!("No t5k record found for form '{}'", form);
+                info!(form, "no t5k record found for form");
             }
             Err(e) => {
-                eprintln!("Error fetching record for '{}': {}", form, e);
+                warn!(form, error = %e, "error fetching record");
             }
         }
     }

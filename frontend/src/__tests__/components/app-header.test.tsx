@@ -1,3 +1,18 @@
+/**
+ * @file Tests for the AppHeader navigation component
+ * @module __tests__/components/app-header
+ *
+ * Validates the top-level navigation header that appears on every page of the
+ * darkreach dashboard. Tests cover navigation link rendering, WebSocket
+ * connection indicator (green/red dot), theme toggle button, running search
+ * count badge, and role-based navigation filtering (admin vs operator).
+ * The header adapts its visible links based on the user's role from
+ * Supabase Auth.
+ *
+ * @see {@link ../../components/app-header} Source component
+ * @see {@link ../../hooks/use-websocket} WsData type (connection status)
+ * @see {@link ../../contexts/auth-context} Role-based access control
+ */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -23,11 +38,15 @@ vi.mock("@/contexts/websocket-context", () => ({
   useWs: () => mockWsData,
 }));
 
+let mockRole: string | null = "admin";
+
 vi.mock("@/contexts/auth-context", () => ({
   useAuth: () => ({
     user: { email: "tester@example.com" },
     session: null,
     loading: false,
+    role: mockRole,
+    operatorId: null,
     signIn: vi.fn(),
     signOut: vi.fn(),
   }),
@@ -55,14 +74,18 @@ vi.mock("@/components/ui/sheet", () => ({
   SheetClose: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
 }));
 
+// Tests the AppHeader component: navigation links, WebSocket connection indicator,
+// theme toggle, search count badge, and role-based nav filtering (admin vs operator).
 describe("AppHeader", () => {
   beforeEach(() => {
     mockPathname = "/";
     mockTheme = "dark";
+    mockRole = "admin";
     mockWsData = { ...defaultWsData };
     vi.clearAllMocks();
   });
 
+  /** Verifies that all primary navigation links render (both desktop and mobile navs). */
   it("renders nav links", () => {
     render(<AppHeader />);
     // Both desktop and mobile navs render, so use getAllByText
@@ -73,6 +96,7 @@ describe("AppHeader", () => {
     expect(screen.getAllByText("Docs").length).toBeGreaterThanOrEqual(1);
   });
 
+  /** Verifies the green dot indicator when the WebSocket is connected. */
   it("shows connection indicator", () => {
     mockWsData = { ...defaultWsData, connected: true };
     const { container } = render(<AppHeader />);
@@ -80,6 +104,7 @@ describe("AppHeader", () => {
     expect(dot).toBeInTheDocument();
   });
 
+  /** Verifies the red dot indicator when the WebSocket is disconnected. */
   it("shows disconnected indicator", () => {
     mockWsData = { ...defaultWsData, connected: false };
     const { container } = render(<AppHeader />);
@@ -87,6 +112,7 @@ describe("AppHeader", () => {
     expect(dot).toBeInTheDocument();
   });
 
+  /** Verifies that clicking the theme toggle button invokes the toggleTheme callback. */
   it("calls toggleTheme on button click", async () => {
     const user = userEvent.setup();
     render(<AppHeader />);
@@ -96,6 +122,7 @@ describe("AppHeader", () => {
     expect(mockToggleTheme).toHaveBeenCalled();
   });
 
+  /** Verifies the numeric badge on the Searches tab showing count of running searches. */
   it("shows running search count badge", () => {
     mockWsData = {
       ...defaultWsData,
@@ -108,5 +135,25 @@ describe("AppHeader", () => {
     // Should show "1" badge on Searches tab
     const badges = screen.getAllByText("1");
     expect(badges.length).toBeGreaterThan(0);
+  });
+
+  /**
+   * Verifies role-based navigation: operators see only Dashboard, Browse,
+   * Leaderboard, and Docs. Admin-only links (Searches, Agents, Network,
+   * Logs, Releases) are hidden.
+   */
+  it("shows limited nav for operator role", () => {
+    mockRole = "operator";
+    render(<AppHeader />);
+    expect(screen.getAllByText("Dashboard").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText("Browse").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText("Leaderboard").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText("Docs").length).toBeGreaterThanOrEqual(1);
+    // Admin-only items should not appear
+    expect(screen.queryByText("Searches")).toBeNull();
+    expect(screen.queryByText("Agents")).toBeNull();
+    expect(screen.queryByText("Network")).toBeNull();
+    expect(screen.queryByText("Logs")).toBeNull();
+    expect(screen.queryByText("Releases")).toBeNull();
   });
 });

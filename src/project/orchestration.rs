@@ -8,6 +8,7 @@
 //! 5. Checks budget alerts
 
 use anyhow::Result;
+use tracing::{info, warn};
 
 use super::config::{Objective, PhaseConfig, ProjectConfig};
 use super::cost::extract_range_from_params;
@@ -163,7 +164,7 @@ pub async fn orchestrate_tick(db: &Database) -> Result<()> {
 
     for project in &projects {
         if let Err(e) = orchestrate_project(db, project).await {
-            eprintln!("Orchestration error for project '{}': {}", project.slug, e);
+            warn!(slug = %project.slug, error = %e, "orchestration error");
             db.insert_project_event(
                 project.id,
                 "error",
@@ -204,9 +205,12 @@ async fn orchestrate_project(db: &Database, project: &ProjectRow) -> Result<()> 
                     None,
                 )
                 .await?;
-                eprintln!(
-                    "Project '{}': phase '{}' completed ({} tested, {} found)",
-                    project.slug, phase.name, summary.total_tested, summary.total_found
+                info!(
+                    slug = %project.slug,
+                    phase = %phase.name,
+                    tested = summary.total_tested,
+                    found = summary.total_found,
+                    "phase completed"
                 );
             }
         }
@@ -234,9 +238,10 @@ async fn orchestrate_project(db: &Database, project: &ProjectRow) -> Result<()> 
                         None,
                     )
                     .await?;
-                    eprintln!(
-                        "Project '{}': generated follow-up phase '{}'",
-                        project.slug, followup.name
+                    info!(
+                        slug = %project.slug,
+                        phase = %followup.name,
+                        "generated follow-up phase"
                     );
                 }
                 Err(e) => {
@@ -269,9 +274,11 @@ async fn orchestrate_project(db: &Database, project: &ProjectRow) -> Result<()> 
         if should_activate(phase, &phases) {
             // Enforce infrastructure and worker requirements before activation
             if let Some(reason) = check_fleet_requirements(project, &fleet) {
-                eprintln!(
-                    "Project '{}': phase '{}' eligible but fleet insufficient: {}",
-                    project.slug, phase.name, reason
+                warn!(
+                    slug = %project.slug,
+                    phase = %phase.name,
+                    reason,
+                    "phase eligible but fleet insufficient"
                 );
                 db.insert_project_event(
                     project.id,
@@ -292,9 +299,12 @@ async fn orchestrate_project(db: &Database, project: &ProjectRow) -> Result<()> 
                 .and_then(serde_json::Value::as_u64)
             {
                 if (fleet.worker_count as u64) < recommended {
-                    eprintln!(
-                        "Project '{}': activating phase '{}' with {} workers (recommended: {})",
-                        project.slug, phase.name, fleet.worker_count, recommended
+                    warn!(
+                        slug = %project.slug,
+                        phase = %phase.name,
+                        workers = fleet.worker_count,
+                        recommended,
+                        "activating phase with fewer workers than recommended"
                     );
                 }
             }
@@ -352,9 +362,12 @@ async fn orchestrate_project(db: &Database, project: &ProjectRow) -> Result<()> 
             None,
         )
         .await?;
-        eprintln!(
-            "Project '{}' {}: {} tested, {} found",
-            project.slug, new_status, total_tested, total_found
+        info!(
+            slug = %project.slug,
+            status = new_status,
+            total_tested,
+            total_found,
+            "project completed"
         );
     }
 
@@ -376,9 +389,11 @@ async fn orchestrate_project(db: &Database, project: &ProjectRow) -> Result<()> 
                 None,
             )
             .await?;
-            eprintln!(
-                "Project '{}' paused: budget exceeded (${:.2} >= ${:.2})",
-                project.slug, total_cost_usd, max_cost
+            warn!(
+                slug = %project.slug,
+                cost_usd = format_args!("{:.2}", total_cost_usd),
+                max_cost_usd = format_args!("{:.2}", max_cost),
+                "project paused: budget exceeded"
             );
         } else if let Some(alert) = project
             .budget
@@ -672,10 +687,640 @@ async fn activate_phase(
     )
     .await?;
 
-    eprintln!(
-        "Project '{}': activated phase '{}' → search job {}",
-        project.slug, phase.name, job_id
+    info!(
+        slug = %project.slug,
+        phase = %phase.name,
+        job_id,
+        "activated phase"
     );
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::FleetSummary;
+    use crate::project::types::ProjectPhaseRow;
+
+    // ── Helper factories ────────────────────────────────────────
+
+    fn make_phase(
+        name: &str,
+        status: &str,
+        depends_on: Vec<String>,
+        activation_condition: Option<String>,
+        total_found: i64,
+    ) -> ProjectPhaseRow {
+        ProjectPhaseRow {
+            id: 1,
+            project_id: 1,
+            name: name.into(),
+            description: String::new(),
+            phase_order: 0,
+            status: status.into(),
+            search_params: serde_json::json!({"search_type": "factorial", "start": 1000, "end": 2000}),
+            block_size: 1000,
+            depends_on,
+            activation_condition,
+            completion_condition: "all_blocks_done".into(),
+            search_job_id: None,
+            total_tested: 1000,
+            total_found,
+            started_at: None,
+            completed_at: None,
+        }
+    }
+
+    fn make_project_row(infra: serde_json::Value) -> crate::project::ProjectRow {
+        crate::project::ProjectRow {
+            id: 1,
+            slug: "test".into(),
+            name: "Test".into(),
+            description: String::new(),
+            objective: "survey".into(),
+            form: "factorial".into(),
+            status: "active".into(),
+            toml_source: None,
+            target: serde_json::json!({}),
+            competitive: serde_json::json!(null),
+            strategy: serde_json::json!({}),
+            infrastructure: infra,
+            budget: serde_json::json!({}),
+            total_tested: 0,
+            total_found: 0,
+            best_prime_id: None,
+            best_digits: 0,
+            total_core_hours: 0.0,
+            total_cost_usd: 0.0,
+            created_at: chrono::Utc::now(),
+            started_at: None,
+            completed_at: None,
+            updated_at: chrono::Utc::now(),
+        }
+    }
+
+    fn make_fleet(workers: u32, cores: u32, ram_gb: u32, search_types: Vec<String>) -> FleetSummary {
+        FleetSummary {
+            worker_count: workers,
+            total_cores: cores,
+            max_ram_gb: ram_gb,
+            active_search_types: search_types,
+        }
+    }
+
+    // ── is_phase_complete ───────────────────────────────────────
+
+    #[test]
+    fn phase_complete_all_blocks_done_when_no_remaining() {
+        let summary = crate::db::JobBlockSummary {
+            available: 0,
+            claimed: 0,
+            completed: 50,
+            failed: 0,
+            total_tested: 50000,
+            total_found: 3,
+        };
+        assert!(is_phase_complete("all_blocks_done", &summary));
+    }
+
+    #[test]
+    fn phase_not_complete_when_blocks_still_claimed() {
+        let summary = crate::db::JobBlockSummary {
+            available: 0,
+            claimed: 2,
+            completed: 8,
+            failed: 0,
+            total_tested: 8000,
+            total_found: 0,
+        };
+        assert!(!is_phase_complete("all_blocks_done", &summary));
+    }
+
+    #[test]
+    fn phase_not_complete_when_blocks_still_available() {
+        let summary = crate::db::JobBlockSummary {
+            available: 5,
+            claimed: 0,
+            completed: 5,
+            failed: 0,
+            total_tested: 5000,
+            total_found: 0,
+        };
+        assert!(!is_phase_complete("all_blocks_done", &summary));
+    }
+
+    #[test]
+    fn phase_complete_first_prime_found() {
+        let summary = crate::db::JobBlockSummary {
+            available: 10,
+            claimed: 2,
+            completed: 3,
+            failed: 0,
+            total_tested: 3000,
+            total_found: 1,
+        };
+        assert!(is_phase_complete("first_prime_found", &summary));
+    }
+
+    #[test]
+    fn phase_not_complete_first_prime_not_found() {
+        let summary = crate::db::JobBlockSummary {
+            available: 5,
+            claimed: 3,
+            completed: 2,
+            failed: 0,
+            total_tested: 2000,
+            total_found: 0,
+        };
+        assert!(!is_phase_complete("first_prime_found", &summary));
+    }
+
+    #[test]
+    fn phase_complete_unknown_condition_treated_as_all_blocks_done() {
+        let summary = crate::db::JobBlockSummary {
+            available: 0,
+            claimed: 0,
+            completed: 10,
+            failed: 0,
+            total_tested: 10000,
+            total_found: 0,
+        };
+        assert!(is_phase_complete("some_unknown_condition", &summary));
+    }
+
+    #[test]
+    fn phase_not_complete_unknown_condition_with_remaining() {
+        let summary = crate::db::JobBlockSummary {
+            available: 1,
+            claimed: 0,
+            completed: 9,
+            failed: 0,
+            total_tested: 9000,
+            total_found: 5,
+        };
+        assert!(!is_phase_complete("some_unknown_condition", &summary));
+    }
+
+    // ── should_activate ─────────────────────────────────────────
+
+    #[test]
+    fn activate_no_dependencies() {
+        let phase = make_phase("sweep", "pending", vec![], None, 0);
+        assert!(should_activate(&phase, &[phase.clone()]));
+    }
+
+    #[test]
+    fn activate_met_dependency() {
+        let sweep = make_phase("sweep", "completed", vec![], None, 5);
+        let extend = make_phase("extend", "pending", vec!["sweep".into()], None, 0);
+        assert!(should_activate(&extend, &[sweep, extend.clone()]));
+    }
+
+    #[test]
+    fn activate_unmet_dependency_active() {
+        let sweep = make_phase("sweep", "active", vec![], None, 0);
+        let extend = make_phase("extend", "pending", vec!["sweep".into()], None, 0);
+        assert!(!should_activate(&extend, &[sweep, extend.clone()]));
+    }
+
+    #[test]
+    fn activate_unmet_dependency_pending() {
+        let sweep = make_phase("sweep", "pending", vec![], None, 0);
+        let extend = make_phase("extend", "pending", vec!["sweep".into()], None, 0);
+        assert!(!should_activate(&extend, &[sweep, extend.clone()]));
+    }
+
+    #[test]
+    fn activate_missing_dependency() {
+        // Phase depends on "nonexistent" which is not in all_phases
+        let phase = make_phase("extend", "pending", vec!["nonexistent".into()], None, 0);
+        assert!(!should_activate(&phase, &[phase.clone()]));
+    }
+
+    #[test]
+    fn activate_condition_previous_found_zero_satisfied() {
+        let sweep = make_phase("sweep", "completed", vec![], None, 0); // found=0
+        let extend = make_phase(
+            "extend",
+            "pending",
+            vec!["sweep".into()],
+            Some("previous_phase_found_zero".into()),
+            0,
+        );
+        assert!(should_activate(&extend, &[sweep, extend.clone()]));
+    }
+
+    #[test]
+    fn activate_condition_previous_found_zero_not_satisfied() {
+        let sweep = make_phase("sweep", "completed", vec![], None, 5); // found=5
+        let extend = make_phase(
+            "extend",
+            "pending",
+            vec!["sweep".into()],
+            Some("previous_phase_found_zero".into()),
+            0,
+        );
+        assert!(!should_activate(&extend, &[sweep, extend.clone()]));
+    }
+
+    #[test]
+    fn activate_condition_previous_found_prime_satisfied() {
+        let sweep = make_phase("sweep", "completed", vec![], None, 3); // found=3
+        let verify = make_phase(
+            "verify",
+            "pending",
+            vec!["sweep".into()],
+            Some("previous_phase_found_prime".into()),
+            0,
+        );
+        assert!(should_activate(&verify, &[sweep, verify.clone()]));
+    }
+
+    #[test]
+    fn activate_condition_previous_found_prime_not_satisfied() {
+        let sweep = make_phase("sweep", "completed", vec![], None, 0); // found=0
+        let verify = make_phase(
+            "verify",
+            "pending",
+            vec!["sweep".into()],
+            Some("previous_phase_found_prime".into()),
+            0,
+        );
+        assert!(!should_activate(&verify, &[sweep, verify.clone()]));
+    }
+
+    #[test]
+    fn activate_unknown_condition_passes() {
+        let sweep = make_phase("sweep", "completed", vec![], None, 5);
+        let next = make_phase(
+            "next",
+            "pending",
+            vec!["sweep".into()],
+            Some("unknown_condition_xyz".into()),
+            0,
+        );
+        // Unknown conditions default to true (match _ => {})
+        assert!(should_activate(&next, &[sweep, next.clone()]));
+    }
+
+    #[test]
+    fn activate_multiple_dependencies_all_met() {
+        let a = make_phase("a", "completed", vec![], None, 1);
+        let b = make_phase("b", "completed", vec![], None, 2);
+        let c = make_phase(
+            "c",
+            "pending",
+            vec!["a".into(), "b".into()],
+            None,
+            0,
+        );
+        assert!(should_activate(&c, &[a, b, c.clone()]));
+    }
+
+    #[test]
+    fn activate_multiple_dependencies_one_unmet() {
+        let a = make_phase("a", "completed", vec![], None, 1);
+        let b = make_phase("b", "active", vec![], None, 0);
+        let c = make_phase(
+            "c",
+            "pending",
+            vec!["a".into(), "b".into()],
+            None,
+            0,
+        );
+        assert!(!should_activate(&c, &[a, b, c.clone()]));
+    }
+
+    // ── generate_followup_phase ─────────────────────────────────
+
+    #[test]
+    fn followup_generated_with_start_end_keys() {
+        let project = make_project_row(serde_json::json!(null));
+        let phase = make_phase("sweep", "completed", vec![], None, 0);
+        let result = generate_followup_phase(&project, &phase, &[phase.clone()]);
+        assert!(result.is_some());
+        let followup = result.unwrap();
+        assert_eq!(followup.name, "sweep-extend");
+        let (start, end) = extract_range_from_params(&followup.search_params);
+        assert_eq!(start, 2001);
+        assert_eq!(end, 3001);
+    }
+
+    #[test]
+    fn followup_skipped_when_primes_found() {
+        let project = make_project_row(serde_json::json!(null));
+        let phase = make_phase("sweep", "completed", vec![], None, 5);
+        assert!(generate_followup_phase(&project, &phase, &[phase.clone()]).is_none());
+    }
+
+    #[test]
+    fn followup_prevented_for_extend_phase() {
+        let project = make_project_row(serde_json::json!(null));
+        let mut phase = make_phase("sweep-extend", "completed", vec![], None, 0);
+        phase.search_params = serde_json::json!({"search_type": "factorial", "start": 2001, "end": 3001});
+        assert!(generate_followup_phase(&project, &phase, &[phase.clone()]).is_none());
+    }
+
+    #[test]
+    fn followup_prevented_when_already_exists() {
+        let project = make_project_row(serde_json::json!(null));
+        let sweep = make_phase("sweep", "completed", vec![], None, 0);
+        let extend = make_phase("sweep-extend", "pending", vec!["sweep".into()], None, 0);
+        assert!(generate_followup_phase(&project, &sweep, &[sweep.clone(), extend]).is_none());
+    }
+
+    #[test]
+    fn followup_uses_min_n_max_n_keys() {
+        let project = make_project_row(serde_json::json!(null));
+        let mut phase = make_phase("sweep", "completed", vec![], None, 0);
+        phase.search_params = serde_json::json!({
+            "search_type": "kbn",
+            "k": 3,
+            "base": 2,
+            "min_n": 100000,
+            "max_n": 200000,
+        });
+        let followup = generate_followup_phase(&project, &phase, &[phase.clone()]).unwrap();
+        let (start, end) = extract_range_from_params(&followup.search_params);
+        assert_eq!(start, 200001);
+        assert_eq!(end, 300001);
+        // Verify extra params preserved
+        assert_eq!(followup.search_params["k"], 3);
+        assert_eq!(followup.search_params["base"], 2);
+    }
+
+    #[test]
+    fn followup_uses_min_exp_max_exp_keys() {
+        let project = make_project_row(serde_json::json!(null));
+        let mut phase = make_phase("sweep", "completed", vec![], None, 0);
+        phase.search_params = serde_json::json!({
+            "search_type": "wagstaff",
+            "min_exp": 13000000,
+            "max_exp": 14000000,
+        });
+        let followup = generate_followup_phase(&project, &phase, &[phase.clone()]).unwrap();
+        let (start, end) = extract_range_from_params(&followup.search_params);
+        assert_eq!(start, 14000001);
+        assert_eq!(end, 15000001);
+    }
+
+    #[test]
+    fn followup_uses_min_digits_max_digits_keys() {
+        let project = make_project_row(serde_json::json!(null));
+        let mut phase = make_phase("sweep", "completed", vec![], None, 0);
+        phase.search_params = serde_json::json!({
+            "search_type": "palindromic",
+            "min_digits": 1,
+            "max_digits": 11,
+        });
+        let followup = generate_followup_phase(&project, &phase, &[phase.clone()]).unwrap();
+        let (start, end) = extract_range_from_params(&followup.search_params);
+        assert_eq!(start, 12);
+        assert_eq!(end, 22);
+    }
+
+    #[test]
+    fn followup_preserves_block_size_and_completion() {
+        let project = make_project_row(serde_json::json!(null));
+        let mut phase = make_phase("sweep", "completed", vec![], None, 0);
+        phase.block_size = 5000;
+        phase.completion_condition = "first_prime_found".into();
+        let followup = generate_followup_phase(&project, &phase, &[phase.clone()]).unwrap();
+        assert_eq!(followup.block_size, Some(5000));
+        assert_eq!(followup.completion, "first_prime_found");
+    }
+
+    #[test]
+    fn followup_depends_on_completed_phase() {
+        let project = make_project_row(serde_json::json!(null));
+        let phase = make_phase("sweep", "completed", vec![], None, 0);
+        let followup = generate_followup_phase(&project, &phase, &[phase.clone()]).unwrap();
+        assert_eq!(followup.depends_on, Some(vec!["sweep".to_string()]));
+        assert_eq!(followup.activation_condition, Some("previous_phase_found_zero".to_string()));
+    }
+
+    #[test]
+    fn followup_not_generated_for_zero_span() {
+        let project = make_project_row(serde_json::json!(null));
+        let mut phase = make_phase("sweep", "completed", vec![], None, 0);
+        // start == end → span is 0
+        phase.search_params = serde_json::json!({"search_type": "factorial", "start": 100, "end": 100});
+        assert!(generate_followup_phase(&project, &phase, &[phase.clone()]).is_none());
+    }
+
+    // ── generate_auto_strategy ──────────────────────────────────
+
+    fn make_config(form: &str, objective: Objective, range_start: Option<u64>, range_end: Option<u64>) -> ProjectConfig {
+        ProjectConfig {
+            project: super::super::config::ProjectMeta {
+                name: "test".into(),
+                description: String::new(),
+                objective,
+                form: form.into(),
+                author: String::new(),
+                tags: vec![],
+            },
+            target: super::super::config::TargetConfig {
+                target_digits: None,
+                range_start,
+                range_end,
+            },
+            competitive: None,
+            strategy: super::super::config::StrategyConfig::default(),
+            infrastructure: None,
+            budget: None,
+            workers: None,
+        }
+    }
+
+    #[test]
+    fn auto_strategy_factorial_record_single_phase() {
+        let config = make_config("factorial", Objective::Record, Some(500), Some(5500));
+        let phases = generate_auto_strategy(&config);
+        assert_eq!(phases.len(), 1);
+        assert_eq!(phases[0].name, "sweep");
+        assert_eq!(phases[0].completion, "all_blocks_done");
+        assert_eq!(phases[0].block_size, Some(100));
+        // Range should match config
+        let (s, e) = extract_range_from_params(&phases[0].search_params);
+        assert_eq!(s, 500);
+        assert_eq!(e, 5500);
+    }
+
+    #[test]
+    fn auto_strategy_factorial_survey_single_phase() {
+        let config = make_config("factorial", Objective::Survey, Some(1), Some(500));
+        let phases = generate_auto_strategy(&config);
+        assert_eq!(phases.len(), 1);
+        assert_eq!(phases[0].name, "survey");
+        let (s, e) = extract_range_from_params(&phases[0].search_params);
+        assert_eq!(s, 1);
+        assert_eq!(e, 500);
+    }
+
+    #[test]
+    fn auto_strategy_wagstaff_record_two_phases() {
+        let config = make_config("wagstaff", Objective::Record, Some(14_000_000), Some(20_000_000));
+        let phases = generate_auto_strategy(&config);
+        assert_eq!(phases.len(), 2);
+        assert_eq!(phases[0].name, "sweep");
+        assert_eq!(phases[1].name, "extend");
+        assert_eq!(phases[1].depends_on, Some(vec!["sweep".to_string()]));
+        assert_eq!(phases[1].activation_condition, Some("previous_phase_found_zero".to_string()));
+        // Sweep covers first half, extend covers second half
+        let (s1, e1) = extract_range_from_params(&phases[0].search_params);
+        let (s2, e2) = extract_range_from_params(&phases[1].search_params);
+        assert_eq!(s1, 14_000_000);
+        assert!(e1 < e2); // sweep ends before extend
+        assert_eq!(e2, 20_000_000);
+    }
+
+    #[test]
+    fn auto_strategy_kbn_single_phase() {
+        let config = make_config("kbn", Objective::Survey, Some(1), Some(500_000));
+        let phases = generate_auto_strategy(&config);
+        assert_eq!(phases.len(), 1);
+        assert_eq!(phases[0].name, "sweep");
+        assert_eq!(phases[0].block_size, Some(100_000));
+        // Should include k and base defaults
+        assert!(phases[0].search_params.get("k").is_some());
+        assert!(phases[0].search_params.get("base").is_some());
+    }
+
+    #[test]
+    fn auto_strategy_twin_same_as_kbn() {
+        let config = make_config("twin", Objective::Survey, Some(1), Some(100_000));
+        let phases = generate_auto_strategy(&config);
+        assert_eq!(phases.len(), 1);
+        assert_eq!(phases[0].name, "sweep");
+    }
+
+    #[test]
+    fn auto_strategy_sophie_germain() {
+        let config = make_config("sophie_germain", Objective::Record, Some(100), Some(50_000));
+        let phases = generate_auto_strategy(&config);
+        assert_eq!(phases.len(), 1);
+        assert_eq!(phases[0].name, "sweep");
+    }
+
+    #[test]
+    fn auto_strategy_palindromic() {
+        let config = make_config("palindromic", Objective::Survey, Some(1), Some(21));
+        let phases = generate_auto_strategy(&config);
+        assert_eq!(phases.len(), 1);
+        assert_eq!(phases[0].name, "sweep");
+        assert_eq!(phases[0].block_size, Some(2));
+        let (s, e) = extract_range_from_params(&phases[0].search_params);
+        assert_eq!(s, 1);
+        assert_eq!(e, 21);
+    }
+
+    #[test]
+    fn auto_strategy_near_repdigit() {
+        let config = make_config("near_repdigit", Objective::Survey, Some(3), Some(15));
+        let phases = generate_auto_strategy(&config);
+        assert_eq!(phases.len(), 1);
+        assert_eq!(phases[0].name, "sweep");
+    }
+
+    #[test]
+    fn auto_strategy_generic_form() {
+        let config = make_config("repunit", Objective::Custom, Some(100), Some(5000));
+        let phases = generate_auto_strategy(&config);
+        assert_eq!(phases.len(), 1);
+        assert_eq!(phases[0].name, "sweep");
+        assert_eq!(phases[0].block_size, Some(1000));
+    }
+
+    #[test]
+    fn auto_strategy_uses_defaults_when_no_range() {
+        let config = make_config("factorial", Objective::Record, None, None);
+        let phases = generate_auto_strategy(&config);
+        assert_eq!(phases.len(), 1);
+        // Should use default start=1000
+        let (s, _e) = extract_range_from_params(&phases[0].search_params);
+        assert_eq!(s, 1000);
+    }
+
+    // ── check_fleet_requirements ────────────────────────────────
+
+    #[test]
+    fn fleet_sufficient_no_requirements() {
+        let project = make_project_row(serde_json::json!(null));
+        let fleet = make_fleet(2, 16, 32, vec!["factorial".into()]);
+        assert!(check_fleet_requirements(&project, &fleet).is_none());
+    }
+
+    #[test]
+    fn fleet_sufficient_all_requirements_met() {
+        let project = make_project_row(serde_json::json!({
+            "min_workers": 2,
+            "min_cores": 16,
+            "min_ram_gb": 32,
+            "required_tools": ["factorial"],
+        }));
+        let fleet = make_fleet(2, 16, 32, vec!["factorial".into()]);
+        assert!(check_fleet_requirements(&project, &fleet).is_none());
+    }
+
+    #[test]
+    fn fleet_insufficient_workers() {
+        let project = make_project_row(serde_json::json!({"min_workers": 4}));
+        let fleet = make_fleet(2, 16, 32, vec![]);
+        let reason = check_fleet_requirements(&project, &fleet);
+        assert!(reason.is_some());
+        assert!(reason.unwrap().contains("workers"));
+    }
+
+    #[test]
+    fn fleet_insufficient_cores() {
+        let project = make_project_row(serde_json::json!({"min_cores": 64}));
+        let fleet = make_fleet(4, 32, 64, vec![]);
+        let reason = check_fleet_requirements(&project, &fleet);
+        assert!(reason.is_some());
+        assert!(reason.unwrap().contains("cores"));
+    }
+
+    #[test]
+    fn fleet_insufficient_ram() {
+        let project = make_project_row(serde_json::json!({"min_ram_gb": 128}));
+        let fleet = make_fleet(4, 64, 64, vec![]);
+        let reason = check_fleet_requirements(&project, &fleet);
+        assert!(reason.is_some());
+        assert!(reason.unwrap().contains("RAM"));
+    }
+
+    #[test]
+    fn fleet_missing_required_tool() {
+        let project = make_project_row(serde_json::json!({"required_tools": ["gwnum"]}));
+        let fleet = make_fleet(4, 64, 64, vec!["factorial".into()]);
+        let reason = check_fleet_requirements(&project, &fleet);
+        assert!(reason.is_some());
+        assert!(reason.unwrap().contains("gwnum"));
+    }
+
+    #[test]
+    fn fleet_tool_matched_by_substring() {
+        // required_tools checks if fleet active_search_types contain the tool name
+        let project = make_project_row(serde_json::json!({"required_tools": ["factorial"]}));
+        let fleet = make_fleet(1, 8, 16, vec!["factorial-search".into()]);
+        // "factorial-search" contains "factorial", so this should pass
+        assert!(check_fleet_requirements(&project, &fleet).is_none());
+    }
+
+    #[test]
+    fn fleet_empty_fails_with_any_requirement() {
+        let project = make_project_row(serde_json::json!({"min_workers": 1}));
+        let fleet = make_fleet(0, 0, 0, vec![]);
+        assert!(check_fleet_requirements(&project, &fleet).is_some());
+    }
+
+    #[test]
+    fn fleet_empty_tool_string_ignored() {
+        // Empty string in required_tools should be skipped
+        let project = make_project_row(serde_json::json!({"required_tools": [""]}));
+        let fleet = make_fleet(1, 8, 16, vec![]);
+        assert!(check_fleet_requirements(&project, &fleet).is_none());
+    }
 }

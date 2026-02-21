@@ -6,7 +6,7 @@ The darkreach website (`website/`) is a multi-route Next.js 16 static export dep
 
 - **darkreach.ai** — Landing page, about, blog, download, leaderboard
 - **docs.darkreach.ai** — Documentation hub (5 pages + sidebar nav)
-- **status.darkreach.ai** — Service health and fleet overview
+- **status.darkreach.ai** — Service health and network overview
 
 ### What's Built
 
@@ -16,15 +16,15 @@ The darkreach website (`website/`) is a multi-route Next.js 16 static export dep
 | `/about` | Complete | Mission, timeline, tech stack, open source callout |
 | `/blog` | Complete | Blog index with 5 mocked posts |
 | `/download` | Complete | OS detection, tabbed install methods, system requirements |
-| `/download/server` | Complete | Coordinator setup guide with systemd config |
-| `/download/worker` | Complete | Worker deployment guide with scaling instructions |
+| `/download/server` | Complete | Dashboard/central service setup guide with systemd config |
+| `/download/worker` | Complete | Node deployment guide with scaling instructions |
 | `/docs` | Complete | Quick-links grid hub |
 | `/docs/getting-started` | Complete | Prerequisites → build → first search → checkpointing |
 | `/docs/architecture` | Complete | System diagram, engine/server/frontend breakdown |
 | `/docs/prime-forms` | Complete | All 12 forms with OEIS refs, algorithms, CLI commands |
 | `/docs/api` | Complete | REST endpoints + WebSocket events (mocked reference) |
 | `/docs/contributing` | Complete | Fork/PR workflow, code style, adding new forms |
-| `/status` | Complete | Service cards, fleet stats, 90-day uptime bars, incidents |
+| `/status` | Complete | Service cards, network stats, 90-day uptime bars, incidents |
 | `/leaderboard` | Complete | Individual + team rankings (mocked data) |
 
 ### Architecture
@@ -57,7 +57,8 @@ Lightweight UI primitives (no shadcn — minimal deps):
 
 ## Future Phases
 
-### Phase A: Live Data Integration
+### Phase A: Live Data Integration & Operator Onboarding
+- Add operator onboarding pages: registration flow, node setup guide, contribution dashboard
 - Connect stats bar to `api.darkreach.ai/api/stats` for real-time numbers
 - Connect status page to `api.darkreach.ai/api/status` for live health checks
 - Graceful fallback to static values when API is unreachable
@@ -125,8 +126,8 @@ website/
 │   │   ├── blog/page.tsx
 │   │   ├── download/
 │   │   │   ├── page.tsx            # Main download page
-│   │   │   ├── server/page.tsx     # Coordinator guide
-│   │   │   └── worker/page.tsx     # Worker guide
+│   │   │   ├── server/page.tsx     # Dashboard/central service guide
+│   │   │   └── worker/page.tsx     # Node deployment guide
 │   │   ├── docs/
 │   │   │   ├── layout.tsx          # Sidebar layout
 │   │   │   ├── page.tsx            # Docs hub
@@ -145,7 +146,7 @@ website/
 │   │   ├── hero.tsx                # AI narrative hero
 │   │   ├── feature-grid.tsx        # 3-col AI capabilities
 │   │   ├── pipeline.tsx            # 4-step pipeline visualization
-│   │   ├── cta-section.tsx         # Two-path CTA (worker/server)
+│   │   ├── cta-section.tsx         # Two-path CTA (operator/dashboard)
 │   │   ├── ... (other section components)
 │   │   ├── doc-sidebar.tsx         # Docs sidebar nav
 │   │   ├── status-card.tsx         # Service health card
@@ -157,7 +158,7 @@ website/
 │       ├── prime-forms.ts          # 12 form definitions
 │       ├── docs-nav.ts             # Sidebar navigation structure
 │       ├── install-commands.ts     # OS-specific install commands
-│       ├── status-data.ts          # Mock status/fleet data
+│       ├── status-data.ts          # Mock status/network data
 │       ├── leaderboard-data.ts     # Mock contributor rankings
 │       └── blog-posts.ts           # Mock blog posts
 ├── vercel.json                     # Subdomain rewrites

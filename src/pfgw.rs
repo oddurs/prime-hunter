@@ -285,8 +285,37 @@ pub fn parse_output(output: &str) -> PfgwResult {
 
 #[cfg(test)]
 mod tests {
+    //! Tests for PFGW subprocess output parsing and integration.
+    //!
+    //! Validates parse_output() against all known PFGW output patterns:
+    //! proven primes (Pocklington, Morrison, BLS, generic), probable primes
+    //! (PRP, 3-PRP), composites ("is not prime", "composite", "is not a
+    //! probable prime"), and edge cases (empty output, progress-only output,
+    //! very long unrecognized output truncation).
+    //!
+    //! ## PFGW Output Patterns
+    //!
+    //! | Output text | Result | is_deterministic |
+    //! |-------------|--------|-----------------|
+    //! | "is prime!" + "N-1" | Pocklington proof | true |
+    //! | "is prime!" + "N+1" | Morrison proof | true |
+    //! | "is prime!" + "BLS" | BLS proof | true |
+    //! | "is prime!" (alone) | Generic proof | true |
+    //! | "is a probable prime" | PRP | false |
+    //! | "PRP" | PRP | false |
+    //! | "is 3-PRP" | PRP (base-3) | false |
+    //! | "is not prime" | Composite | N/A |
+    //! | (unrecognized) | Unavailable | N/A |
+    //!
+    //! Integration tests (marked `#[ignore]`) require the pfgw64 binary
+    //! installed in PATH and test actual subprocess execution.
+
     use super::*;
 
+    // ── Proven Primes (Deterministic) ────────────────────────────────
+
+    /// Pocklington N-1 proof: PFGW outputs "is prime! (N-1 test)" when the
+    /// -tp flag produces a complete factorization of N-1.
     #[test]
     fn parse_proven_prime_pocklington() {
         let output = "100!+1 is prime! (N-1 test)";
@@ -302,6 +331,8 @@ mod tests {
         }
     }
 
+    /// Morrison N+1 proof: PFGW outputs "is prime! (N+1 test)" when the
+    /// -tm flag produces a complete factorization of N+1.
     #[test]
     fn parse_proven_prime_morrison() {
         let output = "100!-1 is prime! (N+1 test)";
@@ -317,6 +348,9 @@ mod tests {
         }
     }
 
+    /// BLS (Brillhart-Lehmer-Selfridge) combined N-1/N+1 proof: used when
+    /// neither N-1 nor N+1 alone is sufficiently factored, but together
+    /// they provide enough to prove primality. Common for near-repdigit forms.
     #[test]
     fn parse_proven_prime_bls() {
         let output = "10^1001-1-4*(10^600+10^400) is prime! (BLS proof)";
@@ -332,6 +366,8 @@ mod tests {
         }
     }
 
+    /// Generic proof: "is prime!" without a named method. Falls back to
+    /// "PFGW/proof" as the method string.
     #[test]
     fn parse_proven_prime_generic() {
         let output = "12345 is prime!";
@@ -347,6 +383,11 @@ mod tests {
         }
     }
 
+    // ── Probable Primes (PRP) ──────────────────────────────────────
+
+    /// Standard PRP output: "is a probable prime". PFGW performs a strong
+    /// Fermat test but cannot provide a deterministic proof. Wagstaff
+    /// candidates always fall in this category (no known proof method).
     #[test]
     fn parse_probable_prime() {
         let output = "(2^42737+1)/3 is a probable prime";
@@ -360,6 +401,8 @@ mod tests {
         }
     }
 
+    /// Alternative PRP output: "PRP" appears at the end of a testing line.
+    /// Some PFGW versions use this shorter format.
     #[test]
     fn parse_prp_tag() {
         let output = "Testing (2^42737+1)/3 ... PRP";
@@ -373,6 +416,8 @@ mod tests {
         }
     }
 
+    /// Base-3 PRP: "is 3-PRP!" indicates a Fermat test with base 3 passed.
+    /// This is PFGW's default test base for Wagstaff and some other forms.
     #[test]
     fn parse_three_prp() {
         let output = "(2^127+1)/3 is 3-PRP!";
@@ -386,6 +431,10 @@ mod tests {
         }
     }
 
+    // ── Composites ────────────────────────────────────────────────
+
+    /// Standard composite output: "is not prime". PFGW confirmed the
+    /// candidate is composite via the Fermat test.
     #[test]
     fn parse_composite() {
         let output = "100!+1 is not prime";
@@ -395,6 +444,7 @@ mod tests {
         }
     }
 
+    /// Alternative composite output: just the word "composite" in the output.
     #[test]
     fn parse_composite_alt() {
         let output = "12345 composite";
@@ -404,6 +454,9 @@ mod tests {
         }
     }
 
+    /// "is not a probable prime" — the PRP test failed, confirming composite.
+    /// Distinguished from "is not prime" (deterministic) for logging purposes
+    /// but both map to PfgwResult::Composite.
     #[test]
     fn parse_not_probable_prime() {
         let output = "(2^29+1)/3 is not a probable prime";
@@ -413,6 +466,10 @@ mod tests {
         }
     }
 
+    // ── Edge Cases ────────────────────────────────────────────────
+
+    /// Unrecognized output returns Unavailable with the output text
+    /// included in the reason (for debugging PFGW version differences).
     #[test]
     fn parse_unknown_output() {
         let output = "some unexpected text";
@@ -424,6 +481,8 @@ mod tests {
         }
     }
 
+    /// Empty output (PFGW crashed or was killed before producing output)
+    /// returns Unavailable rather than panicking.
     #[test]
     fn parse_empty_output() {
         match parse_output("") {
@@ -432,6 +491,11 @@ mod tests {
         }
     }
 
+    // ── Digit Threshold ───────────────────────────────────────────
+
+    /// Validates the estimate_digits utility used for PFGW's min_digits
+    /// threshold check. Small numbers (7 = 1 digit) fall below 10K;
+    /// 2^100000 (~30103 digits) exceeds 10K.
     #[test]
     fn threshold_digit_check() {
         let small = rug::Integer::from(7u32);
@@ -444,6 +508,10 @@ mod tests {
         assert!(crate::estimate_digits(&large) > 10_000);
     }
 
+    // ── Integration Tests (require PFGW binary) ─────────────────
+
+    /// Tests PFGW execution with a known factorial prime: 11!+1 = 39916801.
+    /// Uses -tp (N-1 proof) mode since n!+1 has a fully factorable N-1 = n!.
     #[test]
     #[ignore] // Requires PFGW binary installed
     fn pfgw_integration_factorial_prime() {
@@ -461,6 +529,8 @@ mod tests {
         }
     }
 
+    /// Tests PFGW execution with a known Wagstaff prime: (2^5+1)/3 = 11.
+    /// Uses PRP mode since no deterministic proof exists for Wagstaff numbers.
     #[test]
     #[ignore] // Requires PFGW binary installed
     fn pfgw_integration_wagstaff_prime() {
@@ -479,6 +549,11 @@ mod tests {
         }
     }
 
+    // ── Malformed Output ──────────────────────────────────────────
+
+    /// PFGW sometimes outputs only progress lines (e.g., "Testing ... 47.1%")
+    /// with no final result line (e.g., killed by timeout). This must return
+    /// Unavailable, not panic or misparse as composite.
     #[test]
     fn parse_malformed_output_progress_only() {
         // PFGW sometimes outputs only progress lines with no result — should return Unavailable
@@ -495,6 +570,8 @@ mod tests {
         }
     }
 
+    /// Very long unrecognized output is truncated to 200 chars in the error
+    /// reason to prevent oversized log messages and error payloads.
     #[test]
     fn parse_very_long_output_truncated() {
         // Very long unrecognized output should be truncated in the reason
@@ -511,6 +588,7 @@ mod tests {
         }
     }
 
+    /// Tests PFGW with a Cullen prime: 1*2^1+1 = 3. Uses PRP mode.
     #[test]
     #[ignore] // Requires PFGW binary installed
     fn pfgw_integration_cullen_prime() {
@@ -528,6 +606,8 @@ mod tests {
         }
     }
 
+    /// Tests PFGW with a repunit: (10^7-1)/9 = 1111111 (composite, = 239*4649).
+    /// Verifies the PFGW input format for repunits works correctly.
     #[test]
     #[ignore] // Requires PFGW binary installed
     fn pfgw_integration_repunit_prime() {
@@ -545,6 +625,7 @@ mod tests {
         }
     }
 
+    /// Tests PFGW with a generalized Fermat prime: 2^4+1 = 17 (F2).
     #[test]
     #[ignore] // Requires PFGW binary installed
     fn pfgw_integration_gen_fermat_prime() {
@@ -562,6 +643,7 @@ mod tests {
         }
     }
 
+    /// Tests PFGW with a Carol prime: (2^7-1)^2-2 = 16127 (Carol n=7).
     #[test]
     #[ignore] // Requires PFGW binary installed
     fn pfgw_integration_carol_prime() {

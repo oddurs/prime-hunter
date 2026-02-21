@@ -12,7 +12,7 @@
 //! 4. `reclaim_stale_blocks` recovers blocks from crashed workers (runs every 30s)
 //! 5. `get_job_block_summary` aggregates block status for progress reporting
 
-use super::{Database, JobBlockSummary, SearchJobRow, WorkBlock};
+use super::{Database, JobBlockSummary, SearchJobRow, WorkBlock, WorkBlockDetails};
 use anyhow::Result;
 use serde_json::Value;
 
@@ -43,15 +43,32 @@ impl Database {
         .fetch_one(&mut *tx)
         .await?;
 
+        // Estimate block duration from the cost model for dynamic stale timeout
+        let estimated_duration_s: Option<i32> = {
+            use crate::project::{estimate_digits_for_form, secs_per_candidate};
+            let mid = ((range_start + range_end) / 2) as u64;
+            let avg_digits = estimate_digits_for_form(search_type, mid);
+            if avg_digits > 0 {
+                let spc = secs_per_candidate(search_type, avg_digits, false);
+                let candidates_per_block = block_size as f64;
+                let est = (spc * candidates_per_block).ceil() as i32;
+                if est > 0 { Some(est) } else { None }
+            } else {
+                None
+            }
+        };
+
         let mut start = range_start;
         while start < range_end {
             let end = (start + block_size).min(range_end);
             sqlx::query(
-                "INSERT INTO work_blocks (search_job_id, block_start, block_end) VALUES ($1, $2, $3)",
+                "INSERT INTO work_blocks (search_job_id, block_start, block_end, estimated_duration_s)
+                 VALUES ($1, $2, $3, $4)",
             )
             .bind(job_id)
             .bind(start)
             .bind(end)
+            .bind(estimated_duration_s)
             .execute(&mut *tx)
             .await?;
             start = end;
@@ -261,6 +278,24 @@ impl Database {
             .fetch_one(&self.pool)
             .await?;
         Ok(hours)
+    }
+
+    /// Get details of a completed work block for verification queue.
+    pub async fn get_work_block_details(
+        &self,
+        block_id: i64,
+    ) -> Result<Option<WorkBlockDetails>> {
+        let row = sqlx::query_as::<_, WorkBlockDetails>(
+            "SELECT id AS block_id, block_start, block_end,
+                    COALESCE(tested, 0) AS tested,
+                    COALESCE(found, 0) AS found,
+                    COALESCE(claimed_by, '') AS claimed_by
+             FROM work_blocks WHERE id = $1",
+        )
+        .bind(block_id)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row)
     }
 
     /// Link a search job to a project (set the FK on search_jobs).

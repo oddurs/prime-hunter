@@ -46,6 +46,7 @@ use std::path::Path;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Instant;
+use tracing::info;
 
 use crate::checkpoint::{self, Checkpoint};
 use crate::db::Database;
@@ -145,7 +146,7 @@ pub fn search(
     let search_count = all_primes.iter().filter(|&&p| p >= start).count();
 
     if search_count == 0 {
-        eprintln!("No primes in range [{}, {}]", start, end);
+        info!(start, end, "no primes in range");
         return Ok(());
     }
 
@@ -156,22 +157,15 @@ pub fn search(
     let sieve_limit = sieve::resolve_sieve_limit(sieve_limit, candidate_bits, n_range);
 
     let sieve_primes = sieve::generate_primes(sieve_limit);
-    eprintln!(
-        "Sieve initialized with {} primes up to {}",
-        sieve_primes.len(),
-        sieve_limit
-    );
-    eprintln!(
-        "Testing {} primes in range [{}, {}]",
-        search_count, start, end
-    );
+    info!(prime_count = sieve_primes.len(), sieve_limit, "sieve initialized");
+    info!(search_count, start, end, "testing primes in range");
 
     // Determine resume point from checkpoint
     let resume_prime = match checkpoint::load(checkpoint_path) {
         Some(Checkpoint::Primorial { last_prime, .. })
             if last_prime >= start && last_prime < end =>
         {
-            eprintln!("Resuming primorial search from after p={}", last_prime);
+            info!(last_prime, "resuming primorial search");
             last_prime
         }
         _ => 0,
@@ -191,27 +185,24 @@ pub fn search(
     // Use FLINT when available (3-10x faster via SIMD NTTs), otherwise GMP.
     let mut primorial = if resume_idx > 0 {
         let prev_prime = all_primes[resume_idx - 1];
-        eprintln!("Precomputing {}#...", prev_prime);
+        info!(prev_prime, "precomputing primorial");
         #[cfg(feature = "flint")]
         let p = {
-            eprintln!("  (using FLINT fmpz_primorial)");
+            info!("using FLINT fmpz_primorial");
             crate::flint::primorial(prev_prime)
         };
         #[cfg(not(feature = "flint"))]
         let p = Integer::from(Integer::primorial(prev_prime as u32));
-        eprintln!("Precomputation complete.");
+        info!("precomputation complete");
         p
     } else {
         Integer::from(1u32)
     };
 
     // Initialize modular sieve
-    eprintln!("Initializing modular sieve...");
+    info!("initializing modular sieve");
     let mut psieve = PrimorialSieve::new(&sieve_primes, &all_primes, resume_idx);
-    eprintln!(
-        "Modular sieve ready ({} active primes).",
-        psieve.entries.len()
-    );
+    info!(active_primes = psieve.entries.len(), "modular sieve ready");
 
     // Compute minimum prime where p# > sieve_limit, making the sieve safe
     let sieve_min_prime: u64 = {
@@ -226,7 +217,7 @@ pub fn search(
         }
         min_p
     };
-    eprintln!("Sieve active for p >= {}", sieve_min_prime);
+    info!(sieve_min_prime, "sieve active");
 
     let mut last_checkpoint = Instant::now();
     let mut sieved_out: u64 = 0;
@@ -371,9 +362,11 @@ pub fn search(
                         timestamp: Instant::now(),
                     });
                 } else {
-                    eprintln!(
-                        "*** PRIME FOUND: {} ({} digits, {}) ***",
-                        expr, digit_count, certainty
+                    info!(
+                        expression = %expr,
+                        digits = digit_count,
+                        certainty,
+                        "*** PRIME FOUND ***"
                     );
                 }
                 db.insert_prime_sync(
@@ -400,7 +393,7 @@ pub fn search(
                     end: Some(end),
                 },
             )?;
-            eprintln!("Checkpoint saved at p={} (sieved out: {})", p, sieved_out);
+            info!(p, sieved_out, "checkpoint saved");
             last_checkpoint = Instant::now();
         }
 
@@ -413,27 +406,70 @@ pub fn search(
                     end: Some(end),
                 },
             )?;
-            eprintln!("Stop requested by coordinator, checkpoint saved at p={}", p);
+            info!(p, "stop requested by coordinator, checkpoint saved");
             return Ok(());
         }
     }
 
     checkpoint::clear(checkpoint_path);
-    eprintln!("Primorial sieve eliminated {} candidates.", sieved_out);
+    info!(sieved_out, "primorial sieve eliminated candidates");
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
+    //! Tests for the primorial prime search module (p# +/- 1).
+    //!
+    //! ## Mathematical Form
+    //!
+    //! Primorial primes are primes of the form p# + 1 or p# - 1, where p# (p primorial)
+    //! is the product of all primes up to and including p. These are structurally
+    //! related to factorial primes but grow faster (by Chebyshev's theorem,
+    //! log2(p#) ~ p, so p# ~ 2^p).
+    //!
+    //! Known primorial prime exponents:
+    //!   - p# + 1 prime for p in {2, 3, 5, 7, 11, 31, 379, 1019, 1021, ...}
+    //!     (OEIS [A014545](https://oeis.org/A014545))
+    //!   - p# - 1 prime for p in {3, 5, 11, 13, 41, 89, 317, 337, ...}
+    //!     (OEIS [A057704](https://oeis.org/A057704))
+    //!
+    //! ## Key References
+    //!
+    //! - Caldwell & Gallot, "On the Primality of n! +/- 1 and 2*3*5*...*p +/- 1",
+    //!   Mathematics of Computation, 71(237), 2002.
+    //! - Chebyshev's theorem: theta(x) = sum_{p<=x} ln(p) ~ x, so p# ~ e^p.
+    //! - Pocklington N-1 proof for p#+1 and Morrison N+1 proof for p#-1:
+    //!   p# shares the same distinct prime factors as p! (all primes <= p).
+    //!
+    //! ## Testing Strategy
+    //!
+    //! 1. **Known primes**: Verify known primorial primes pass MR and known
+    //!    composites fail (e.g., 13#+1 = 30031 = 59*509).
+    //! 2. **Sieve correctness**: Verify modular sieve residues, prime removal,
+    //!    and composite detection.
+    //! 3. **Deterministic proofs**: Verify Pocklington/Morrison proofs work
+    //!    for primorial primes (reusing factorial proof infrastructure).
+    //! 4. **Edge cases**: Smallest primorial (2# = 2), empty ranges.
+
     use super::*;
     use crate::sieve;
 
-    /// Known primorial primes p#+1: p = 2, 3, 5, 7, 11, 31, 379, 1019, 1021
-    /// Known primorial primes p#-1: p = 3, 5, 11, 13, 41, 89, 317, 337
+    /// Helper: compute p primorial = product of all primes up to p.
+    ///
+    /// Known primorial prime exponents (OEIS A014545, A057704):
+    ///   - p#+1 prime: p in {2, 3, 5, 7, 11, 31, 379, 1019, 1021}
+    ///   - p#-1 prime: p in {3, 5, 11, 13, 41, 89, 317, 337}
     fn primorial(p: u64) -> Integer {
         Integer::from(Integer::primorial(p as u32))
     }
 
+    // ── Known Primes (OEIS A014545, A057704) ───────────────────────────
+
+    /// Verifies that known primorial primes of the +1 form pass Miller-Rabin.
+    ///
+    /// Tests p in {2, 3, 5, 7, 11, 31} from OEIS A014545. The larger known
+    /// exponents (379, 1019, 1021) are omitted as they produce numbers too
+    /// large for fast unit tests. 31# + 1 = 200560490131 is the largest tested.
     #[test]
     fn known_primorial_primes_plus() {
         for &p in &[2u64, 3, 5, 7, 11, 31] {
@@ -447,6 +483,10 @@ mod tests {
         }
     }
 
+    /// Verifies that known primorial primes of the -1 form pass Miller-Rabin.
+    ///
+    /// Tests p in {3, 5, 11, 13, 41, 89} from OEIS A057704. 89# - 1 has
+    /// approximately 36 digits, which is well within GMP's fast-test range.
     #[test]
     fn known_primorial_primes_minus() {
         for &p in &[3u64, 5, 11, 13, 41, 89] {
@@ -460,9 +500,14 @@ mod tests {
         }
     }
 
+    /// Verifies that 13# + 1 = 30031 = 59 * 509 is correctly identified as composite.
+    ///
+    /// This is a historically significant example: Euclid's proof that infinitely
+    /// many primes exist constructs p# + 1 and notes it has a prime factor not in
+    /// the original set. But p# + 1 itself need not be prime — 13# + 1 is the
+    /// first counterexample large enough to be non-trivially composite.
     #[test]
     fn known_primorial_composites_plus() {
-        // 13# + 1 = 30031 = 59 * 509
         let candidate = primorial(13) + 1u32;
         assert_eq!(
             candidate.is_probably_prime(25),
@@ -471,9 +516,13 @@ mod tests {
         );
     }
 
+    /// Verifies that 7# - 1 = 209 = 11 * 19 is correctly identified as composite.
+    ///
+    /// 7# = 2*3*5*7 = 210. 210 - 1 = 209 = 11 * 19. Note that both factors
+    /// (11 and 19) are primes > 7, consistent with the fact that p#-1 cannot
+    /// have any prime factor <= p (since p | p# and gcd(p#-1, p#) = 1).
     #[test]
     fn known_primorial_composites_minus() {
-        // 7# - 1 = 209 = 11 * 19
         let candidate = primorial(7) - 1u32;
         assert_eq!(
             candidate.is_probably_prime(25),
@@ -482,6 +531,15 @@ mod tests {
         );
     }
 
+    // ── Sieve Correctness ─────────────────────────────────────────────
+
+    /// Verifies that the primorial sieve never produces false positives.
+    ///
+    /// For each prime p in the search range where p# > sieve_limit (making the
+    /// sieve safe), if the sieve declares p#+1 or p#-1 composite, we verify
+    /// this by running Miller-Rabin on the actual candidate. A false positive
+    /// (sieve says composite but MR says prime) would indicate a residue
+    /// computation error in the sieve.
     #[test]
     fn sieve_correctly_eliminates() {
         let sieve_primes = sieve::generate_primes(10_000);
@@ -540,6 +598,18 @@ mod tests {
         }
     }
 
+    // ── Deterministic Proofs ───────────────────────────────────────────
+
+    /// Verifies that Pocklington N-1 proof works for 31# + 1.
+    ///
+    /// Pocklington's theorem (1914): if N-1 = F*R where F > sqrt(N) and F is
+    /// fully factored, then N is prime iff for each prime factor q of F, there
+    /// exists a base a such that a^(N-1) = 1 (mod N) and gcd(a^((N-1)/q) - 1, N) = 1.
+    ///
+    /// For p# + 1: N-1 = p#, which has complete factorization (all primes <= p).
+    /// Since p# is fully factored, Pocklington provides a deterministic proof.
+    /// This reuses `proof::pocklington_factorial_proof` because p# has the same
+    /// distinct prime factors as p!.
     #[test]
     fn pocklington_proves_primorial_plus() {
         let sieve_primes = sieve::generate_primes(1000);
@@ -553,6 +623,14 @@ mod tests {
         );
     }
 
+    /// Verifies that Morrison N+1 proof works for 89# - 1.
+    ///
+    /// Morrison's theorem (1975): if N+1 = F*R where F > sqrt(N) and F is
+    /// fully factored, then N is prime under certain Lucas sequence conditions.
+    ///
+    /// For p# - 1: N+1 = p#, fully factored. Morrison provides a deterministic
+    /// proof using Lucas sequences, dual to Pocklington's N-1 approach.
+    /// 89# - 1 is a large enough case (~36 digits) to be a meaningful test.
     #[test]
     fn morrison_proves_primorial_minus() {
         let sieve_primes = sieve::generate_primes(1000);
@@ -566,11 +644,17 @@ mod tests {
         );
     }
 
-    // ---- Sieve advance + residue tests ----
+    // ── Sieve Advance & Residue Tests ──────────────────────────────────
 
+    /// Verifies step-by-step primorial sieve residues against known values.
+    ///
+    /// Traces the primorial sequence: 2# = 2, 3# = 6, 5# = 30, 7# = 210.
+    /// After each advance, every sieve entry must hold exactly p# mod q.
+    /// Unlike the factorial sieve which advances by 1 each step, the primorial
+    /// sieve only advances on prime values, making the residue update
+    /// multiplication by a prime (not an arbitrary integer).
     #[test]
     fn primorial_sieve_advance_correct_residues() {
-        // Step-by-step primorial residues: 2# = 2, 3# = 6, 5# = 30, 7# = 210
         let sieve_primes = sieve::generate_primes(100);
         let all_primes = sieve::generate_primes(50);
 
@@ -601,9 +685,14 @@ mod tests {
         }
     }
 
+    /// Verifies that sieve prime q is removed when advancing past q (since q | q#).
+    ///
+    /// When the primorial includes q as a factor (i.e., q <= current prime p),
+    /// then q | p#, so p# mod q = 0 and the sieve entry becomes useless.
+    /// This tests removal of q=3 (after advancing through prime 3) and q=5
+    /// (after advancing through prime 5).
     #[test]
     fn primorial_sieve_removes_primes_correctly() {
-        // Advancing past prime q should remove q from entries (since q | q#)
         let sieve_primes: Vec<u64> = vec![3, 5, 7, 11, 13];
         let all_primes: Vec<u64> = vec![2, 3, 5, 7, 11, 13];
 
@@ -626,9 +715,16 @@ mod tests {
         );
     }
 
+    // ── Form Generation ─────────────────────────────────────────────────
+
+    /// Verifies that incremental primorial computation matches GMP's `Integer::primorial`.
+    ///
+    /// The search computes p# incrementally as p# = p * q# (where q is the
+    /// previous prime). This test validates the incremental approach against
+    /// GMP's direct computation for all primes up to 100. Any discrepancy
+    /// would cause incorrect candidate construction and potentially missed primes.
     #[test]
     fn primorial_values_match_gmp() {
-        // Verify incremental primorial matches GMP's Integer::primorial()
         let all_primes = sieve::generate_primes(100);
         let mut incremental = Integer::from(1u32);
         for &p in &all_primes {
@@ -642,10 +738,14 @@ mod tests {
         }
     }
 
+    /// Verifies that `check_composites` detects 13#+1 = 30031 = 59*509 as composite.
+    ///
+    /// This is a targeted test: we include 59 in the sieve primes, so when the
+    /// sieve checks 13# mod 59, it should find 13# mod 59 = 58 = 59-1, meaning
+    /// 59 | (13#+1). This validates the composite detection path specifically
+    /// for the Euclid-number counterexample.
     #[test]
     fn primorial_sieve_check_composites_detects_known() {
-        // 13#+1 = 30031 = 59*509 — should be detected as composite
-        // We need 59 in the sieve
         let sieve_primes: Vec<u64> = vec![59, 509, 997];
         let all_primes = sieve::generate_primes(13);
 
@@ -660,9 +760,16 @@ mod tests {
         );
     }
 
+    // ── Edge Cases ──────────────────────────────────────────────────────
+
+    /// Verifies the smallest primorial: 2# = 2.
+    ///
+    /// 2# + 1 = 3 (prime, the smallest primorial prime of the +1 form).
+    /// 2# - 1 = 1 (not prime by convention). This edge case ensures the
+    /// search handles the boundary where the primorial is smaller than all
+    /// but the trivial primes.
     #[test]
     fn primorial_prime_p2_smallest() {
-        // 2# + 1 = 3 (prime), 2# - 1 = 1 (not prime)
         let prim = primorial(2);
         assert_eq!(prim, 2);
         let plus = Integer::from(&prim + 1u32);
@@ -675,9 +782,14 @@ mod tests {
         assert_eq!(minus, 1);
     }
 
+    /// Verifies behavior when the search range contains no prime indices.
+    ///
+    /// The range [4, 4] contains no primes (4 is composite), so the search
+    /// should iterate over zero candidates. This validates the early-exit
+    /// path and prevents the code from attempting to compute a primorial
+    /// for a composite index.
     #[test]
     fn primorial_no_primes_in_range() {
-        // Range [4, 4] has no primes — the search should find 0 primes to iterate
         let all_primes = sieve::generate_primes(4);
         let count = all_primes.iter().filter(|&&p| p >= 4 && p <= 4).count();
         assert_eq!(count, 0, "Range [4,4] should contain no primes");

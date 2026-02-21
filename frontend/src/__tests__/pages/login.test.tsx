@@ -1,3 +1,17 @@
+/**
+ * @file Tests for the Login page
+ * @module __tests__/pages/login
+ *
+ * Validates the Login page at `/login`, which provides email/password
+ * authentication via Supabase Auth. The page is the only unauthenticated
+ * route in the application (AuthGuard redirects all other routes here).
+ * Tests verify form rendering (brand, email input, password input, submit
+ * button), form submission with credentials, error message display on
+ * failed sign-in, and loading state with disabled button.
+ *
+ * @see {@link ../../app/login/page} Source page
+ * @see {@link ../../contexts/auth-context} useAuth hook (signIn)
+ */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -15,6 +29,8 @@ vi.mock("@/contexts/auth-context", () => ({
   }),
 }));
 
+// Tests the LoginPage: form rendering, credential submission, error display,
+// and loading/disabled state during authentication.
 describe("LoginPage", () => {
   beforeEach(() => {
     vi.clearAllMocks();

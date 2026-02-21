@@ -62,7 +62,7 @@ export default function RootLayout({
       <head>
         <title>darkreach dashboard</title>
         <link rel="manifest" href="/manifest.json" />
-        <meta name="theme-color" content="#f78166" />
+        <meta name="theme-color" content="#0c0a1d" />
         <meta name="apple-mobile-web-app-capable" content="yes" />
         <meta
           name="apple-mobile-web-app-status-bar-style"

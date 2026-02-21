@@ -19,6 +19,18 @@
 //! for current candidate. The search thread writes, the heartbeat thread reads.
 //! Stop signal comes from the `pending_command` column (set by the dashboard).
 //!
+//! ## Exponential Backoff
+//!
+//! On heartbeat failure, the interval doubles (10s → 20s → 40s → ... up to 300s).
+//! On success, the interval resets to the base 10s. This prevents thundering herd
+//! on temporary PG outages.
+//!
+//! ## Block Progress Reporting
+//!
+//! The `current_block_id` field tracks which block the worker is processing.
+//! On each successful heartbeat, live progress (tested/found) is reported to
+//! `update_block_progress`, enabling real-time block tracking and smarter reclaim.
+//!
 //! ## Auto-Selection
 //!
 //! `main.rs` chooses `PgWorkerClient` when no `--coordinator` URL is given,
@@ -29,6 +41,13 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
+use tracing::{debug, info, warn};
+
+/// Base heartbeat interval in seconds.
+const HEARTBEAT_BASE_SECS: u64 = 10;
+
+/// Maximum heartbeat interval in seconds (after exponential backoff).
+const HEARTBEAT_MAX_SECS: u64 = 300;
 
 /// PostgreSQL-based worker client — heartbeats directly to the `workers` table.
 /// Drop-in alternative to `WorkerClient` with the same shared-state pattern.
@@ -46,6 +65,10 @@ pub struct PgWorkerClient {
     pub current: Arc<Mutex<String>>,
     pub checkpoint: Arc<Mutex<Option<String>>>,
     pub stop_requested: Arc<AtomicBool>,
+    /// Currently processing block ID. Set by the work loop before processing
+    /// each block, cleared after completion. Used by the heartbeat thread to
+    /// report live block progress via `update_block_progress`.
+    pub current_block_id: Arc<Mutex<Option<i64>>>,
 }
 
 impl PgWorkerClient {
@@ -84,7 +107,7 @@ impl PgWorkerClient {
                 .await
             })
             .expect("Failed to register worker in database");
-        eprintln!("Registered with PostgreSQL (worker_id={})", worker_id);
+        info!(worker_id = %worker_id, hostname = %hostname, cores, "registered with PostgreSQL");
 
         PgWorkerClient {
             pool,
@@ -100,6 +123,7 @@ impl PgWorkerClient {
             current: Arc::new(Mutex::new(String::new())),
             checkpoint: Arc::new(Mutex::new(None)),
             stop_requested: Arc::new(AtomicBool::new(false)),
+            current_block_id: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -117,11 +141,19 @@ impl PgWorkerClient {
         let current = Arc::clone(&self.current);
         let checkpoint = Arc::clone(&self.checkpoint);
         let stop_requested = Arc::clone(&self.stop_requested);
+        let current_block_id = Arc::clone(&self.current_block_id);
 
         thread::spawn(move || {
             let mut sys = sysinfo::System::new();
+            let mut consecutive_failures: u32 = 0;
             loop {
-                thread::sleep(Duration::from_secs(10));
+                let interval_secs = if consecutive_failures == 0 {
+                    HEARTBEAT_BASE_SECS
+                } else {
+                    (HEARTBEAT_BASE_SECS * 2u64.saturating_pow(consecutive_failures))
+                        .min(HEARTBEAT_MAX_SECS)
+                };
+                thread::sleep(Duration::from_secs(interval_secs));
                 if shutdown.load(Ordering::Relaxed) {
                     break;
                 }
@@ -136,7 +168,8 @@ impl PgWorkerClient {
                 let cur = current.lock().unwrap().clone();
                 let cp = checkpoint.lock().unwrap().clone();
 
-                let command: Option<String> = rt_handle.block_on(async {
+                let hb_start = std::time::Instant::now();
+                let heartbeat_result: Result<Option<String>, _> = rt_handle.block_on(async {
                     sqlx::query_scalar("SELECT worker_heartbeat($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)")
                         .bind(&worker_id)
                         .bind(&hostname)
@@ -150,13 +183,57 @@ impl PgWorkerClient {
                         .bind(&metrics_json)
                         .fetch_one(&pool)
                         .await
-                        .ok()
-                        .flatten()
                 });
+                let hb_rtt_ms = hb_start.elapsed().as_millis();
 
-                if command.as_deref() == Some("stop") {
-                    eprintln!("Received stop command from PostgreSQL");
-                    stop_requested.store(true, Ordering::Relaxed);
+                match heartbeat_result {
+                    Ok(command) => {
+                        debug!(
+                            worker_id = %worker_id,
+                            rtt_ms = hb_rtt_ms,
+                            "heartbeat ok"
+                        );
+                        if consecutive_failures > 0 {
+                            info!(
+                                worker_id = %worker_id,
+                                failures = consecutive_failures,
+                                interval_secs,
+                                "heartbeat recovered"
+                            );
+                        }
+                        consecutive_failures = 0;
+
+                        if command.as_deref() == Some("stop") {
+                            info!(worker_id = %worker_id, "received stop command from PostgreSQL");
+                            stop_requested.store(true, Ordering::Relaxed);
+                        }
+
+                        // Report block progress if we're working on a block
+                        let block_id = current_block_id.lock().unwrap().clone();
+                        if let Some(bid) = block_id {
+                            let _ = rt_handle.block_on(async {
+                                sqlx::query("SELECT update_block_progress($1, $2, $3, NULL)")
+                                    .bind(bid)
+                                    .bind(t)
+                                    .bind(f)
+                                    .execute(&pool)
+                                    .await
+                            });
+                        }
+                    }
+                    Err(e) => {
+                        consecutive_failures = consecutive_failures.saturating_add(1);
+                        let next_interval = (HEARTBEAT_BASE_SECS
+                            * 2u64.saturating_pow(consecutive_failures))
+                        .min(HEARTBEAT_MAX_SECS);
+                        warn!(
+                            worker_id = %worker_id,
+                            attempt = consecutive_failures,
+                            error = %e,
+                            retry_secs = next_interval,
+                            "heartbeat failed"
+                        );
+                    }
                 }
             }
         })

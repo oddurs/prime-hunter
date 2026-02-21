@@ -34,6 +34,7 @@ use std::collections::HashMap;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::{Child, Command};
 use tokio::task::JoinHandle;
+use tracing::{debug, info};
 
 pub const MAX_AGENTS: usize = 2;
 pub const DEFAULT_TIMEOUT_SECS: u64 = 1800;
@@ -217,7 +218,7 @@ pub async fn assemble_context(
     if let Some(role) = role {
         if let Some(ref prompt) = role.system_prompt {
             sections.push(format!("# Role: {}\n\n{}", role.name, prompt));
-            eprintln!("  Context: included role '{}' system prompt", role.name);
+            debug!(role = %role.name, "Context: included role system prompt");
         }
     }
 
@@ -232,7 +233,7 @@ pub async fn assemble_context(
             if let Ok(content) = std::fs::read_to_string(path) {
                 sections.push(format!("# Project Context: {}\n\n{}", path, content));
                 included_paths.push(path);
-                eprintln!("  Context: included {}", path);
+                debug!(path, "Context: included project file");
             }
         }
     }
@@ -252,7 +253,7 @@ pub async fn assemble_context(
                     String::new()
                 };
                 sections.push(format!("# Roadmap: {}\n\n{}{}", path, truncated, suffix));
-                eprintln!("  Context: included roadmap {}", path);
+                debug!(path, "Context: included roadmap");
             }
         }
     }
@@ -289,7 +290,7 @@ pub async fn assemble_context(
                 task.id
             ));
             sections.push(memory_text);
-            eprintln!("  Context: included {} memory entries", memories.len());
+            debug!(count = memories.len(), "Context: included memory entries");
         }
     }
 
@@ -341,9 +342,9 @@ pub async fn assemble_context(
                     results_text.push_str(&format!("### Step: {}\n\n{}\n\n", s.title, truncated));
                 }
                 history_parts.push(results_text);
-                eprintln!(
-                    "  Context: included {} completed step results",
-                    completed_siblings.len()
+                debug!(
+                    count = completed_siblings.len(),
+                    "Context: included completed step results"
                 );
             }
         }
@@ -375,9 +376,9 @@ pub async fn assemble_context(
                 ));
             }
             history_parts.push(prev_text);
-            eprintln!(
-                "  Context: included {} previous failed attempts",
-                prev.len()
+            debug!(
+                count = prev.len(),
+                "Context: included previous failed attempts"
             );
         }
     }
@@ -386,10 +387,10 @@ pub async fn assemble_context(
         sections.push(format!("# Task History\n\n{}", history_parts.join("\n")));
     }
 
-    eprintln!(
-        "  Context: assembled {} sections for task {}",
-        sections.len(),
-        task.id
+    debug!(
+        section_count = sections.len(),
+        task_id = task.id,
+        "Context: assembled sections for task"
     );
     sections
 }
@@ -582,9 +583,13 @@ impl AgentManager {
             },
         );
 
-        eprintln!(
-            "Agent spawned for task {} (pid {:?}, model {}, level {}, timeout {}s)",
-            task.id, pid, model, level, DEFAULT_TIMEOUT_SECS
+        info!(
+            task_id = task.id,
+            pid = ?pid,
+            model,
+            level,
+            timeout_secs = DEFAULT_TIMEOUT_SECS,
+            "Agent spawned for task"
         );
 
         Ok(info)
@@ -689,7 +694,7 @@ impl AgentManager {
         if let Some(mut entry) = self.agents.remove(&task_id) {
             let _ = entry.child.start_kill();
             entry.stdout_handle.abort();
-            eprintln!("Agent for task {} cancelled", task_id);
+            info!(task_id, "Agent cancelled");
             true
         } else {
             false
@@ -875,8 +880,31 @@ async fn read_agent_stdout(
 
 #[cfg(test)]
 mod tests {
+    //! Tests for the Agent subsystem — Claude Code subprocess manager.
+    //!
+    //! Validates domain detection heuristics, permission level escalation,
+    //! cost model rates, context injection file mappings, and AgentManager
+    //! lifecycle operations. Since spawning real Claude subprocesses requires
+    //! the CLI binary and API credentials, these tests focus on the pure
+    //! logic layer: keyword matching, tool whitelists, serialization, and
+    //! manager state transitions.
+    //!
+    //! ## Testing Strategy
+    //!
+    //! - **Domain detection**: exhaustive keyword coverage for all 5 domains,
+    //!   case insensitivity, multi-domain matching, title-vs-description search
+    //! - **Permission levels**: tool whitelist progression (L0=read-only through
+    //!   L3=unrestricted) and safety prompt content
+    //! - **Cost model**: per-model rate verification and unknown-model fallback
+    //! - **Serialization**: JSON round-trips for AgentStatus, AgentInfo
+    //! - **Manager state**: empty init, cancel nonexistent, poll empty, kill-all
+
     use super::*;
 
+    // ── Manager Lifecycle ──────────────────────────────────────────
+
+    /// Verifies a freshly created AgentManager has no active agents.
+    /// This is the invariant that spawn_agent builds upon.
     #[test]
     fn agent_manager_starts_empty() {
         let mgr = AgentManager::new();
@@ -884,6 +912,11 @@ mod tests {
         assert!(mgr.get_all().is_empty());
     }
 
+    // ── Serialization ───────────────────────────────────────────
+
+    /// Validates that all AgentStatus variants serialize to their expected
+    /// snake_case JSON tags. The dashboard frontend relies on these exact
+    /// string values for status badge rendering and WebSocket message routing.
     #[test]
     fn agent_status_serializes_correctly() {
         let running = serde_json::to_string(&AgentStatus::Running).unwrap();
@@ -903,18 +936,29 @@ mod tests {
         assert!(cancelled.contains("cancelled"));
     }
 
+    /// Cancelling a task ID that was never spawned must return false rather
+    /// than panicking. The dashboard sends cancel requests for any user-selected
+    /// task ID, so the manager must handle missing entries gracefully.
     #[test]
     fn cancel_nonexistent_returns_false() {
         let mut mgr = AgentManager::new();
         assert!(!mgr.cancel_agent(999));
     }
 
+    /// Polling an empty manager must return an empty vec. The dashboard's
+    /// 2-second tick loop calls poll_completed unconditionally, so this must
+    /// be safe even before any agents are spawned.
     #[test]
     fn poll_completed_empty_returns_empty() {
         let mut mgr = AgentManager::new();
         assert!(mgr.poll_completed().is_empty());
     }
 
+    // ── Permission Levels ────────────────────────────────────────
+
+    /// Validates the tool whitelist for each permission level. The escalation
+    /// model is: L0 (read-only), L1 (edit+bash), L2 (+task orchestration),
+    /// L3 (unrestricted). Each level's whitelist is passed to `claude --tools`.
     #[test]
     fn tools_for_level_returns_correct_whitelist() {
         assert!(tools_for_level(0).contains("Read"));
@@ -931,6 +975,10 @@ mod tests {
         assert_eq!(tools_for_level(3), "default");
     }
 
+    /// Validates that safety system prompts become progressively less
+    /// restrictive at higher permission levels. L0 enforces read-only,
+    /// L1 blocks destructive commands, L2 constrains to branches, and
+    /// L3 imposes no restrictions.
     #[test]
     fn safety_prompt_for_level_varies() {
         assert!(safety_prompt_for_level(0).contains("READ-ONLY"));
@@ -939,6 +987,11 @@ mod tests {
         assert!(safety_prompt_for_level(3).is_empty());
     }
 
+    // ── Domain Detection Heuristics ───────────────────────────────
+
+    /// Verifies that engine-specific keywords ("sieve", "primality") trigger
+    /// the engine domain. Domain detection controls which CLAUDE.md and roadmap
+    /// files are injected into the agent's system prompt.
     #[test]
     fn detect_domains_engine_keywords() {
         let domains = detect_domains(
@@ -948,12 +1001,17 @@ mod tests {
         assert!(domains.contains(&"engine"));
     }
 
+    /// Verifies that frontend-specific keywords ("react", "dashboard", "chart")
+    /// trigger the frontend domain for context injection.
     #[test]
     fn detect_domains_frontend_keywords() {
         let domains = detect_domains("Fix React component", "Update the dashboard chart");
         assert!(domains.contains(&"frontend"));
     }
 
+    /// Validates that a task touching multiple domains (e.g., "API endpoint
+    /// for sieve stats") detects all relevant domains simultaneously. This
+    /// ensures the agent receives context files for every relevant subsystem.
     #[test]
     fn detect_domains_multiple() {
         let domains = detect_domains(
@@ -970,27 +1028,295 @@ mod tests {
         );
     }
 
+    /// Empty title and description should yield no domains. This is the
+    /// base case — ensures no false positives from empty string scanning.
     #[test]
     fn detect_domains_empty() {
         let domains = detect_domains("", "");
         assert!(domains.is_empty());
     }
 
+    /// Verifies server-domain detection from infrastructure keywords
+    /// ("database", "postgres", "migration").
     #[test]
     fn detect_domains_server_keywords() {
         let domains = detect_domains("Fix database migration", "Update postgres schema");
         assert!(domains.contains(&"server"));
     }
 
+    /// Verifies deploy-domain detection from ops keywords ("PGO", "systemd").
     #[test]
     fn detect_domains_deploy_keywords() {
         let domains = detect_domains("Set up PGO build", "Configure systemd service");
         assert!(domains.contains(&"deploy"));
     }
 
+    /// Verifies docs-domain detection from research keywords ("OEIS", "strategy").
     #[test]
     fn detect_domains_docs_keywords() {
         let domains = detect_domains("Research OEIS sequences", "Find new prime form strategies");
         assert!(domains.contains(&"docs"));
+    }
+
+    // ── Cost Model ──────────────────────────────────────────────
+
+    /// Validates the conservative cost rate for Opus ($0.015/sec = ~$0.90/min).
+    /// These rates are intentionally high so the budget guard kills agents
+    /// before they overspend, rather than after.
+    #[test]
+    fn estimated_cost_per_sec_opus() {
+        let rate = estimated_cost_per_sec("opus");
+        assert_eq!(rate, 0.015);
+    }
+
+    /// Validates the Sonnet cost rate ($0.005/sec = ~$0.30/min).
+    #[test]
+    fn estimated_cost_per_sec_sonnet() {
+        let rate = estimated_cost_per_sec("sonnet");
+        assert_eq!(rate, 0.005);
+    }
+
+    /// Validates the Haiku cost rate ($0.001/sec = ~$0.06/min).
+    #[test]
+    fn estimated_cost_per_sec_haiku() {
+        let rate = estimated_cost_per_sec("haiku");
+        assert_eq!(rate, 0.001);
+    }
+
+    /// Unknown model names must default to Sonnet rate. This prevents
+    /// underestimating cost for new models not yet in the rate table.
+    #[test]
+    fn estimated_cost_per_sec_unknown_defaults_to_sonnet() {
+        let rate = estimated_cost_per_sec("unknown-model");
+        assert_eq!(rate, 0.005);
+    }
+
+    // ── Context Injection Configuration ───────────────────────────
+
+    /// The root CLAUDE.md must always be present in CONTEXT_FILES. Every
+    /// agent receives it regardless of detected domains.
+    #[test]
+    fn context_files_contains_root() {
+        assert!(
+            CONTEXT_FILES.iter().any(|(domain, _)| *domain == "root"),
+            "CONTEXT_FILES should contain a 'root' entry"
+        );
+    }
+
+    /// Every entry in CONTEXT_FILES must have a non-empty domain and a
+    /// .md file path. This guards against accidentally adding entries with
+    /// empty strings that would silently skip context injection.
+    #[test]
+    fn context_files_all_domains_have_paths() {
+        for &(domain, path) in CONTEXT_FILES {
+            assert!(!domain.is_empty(), "Domain name should not be empty");
+            assert!(!path.is_empty(), "Path should not be empty for domain {}", domain);
+            assert!(path.ends_with(".md"), "Context file should be .md: {}", path);
+        }
+    }
+
+    /// Every ROADMAP_FILES entry must point to a .md file for its domain.
+    #[test]
+    fn roadmap_files_all_domains_have_paths() {
+        for &(domain, path) in ROADMAP_FILES {
+            assert!(!domain.is_empty());
+            assert!(path.ends_with(".md"), "Roadmap file should be .md: {}", path);
+        }
+    }
+
+    /// Domain detection must be case-insensitive because task titles come
+    /// from user input and may use arbitrary capitalization.
+    #[test]
+    fn detect_domains_case_insensitive() {
+        let domains = detect_domains("SIEVE optimization", "DEPLOY to production");
+        assert!(domains.contains(&"engine"), "Should detect 'SIEVE' case-insensitively");
+        assert!(domains.contains(&"deploy"), "Should detect 'DEPLOY' case-insensitively");
+    }
+
+    // ── Exhaustive Keyword Coverage ───────────────────────────────
+
+    /// Exhaustive test: every single engine keyword must trigger the engine
+    /// domain. This prevents regressions where a keyword is accidentally
+    /// removed or misspelled in the keyword list.
+    #[test]
+    fn detect_domains_all_engine_keywords() {
+        let keywords = [
+            "sieve", "primality", "factorial", "kbn", "gmp", "rug", "proof",
+            "algorithm", "palindromic", "proth", "llr", "pocklington", "montgomery",
+            "morrison", "repunit", "wagstaff", "cullen", "woodall", "carol", "kynea",
+            "twin", "sophie", "germain", "fermat", "primorial", "near_repdigit",
+            "near-repdigit",
+        ];
+        for kw in &keywords {
+            let domains = detect_domains(kw, "");
+            assert!(
+                domains.contains(&"engine"),
+                "Keyword '{}' should trigger engine domain",
+                kw
+            );
+        }
+    }
+
+    /// Exhaustive test: every frontend keyword must trigger the frontend domain.
+    #[test]
+    fn detect_domains_all_frontend_keywords() {
+        let keywords = [
+            "react", "next.js", "nextjs", "component", "dashboard", "chart",
+            "ui", "tailwind", "frontend", "recharts", "shadcn", "page.tsx", "hook",
+        ];
+        for kw in &keywords {
+            let domains = detect_domains(kw, "");
+            assert!(
+                domains.contains(&"frontend"),
+                "Keyword '{}' should trigger frontend domain",
+                kw
+            );
+        }
+    }
+
+    /// Exhaustive test: every server keyword must trigger the server domain.
+    #[test]
+    fn detect_domains_all_server_keywords() {
+        let keywords = [
+            "api", "websocket", "axum", "database", "postgres", "coordination",
+            "fleet", "worker", "endpoint", "rest", "sqlx", "migration",
+        ];
+        for kw in &keywords {
+            let domains = detect_domains(kw, "");
+            assert!(
+                domains.contains(&"server"),
+                "Keyword '{}' should trigger server domain",
+                kw
+            );
+        }
+    }
+
+    /// Keywords appearing only in the description (not title) must still
+    /// be matched. Both fields are concatenated before scanning.
+    #[test]
+    fn detect_domains_description_also_searched() {
+        // Keywords in description (not title) should also match
+        let domains = detect_domains("Generic task", "improve the sieve performance");
+        assert!(domains.contains(&"engine"));
+    }
+
+    // ── Data Structure Defaults and Serialization ─────────────────
+
+    /// StdoutResult default must have zero tokens, zero cost, and empty text.
+    /// This is the accumulator initial state before reading any NDJSON lines.
+    #[test]
+    fn stdout_result_default() {
+        let r = StdoutResult::default();
+        assert_eq!(r.result_text, "");
+        assert_eq!(r.tokens_used, 0);
+        assert_eq!(r.cost_usd, 0.0);
+    }
+
+    /// AgentInfo must serialize all fields including task_id, model, and
+    /// status for the WebSocket push to the dashboard.
+    #[test]
+    fn agent_info_serializes() {
+        let info = AgentInfo {
+            task_id: 42,
+            title: "Test task".to_string(),
+            model: "sonnet".to_string(),
+            status: AgentStatus::Running,
+            started_at: "2026-02-20T12:00:00Z".to_string(),
+            pid: Some(12345),
+        };
+        let json = serde_json::to_string(&info).unwrap();
+        assert!(json.contains("\"task_id\":42"));
+        assert!(json.contains("\"model\":\"sonnet\""));
+        assert!(json.contains("\"running\""));
+    }
+
+    /// AgentInfo with pid=None must serialize pid as JSON null. This happens
+    /// when the subprocess exits before we can read its PID.
+    #[test]
+    fn agent_info_serializes_no_pid() {
+        let info = AgentInfo {
+            task_id: 1,
+            title: "Task".to_string(),
+            model: "opus".to_string(),
+            status: AgentStatus::Completed,
+            started_at: "2026-01-01T00:00:00Z".to_string(),
+            pid: None,
+        };
+        let json = serde_json::to_string(&info).unwrap();
+        assert!(json.contains("\"pid\":null"));
+        assert!(json.contains("\"completed\""));
+    }
+
+    /// kill_all on an empty manager must return an empty list. This is called
+    /// during global budget enforcement and shutdown.
+    #[test]
+    fn kill_all_on_empty_manager() {
+        let mut mgr = AgentManager::new();
+        let killed = mgr.kill_all();
+        assert!(killed.is_empty());
+    }
+
+    /// The Default impl must produce the same empty state as new().
+    #[test]
+    fn agent_manager_default_is_empty() {
+        let mgr = AgentManager::default();
+        assert_eq!(mgr.active_count(), 0);
+        assert!(mgr.get_all().is_empty());
+    }
+
+    /// Validates the monotonic privilege escalation: each higher level gains
+    /// tools that the previous level lacks. This is a safety invariant.
+    #[test]
+    fn tools_for_level_progression() {
+        // Higher levels should have more tools (or at least not fewer)
+        let l0 = tools_for_level(0);
+        let l1 = tools_for_level(1);
+        let l2 = tools_for_level(2);
+
+        // Level 0 has Read but not Write/Bash
+        assert!(l0.contains("Read"));
+        assert!(!l0.contains("Write"));
+
+        // Level 1 adds Write, Edit, Bash
+        assert!(l1.contains("Write"));
+        assert!(l1.contains("Bash"));
+
+        // Level 2 adds Task
+        assert!(l2.contains("Task"));
+    }
+
+    /// Level 3+ must have no safety restrictions (empty prompt). Verifies
+    /// that out-of-range values behave the same as level 3.
+    #[test]
+    fn safety_prompt_level_3_is_empty() {
+        assert!(safety_prompt_for_level(3).is_empty());
+        // Level 99 should also be empty (same as 3+)
+        assert!(safety_prompt_for_level(99).is_empty());
+    }
+
+    // ── Constants ───────────────────────────────────────────────
+
+    /// MAX_AGENTS must be positive and reasonable. Too high a limit risks
+    /// exhausting API concurrency or system resources.
+    #[test]
+    fn max_agents_constant() {
+        assert!(MAX_AGENTS > 0);
+        assert!(MAX_AGENTS <= 10, "MAX_AGENTS seems unreasonably high");
+    }
+
+    /// Default timeout must be 30 minutes (1800s). This bounds agent runtime
+    /// even when budget enforcement is not configured.
+    #[test]
+    fn default_timeout_secs_constant() {
+        assert!(DEFAULT_TIMEOUT_SECS > 0);
+        assert_eq!(DEFAULT_TIMEOUT_SECS, 1800, "Default timeout should be 30 minutes");
+    }
+
+    /// ROADMAP_MAX_LINES must be bounded to prevent injecting excessively
+    /// long context into the agent's system prompt.
+    #[test]
+    fn roadmap_max_lines_reasonable() {
+        assert!(ROADMAP_MAX_LINES > 0);
+        assert!(ROADMAP_MAX_LINES <= 500, "ROADMAP_MAX_LINES seems too high");
     }
 }

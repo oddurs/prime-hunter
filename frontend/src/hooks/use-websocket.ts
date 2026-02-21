@@ -64,6 +64,8 @@ export interface WorkerStatus {
   metrics?: HardwareMetrics;
 }
 
+export type NodeStatus = WorkerStatus;
+
 export interface Deployment {
   id: number;
   hostname: string;
@@ -97,6 +99,8 @@ export interface FleetData {
   total_tested: number;
   total_found: number;
 }
+
+export type NetworkData = FleetData;
 
 export interface ManagedSearch {
   id: number;

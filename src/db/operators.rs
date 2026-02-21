@@ -50,7 +50,7 @@ impl Database {
     // ── Registration ──────────────────────────────────────────────
 
     /// Register a new volunteer account. Returns the generated API key and username.
-    pub async fn register_volunteer(&self, username: &str, email: &str) -> Result<OperatorRow> {
+    pub async fn register_operator(&self, username: &str, email: &str) -> Result<OperatorRow> {
         let row = sqlx::query_as::<_, OperatorRow>(
             "INSERT INTO volunteers (username, email)
              VALUES ($1, $2)
@@ -74,7 +74,7 @@ impl Database {
     }
 
     /// Look up a volunteer by API key (used for authentication).
-    pub async fn get_volunteer_by_api_key(&self, api_key: &str) -> Result<Option<OperatorRow>> {
+    pub async fn get_operator_by_api_key(&self, api_key: &str) -> Result<Option<OperatorRow>> {
         let row = sqlx::query_as::<_, OperatorRow>("SELECT * FROM volunteers WHERE api_key = $1")
             .bind(api_key)
             .fetch_optional(&self.pool)
@@ -83,7 +83,7 @@ impl Database {
     }
 
     /// Update volunteer last_seen timestamp.
-    pub async fn touch_volunteer(&self, volunteer_id: uuid::Uuid) -> Result<()> {
+    pub async fn touch_operator(&self, volunteer_id: uuid::Uuid) -> Result<()> {
         sqlx::query("UPDATE volunteers SET last_seen = NOW() WHERE id = $1")
             .bind(volunteer_id)
             .execute(&self.pool)
@@ -94,7 +94,7 @@ impl Database {
     // ── Worker Machines ───────────────────────────────────────────
 
     /// Register a volunteer's worker machine.
-    pub async fn register_volunteer_worker(
+    pub async fn register_operator_node(
         &self,
         volunteer_id: uuid::Uuid,
         worker_id: &str,
@@ -150,7 +150,7 @@ impl Database {
     }
 
     /// Update heartbeat timestamp for a volunteer worker.
-    pub async fn volunteer_worker_heartbeat(&self, worker_id: &str) -> Result<()> {
+    pub async fn operator_node_heartbeat(&self, worker_id: &str) -> Result<()> {
         sqlx::query("UPDATE volunteer_workers SET last_heartbeat = NOW() WHERE worker_id = $1")
             .bind(worker_id)
             .execute(&self.pool)
@@ -158,12 +158,53 @@ impl Database {
         Ok(())
     }
 
+    /// Get all worker nodes for a specific operator.
+    pub async fn get_operator_nodes(
+        &self,
+        volunteer_id: uuid::Uuid,
+    ) -> Result<Vec<OperatorNodeRow>> {
+        let rows = sqlx::query_as::<_, OperatorNodeRow>(
+            "SELECT worker_id, hostname, cores, cpu_model, os, arch,
+                    ram_gb, has_gpu, gpu_model, worker_version,
+                    registered_at, last_heartbeat
+             FROM volunteer_workers
+             WHERE volunteer_id = $1
+             ORDER BY last_heartbeat DESC NULLS LAST",
+        )
+        .bind(volunteer_id)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows)
+    }
+
+    /// Get operator account by ID.
+    pub async fn get_operator_by_id(&self, id: uuid::Uuid) -> Result<Option<OperatorRow>> {
+        let row = sqlx::query_as::<_, OperatorRow>("SELECT * FROM volunteers WHERE id = $1")
+            .bind(id)
+            .fetch_optional(&self.pool)
+            .await?;
+        Ok(row)
+    }
+
+    /// Rotate an operator's API key and return the new key.
+    pub async fn rotate_operator_api_key(&self, volunteer_id: uuid::Uuid) -> Result<String> {
+        let new_key: String = sqlx::query_scalar(
+            "UPDATE volunteers SET api_key = encode(gen_random_bytes(32), 'hex')
+             WHERE id = $1
+             RETURNING api_key",
+        )
+        .bind(volunteer_id)
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(new_key)
+    }
+
     // ── Work Assignment ───────────────────────────────────────────
 
     /// Claim a work block for a volunteer. Picks the first available block
     /// that matches the volunteer's hardware capabilities and assigns it.
     /// Returns None if no blocks are available.
-    pub async fn claim_volunteer_block(
+    pub async fn claim_operator_block(
         &self,
         volunteer_id: uuid::Uuid,
         caps: &WorkerCapabilities,
@@ -224,7 +265,7 @@ impl Database {
 
         if let Some(ref block) = row {
             // Look up the search job to get search_type and params
-            let job = sqlx::query_as::<_, VolunteerJobInfo>(
+            let job = sqlx::query_as::<_, OperatorJobInfo>(
                 "SELECT search_type, params FROM search_jobs WHERE id = $1",
             )
             .bind(block.search_job_id)
@@ -249,32 +290,37 @@ impl Database {
     // ── Result Submission ─────────────────────────────────────────
 
     /// Record a completed block result from a volunteer.
-    pub async fn submit_volunteer_result(
+    /// Complete a work block and return its processing duration and search type
+    /// for histogram recording.
+    pub async fn submit_operator_result(
         &self,
         block_id: i32,
         tested: i64,
         found: i64,
-    ) -> Result<()> {
-        sqlx::query(
+    ) -> Result<Option<(f64, String)>> {
+        let row: Option<(f64, String)> = sqlx::query_as(
             "UPDATE work_blocks SET
                status = 'completed',
                tested = $2,
                found = $3,
                completed_at = NOW()
-             WHERE id = $1",
+             WHERE id = $1
+             RETURNING
+               EXTRACT(EPOCH FROM (NOW() - COALESCE(claimed_at, created_at)))::float8,
+               (SELECT search_type FROM search_jobs WHERE id = search_job_id)",
         )
         .bind(block_id)
         .bind(tested)
         .bind(found)
-        .execute(&self.pool)
+        .fetch_optional(&self.pool)
         .await?;
-        Ok(())
+        Ok(row)
     }
 
     // ── Trust & Credits ───────────────────────────────────────────
 
     /// Get the trust record for a volunteer.
-    pub async fn get_volunteer_trust(
+    pub async fn get_operator_trust(
         &self,
         volunteer_id: uuid::Uuid,
     ) -> Result<Option<OperatorTrustRow>> {
@@ -288,13 +334,15 @@ impl Database {
     }
 
     /// Record a valid result and advance trust level if thresholds met.
-    /// Trust levels: 1 (new) → 2 (reliable, 10+ valid) → 3 (trusted, 100+ valid).
+    /// Trust levels: 1 (new) → 2 (proven, 10+ valid) → 3 (trusted, 100+ valid)
+    ///                      → 4 (core, 500+ valid).
     pub async fn record_valid_result(&self, volunteer_id: uuid::Uuid) -> Result<()> {
         sqlx::query(
             "UPDATE volunteer_trust SET
                consecutive_valid = consecutive_valid + 1,
                total_valid = total_valid + 1,
                trust_level = CASE
+                 WHEN total_valid + 1 >= 500 THEN 4
                  WHEN consecutive_valid + 1 >= 100 THEN 3
                  WHEN consecutive_valid + 1 >= 10 THEN 2
                  ELSE trust_level
@@ -307,13 +355,13 @@ impl Database {
         Ok(())
     }
 
-    /// Record an invalid result: reset consecutive_valid, bump trust down to 1.
+    /// Record an invalid result: reset consecutive_valid, set trust to 0 (untrusted).
     pub async fn record_invalid_result(&self, volunteer_id: uuid::Uuid) -> Result<()> {
         sqlx::query(
             "UPDATE volunteer_trust SET
                consecutive_valid = 0,
                total_invalid = total_invalid + 1,
-               trust_level = 1
+               trust_level = 0
              WHERE volunteer_id = $1",
         )
         .bind(volunteer_id)
@@ -351,7 +399,7 @@ impl Database {
     }
 
     /// Increment primes_found for a volunteer.
-    pub async fn increment_volunteer_primes(&self, volunteer_id: uuid::Uuid) -> Result<()> {
+    pub async fn increment_operator_primes(&self, volunteer_id: uuid::Uuid) -> Result<()> {
         sqlx::query("UPDATE volunteers SET primes_found = primes_found + 1 WHERE id = $1")
             .bind(volunteer_id)
             .execute(&self.pool)
@@ -362,11 +410,11 @@ impl Database {
     // ── Stats & Leaderboard ───────────────────────────────────────
 
     /// Get personal stats for a volunteer, including rank by credit.
-    pub async fn get_volunteer_stats(
+    pub async fn get_operator_stats(
         &self,
         volunteer_id: uuid::Uuid,
-    ) -> Result<Option<VolunteerStatsRow>> {
-        let row = sqlx::query_as::<_, VolunteerStatsRow>(
+    ) -> Result<Option<OperatorStatsRow>> {
+        let row = sqlx::query_as::<_, OperatorStatsRow>(
             "SELECT
                v.username,
                v.credit,
@@ -384,7 +432,7 @@ impl Database {
     }
 
     /// Get the volunteer leaderboard (top N by credit).
-    pub async fn get_volunteer_leaderboard(&self, limit: i64) -> Result<Vec<LeaderboardRow>> {
+    pub async fn get_operator_leaderboard(&self, limit: i64) -> Result<Vec<LeaderboardRow>> {
         let rows =
             sqlx::query_as::<_, LeaderboardRow>("SELECT * FROM volunteer_leaderboard LIMIT $1")
                 .bind(limit)
@@ -415,7 +463,7 @@ impl Database {
     }
 
     /// Get unverified volunteer blocks that need verification.
-    pub async fn get_unverified_volunteer_blocks(
+    pub async fn get_unverified_operator_blocks(
         &self,
         limit: i64,
     ) -> Result<Vec<UnverifiedBlock>> {
@@ -437,7 +485,7 @@ impl Database {
     }
 
     /// Reclaim stale volunteer blocks (24-hour timeout, vs 2-min for internal).
-    pub async fn reclaim_stale_volunteer_blocks(&self, timeout_secs: i64) -> Result<i64> {
+    pub async fn reclaim_stale_operator_blocks(&self, timeout_secs: i64) -> Result<i64> {
         let result = sqlx::query(
             "UPDATE work_blocks SET
                status = 'available',
@@ -479,19 +527,36 @@ pub struct OperatorWorkBlock {
 
 /// Search job info for populating work assignments.
 #[derive(sqlx::FromRow)]
-struct VolunteerJobInfo {
+struct OperatorJobInfo {
     search_type: String,
     params: serde_json::Value,
 }
 
 /// Personal stats row for a volunteer.
 #[derive(Serialize, sqlx::FromRow)]
-pub struct VolunteerStatsRow {
+pub struct OperatorStatsRow {
     pub username: String,
     pub credit: i64,
     pub primes_found: i32,
     pub trust_level: Option<i16>,
     pub rank: Option<i64>,
+}
+
+/// Operator node row (subset of volunteer_workers columns).
+#[derive(Serialize, sqlx::FromRow)]
+pub struct OperatorNodeRow {
+    pub worker_id: String,
+    pub hostname: Option<String>,
+    pub cores: Option<i32>,
+    pub cpu_model: Option<String>,
+    pub os: Option<String>,
+    pub arch: Option<String>,
+    pub ram_gb: Option<i32>,
+    pub has_gpu: Option<bool>,
+    pub gpu_model: Option<String>,
+    pub worker_version: Option<String>,
+    pub registered_at: chrono::DateTime<chrono::Utc>,
+    pub last_heartbeat: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 /// Unverified work block needing quorum check.

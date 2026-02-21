@@ -61,6 +61,8 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Instant;
 
+use tracing::{debug, info, warn};
+
 use crate::certificate::PrimalityCertificate;
 use crate::checkpoint::{self, Checkpoint};
 use crate::db::Database;
@@ -274,11 +276,11 @@ pub(crate) fn llr_test(candidate: &Integer, k: u64, n: u64) -> Option<(bool, Opt
 
     for i in 0..iters {
         if n > 50_000 && i % 10_000 == 0 && i > 0 {
-            eprintln!(
-                "  LLR: {}/{} squarings ({:.1}%)",
-                i,
-                iters,
-                i as f64 / iters as f64 * 100.0
+            debug!(
+                current = i,
+                total = iters,
+                percent = format_args!("{:.1}", i as f64 / iters as f64 * 100.0),
+                "LLR squaring progress"
             );
         }
         u.square_mut();
@@ -298,10 +300,10 @@ pub(crate) fn llr_test(candidate: &Integer, k: u64, n: u64) -> Option<(bool, Opt
 
             if verify != u {
                 // Hardware error detected! Rollback to last verified checkpoint.
-                eprintln!(
-                    "  LLR ERROR DETECTED at iteration {} — rolling back to {}",
-                    i + 1,
-                    verified_checkpoint_iter
+                warn!(
+                    iteration = i + 1,
+                    rollback_to = verified_checkpoint_iter,
+                    "LLR error detected, rolling back"
                 );
                 u = verified_checkpoint.clone();
                 // Recompute from verified checkpoint; skip ahead to redo this block
@@ -333,7 +335,7 @@ pub(crate) fn llr_test(candidate: &Integer, k: u64, n: u64) -> Option<(bool, Opt
                             verified_checkpoint = last_checkpoint.clone();
                             verified_checkpoint_iter = j + 1;
                         } else {
-                            eprintln!("  LLR: persistent error — returning inconclusive");
+                            warn!("LLR persistent error, returning inconclusive");
                             return None;
                         }
                     }
@@ -359,7 +361,7 @@ pub(crate) fn llr_test(candidate: &Integer, k: u64, n: u64) -> Option<(bool, Opt
             verify = verify.rem_euc(candidate);
         }
         if verify != 0u32 {
-            eprintln!("  LLR: prime verification FAILED — returning inconclusive");
+            warn!("LLR prime verification failed, returning inconclusive");
             return None;
         }
     }
@@ -521,11 +523,11 @@ pub(crate) fn bsgs_sieve(
 
     for (pi, &p) in sieve_primes.iter().enumerate() {
         if pi % log_interval == 0 && pi > 0 {
-            eprintln!(
-                "  BSGS sieve: {}/{} primes ({:.0}%)",
-                pi,
-                total_primes,
-                pi as f64 / total_primes as f64 * 100.0
+            debug!(
+                current = pi,
+                total = total_primes,
+                percent = format_args!("{:.0}", pi as f64 / total_primes as f64 * 100.0),
+                "BSGS sieve progress"
             );
         }
 
@@ -608,15 +610,15 @@ pub fn search(
     let sieve_limit = sieve::resolve_sieve_limit(sieve_limit, candidate_bits, n_range);
 
     let sieve_primes = sieve::generate_primes(sieve_limit);
-    eprintln!(
-        "Sieve initialized with {} primes up to {}",
-        sieve_primes.len(),
-        sieve_limit
+    info!(
+        prime_count = sieve_primes.len(),
+        sieve_limit,
+        "Sieve initialized"
     );
 
     let resume_from = match checkpoint::load(checkpoint_path) {
         Some(Checkpoint::Kbn { last_n, .. }) if last_n >= min_n && last_n < max_n => {
-            eprintln!("Resuming kbn search from n={}", last_n + 1);
+            info!(resume_n = last_n + 1, "Resuming kbn search");
             last_n + 1
         }
         _ => min_n,
@@ -630,28 +632,27 @@ pub fn search(
     } else {
         u64::MAX
     };
-    eprintln!("Sieve active for n >= {}", sieve_min_n);
+    info!(sieve_min_n, "Sieve active");
 
     // Run BSGS sieve once over the entire range
-    eprintln!(
-        "Running BSGS sieve over n=[{}..{}] ({} candidates)...",
-        resume_from,
+    info!(
+        min_n = resume_from,
         max_n,
-        max_n - resume_from + 1
+        candidates = max_n - resume_from + 1,
+        "Running BSGS sieve"
     );
     let (plus_survives, minus_survives) =
         bsgs_sieve(resume_from, max_n, k, base, &sieve_primes, sieve_min_n);
     let bsgs_plus_survivors = plus_survives.count_ones() as u64;
     let bsgs_minus_survivors = minus_survives.count_ones() as u64;
     let total_range = max_n - resume_from + 1;
-    eprintln!(
-        "BSGS sieve complete: +1 survivors {}/{} ({:.1}%), -1 survivors {}/{} ({:.1}%)",
-        bsgs_plus_survivors,
+    info!(
+        plus_survivors = bsgs_plus_survivors,
+        minus_survivors = bsgs_minus_survivors,
         total_range,
-        bsgs_plus_survivors as f64 / total_range as f64 * 100.0,
-        bsgs_minus_survivors,
-        total_range,
-        bsgs_minus_survivors as f64 / total_range as f64 * 100.0,
+        plus_pct = format_args!("{:.1}", bsgs_plus_survivors as f64 / total_range as f64 * 100.0),
+        minus_pct = format_args!("{:.1}", bsgs_minus_survivors as f64 / total_range as f64 * 100.0),
+        "BSGS sieve complete"
     );
 
     let mut last_checkpoint = Instant::now();
@@ -757,9 +758,11 @@ pub fn search(
                     timestamp: Instant::now(),
                 });
             } else {
-                eprintln!(
-                    "*** PRIME FOUND: {} ({} digits, {}) ***",
-                    expr, digits, certainty
+                info!(
+                    expression = %expr,
+                    digits,
+                    certainty = %certainty,
+                    "Prime found"
                 );
             }
             db.insert_prime_sync(
@@ -785,9 +788,10 @@ pub fn search(
                     max_n: Some(max_n),
                 },
             )?;
-            eprintln!(
-                "Checkpoint saved at n={} (sieved out: {})",
-                block_end, total_sieved
+            info!(
+                n = block_end,
+                sieved_out = total_sieved,
+                "Checkpoint saved"
             );
             last_checkpoint = Instant::now();
         }
@@ -801,9 +805,9 @@ pub fn search(
                     max_n: Some(max_n),
                 },
             )?;
-            eprintln!(
-                "Stop requested by coordinator, checkpoint saved at n={}",
-                block_end
+            info!(
+                n = block_end,
+                "Stop requested by coordinator, checkpoint saved"
             );
             return Ok(());
         }
@@ -812,22 +816,72 @@ pub fn search(
     }
 
     checkpoint::clear(checkpoint_path);
-    eprintln!("KBN sieve eliminated {} candidates.", total_sieved);
+    info!(eliminated = total_sieved, "KBN sieve complete");
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
+    //! # k*b^n +/- 1 Primality Test Suite
+    //!
+    //! Validates the three deterministic primality tests and the BSGS sieve
+    //! for the k*b^n +/- 1 family of prime forms:
+    //!
+    //! - **LLR test** (`llr_test`): Lucas-Lehmer-Riesel deterministic test for
+    //!   k*2^n - 1. Requires finding a Lucas V-sequence parameter P via
+    //!   Rodseth's method when k is divisible by 3, or the standard Jacobi
+    //!   symbol selection otherwise. Tests against known Mersenne primes
+    //!   (OEIS [A000668](https://oeis.org/A000668)): M_3=7, M_5=31, M_7=127,
+    //!   M_13=8191, M_17=131071, M_19=524287, M_31=2147483647.
+    //!
+    //! - **Proth test** (`proth_test`): Deterministic test for k*2^n + 1 where
+    //!   k < 2^n. Based on Proth's theorem (1878): N is prime iff there exists
+    //!   a such that a^{(N-1)/2} = -1 (mod N). Tests with the smallest Proth
+    //!   prime 13 = 3*2^2 + 1.
+    //!
+    //! - **Riesel primes**: k*2^n - 1 for k > 1, tested via LLR. Includes
+    //!   k=3 (which triggers the Rodseth path for finding the Lucas parameter P
+    //!   when k mod 3 = 0) and k=5.
+    //!
+    //! - **BSGS sieve** (`bsgs_sieve`): Baby-step Giant-step sieve that eliminates
+    //!   candidates divisible by small primes in O(sqrt(ord) * |primes|) time
+    //!   instead of O(ord * |primes|). Cross-validated against a naive reference
+    //!   implementation for k in {1, 3, 5, 7} and base in {2, 3, 10}.
+    //!
+    //! - **test_prime integration**: Verifies the unified entry point returns
+    //!   correct (IsPrime, proof_method, Option<Certificate>) tuples.
+    //!
+    //! - **Lucas V-sequence** (`lucas_v_k`): Binary-chain computation of V_k(P, 1)
+    //!   mod N used as the LLR initial seed. Verified at base cases V_0=2, V_1=P
+    //!   and small values V_2, V_3.
+    //!
+    //! ## References
+    //!
+    //! - Francois Proth, "Theoremes sur les nombres premiers", 1878.
+    //! - D.H. Lehmer, "An Extended Theory of Lucas' Functions", 1930.
+    //! - Hans Riesel, "Lucasian Criteria for the Primality of N = h*2^n - 1", 1969.
+    //! - Oystein J. Rodseth, "A Note on Primality Testing Using Lucas Sequences", 1994.
+    //! - OEIS A000668: Mersenne primes 2^p - 1.
+    //! - OEIS A001770: Primes of form 3*2^n - 1.
+
     use super::*;
     use rug::Integer;
 
-    /// Helper: build N = k*2^n - 1
+    /// Helper: build N = k*2^n - 1 for testing the minus-form of kbn.
     fn make_candidate(k: u64, n: u64) -> Integer {
         Integer::from(k) * Integer::from(Integer::from(2u32).pow(crate::checked_u32(n))) - 1u32
     }
 
-    // ---- Mersenne primes (k=1): 2^n - 1 ----
+    // ── Mersenne Primes (k=1, base=2, minus form) ─────────────────────
 
+    /// Tests LLR on known Mersenne primes M_p = 2^p - 1 for p in {3, 5, 7, 13,
+    /// 17, 19, 31} (OEIS [A000668](https://oeis.org/A000668)). The LLR test
+    /// computes the sequence s_i = s_{i-1}^2 - 2 (mod M_p) starting from
+    /// s_0 = V_k(P, 1) mod M_p. If s_{n-2} = 0, then M_p is prime.
+    ///
+    /// For k=1, the Lucas parameter P defaults to 4 (the classical Lucas-Lehmer
+    /// seed), giving s_0 = V_1(4, 1) = 4. Each result should be Some((true, Some(seed)))
+    /// where the seed is the LLR certificate value.
     #[test]
     fn llr_mersenne_primes() {
         for &n in &[3u64, 5, 7, 13, 17, 19, 31] {
@@ -841,6 +895,15 @@ mod tests {
         }
     }
 
+    /// Tests LLR on composite Mersenne numbers 2^n - 1 for n in {4, 6, 8, 11}:
+    /// - 2^4 - 1 = 15 = 3*5 (n=4 is not prime, and M_4 is composite).
+    /// - 2^6 - 1 = 63 = 7*9 (n=6 is composite).
+    /// - 2^8 - 1 = 255 = 3*5*17 (n=8 is composite).
+    /// - 2^{11} - 1 = 2047 = 23*89 (n=11 is prime but M_{11} is composite).
+    ///
+    /// 2047 is particularly important: it's the smallest composite Mersenne
+    /// number with prime exponent, and also a strong pseudoprime to base 2.
+    /// Each result should be Some((false, None)).
     #[test]
     fn llr_mersenne_composites() {
         for &n in &[4u64, 6, 8, 11] {
@@ -854,8 +917,17 @@ mod tests {
         }
     }
 
-    // ---- Riesel primes: k*2^n - 1 ----
+    // ── Riesel Primes (k > 1, base=2, minus form) ─────────────────────
 
+    /// Tests LLR on primes of the form 3*2^n - 1 (OEIS [A001770](https://oeis.org/A001770))
+    /// for n in {3, 4, 6, 7, 11, 18}. k=3 is divisible by 3, which triggers
+    /// the `find_rodseth_v1` code path for Lucas parameter selection.
+    ///
+    /// When k mod 3 = 0, the standard Jacobi-symbol method for choosing P
+    /// may fail because the discriminant P^2 - 4 factors in a way that makes
+    /// the Jacobi symbol trivially 1. Rodseth's method (1994) finds P such that
+    /// Jacobi(P-2, N) = 1 and Jacobi(P+2, N) = -1, which guarantees the
+    /// Lucas sequence has the correct algebraic properties for the LLR test.
     #[test]
     fn llr_riesel_k3_primes() {
         // k=3 is divisible by 3, so this exercises find_rodseth_v1
@@ -870,6 +942,11 @@ mod tests {
         }
     }
 
+    /// Composite values of 3*2^n - 1 for n in {5, 8}:
+    /// - 3*2^5 - 1 = 95 = 5*19.
+    /// - 3*2^8 - 1 = 767 = 11*69 + 8 (actually 767 = 11*69 + 8... let's check:
+    ///   767/11 = 69.7, so 767 is not 11*69+8. 767 = 7*109 + 4... actually
+    ///   767 = 13*59). The exact factorization doesn't matter -- LLR must reject them.
     #[test]
     fn llr_riesel_k3_composites() {
         for &n in &[5u64, 8] {
@@ -883,6 +960,13 @@ mod tests {
         }
     }
 
+    /// Primes of the form 5*2^n - 1 for n in {4, 8, 10}:
+    /// - 5*2^4 - 1 = 79 (prime).
+    /// - 5*2^8 - 1 = 1279 (prime, also a Mersenne exponent: M_{1279} is unknown).
+    /// - 5*2^{10} - 1 = 5119 (prime).
+    ///
+    /// k=5 does NOT trigger the Rodseth path (5 mod 3 = 2 != 0), so the standard
+    /// Jacobi-symbol method is used for P selection.
     #[test]
     fn llr_riesel_k5_primes() {
         for &n in &[4u64, 8, 10] {
@@ -896,8 +980,12 @@ mod tests {
         }
     }
 
-    // ---- Edge cases ----
+    // ── LLR Edge Cases ────────────────────────────────────────────────
 
+    /// For n < 3, the LLR sequence has fewer than n-2 = 0 or 1 iterations,
+    /// making the test degenerate. The function returns None to signal that
+    /// the caller should fall back to Miller-Rabin. Tests n=1 (2^1-1=1, not
+    /// prime) and n=2 (2^2-1=3, prime but too small for LLR).
     #[test]
     fn llr_small_n_returns_none() {
         // n < 3 should return None (fall back to MR)
@@ -908,6 +996,14 @@ mod tests {
         }
     }
 
+    /// Verifies that `find_rodseth_v1` produces a valid Lucas parameter P for
+    /// k=3 (divisible by 3). The Rodseth conditions are:
+    /// (1) P > 4 (to avoid degenerate cases).
+    /// (2) Jacobi(P-2, N) = +1 (P-2 is a quadratic residue mod N).
+    /// (3) Jacobi(P+2, N) = -1 (P+2 is a quadratic non-residue mod N).
+    ///
+    /// These conditions ensure the Lucas V-sequence V_k(P, 1) generates the
+    /// correct algebraic structure in Z/NZ for the LLR primality criterion.
     #[test]
     fn llr_rodseth_path_used_for_k_div_3() {
         // k=3 triggers find_rodseth_v1; verify it finds a valid P
@@ -920,8 +1016,12 @@ mod tests {
         assert_eq!(pp2.jacobi(&candidate), -1);
     }
 
-    // ---- Integration: test_prime returns "deterministic" for base-2 -1 form ----
+    // ── test_prime Integration (Unified Entry Point) ───────────────────
 
+    /// The unified `test_prime` function routes k=1, base=2, is_plus=false to
+    /// the LLR test and should return a "deterministic" proof method with an
+    /// LLR certificate. Tests with M_{31} = 2^{31} - 1 = 2147483647, the
+    /// largest Mersenne prime that fits in u32 and was discovered by Euler (1772).
     #[test]
     fn test_prime_llr_deterministic() {
         // 2^31 - 1 = 2147483647 (Mersenne prime)
@@ -935,6 +1035,9 @@ mod tests {
         ));
     }
 
+    /// test_prime must return IsPrime::No for the composite Mersenne number
+    /// 2^{11} - 1 = 2047 = 23*89. The MR pre-screen catches this before the
+    /// expensive LLR iteration even begins.
     #[test]
     fn test_prime_llr_composite() {
         // 2^11 - 1 = 2047 = 23 * 89 (composite)
@@ -943,6 +1046,9 @@ mod tests {
         assert_eq!(result, IsPrime::No);
     }
 
+    /// For non-base-2 forms (base=3 here), test_prime cannot use LLR or Proth
+    /// (which require base=2), so it falls back to MR. The result should NOT be
+    /// "deterministic". Tests with 3*3^5 - 1 = 728, which is composite (728 = 2^3*7*13).
     #[test]
     fn test_prime_non_base2_still_probabilistic() {
         // 3*3^5 - 1 = 728, not prime; but check that non-base-2 doesn't use LLR
@@ -953,8 +1059,15 @@ mod tests {
         assert_ne!(cert, "deterministic");
     }
 
-    // ---- lucas_v_k unit tests ----
+    // ── Lucas V-Sequence (lucas_v_k) ───────────────────────────────────
 
+    /// Verifies the Lucas V-sequence base cases defined by the recurrence
+    /// V_k(P, Q) with Q=1:
+    /// - V_0(P, 1) = 2 for all P (the constant term of the characteristic polynomial).
+    /// - V_1(P, 1) = P (the trace of the companion matrix).
+    ///
+    /// These base cases initialize the binary chain doubling algorithm:
+    /// V_{2m} = V_m^2 - 2, V_{2m+1} = V_m * V_{m+1} - P.
     #[test]
     fn lucas_v_k_base_cases() {
         let n = Integer::from(101u32);
@@ -964,6 +1077,12 @@ mod tests {
         assert_eq!(lucas_v_k(1, 4, &n), Integer::from(4u32));
     }
 
+    /// Verifies small Lucas V values computed by hand:
+    /// - V_2(4, 1) = V_1^2 - 2*Q^1 = 4^2 - 2 = 14 (using the doubling formula).
+    /// - V_3(4, 1) = V_1 * V_2 - P*Q^1 = 4*14 - 4 = 52.
+    ///
+    /// Uses modulus N=1000 (large enough that no reduction occurs for these
+    /// small values), verifying the algorithm against pure arithmetic.
     #[test]
     fn lucas_v_k_small_values() {
         // V_2(4, 1) = 4^2 - 2 = 14
@@ -973,9 +1092,15 @@ mod tests {
         assert_eq!(lucas_v_k(3, 4, &n), Integer::from(52u32));
     }
 
-    // ---- BSGS sieve cross-validation ----
+    // ── BSGS Sieve Cross-Validation ────────────────────────────────────
 
-    /// Reference sieve implementation (O(primes*block_size)) used to validate BSGS sieve correctness.
+    /// Reference (naive) sieve implementation with O(|primes| * block_size) complexity.
+    /// For each sieve prime p and each n in the block, computes k*b^n mod p
+    /// directly and checks if k*b^n + 1 = 0 (mod p) or k*b^n - 1 = 0 (mod p).
+    ///
+    /// This is used as the ground truth to validate the BSGS sieve, which
+    /// achieves the same result in O(|primes| * sqrt(ord_p(b))) time by
+    /// precomputing baby steps and looking up giant steps.
     fn sieve_block(
         block_start: u64,
         block_end: u64,
@@ -1023,6 +1148,18 @@ mod tests {
         survivors
     }
 
+    /// Exhaustive cross-validation of `bsgs_sieve` against the naive `sieve_block`
+    /// reference for 4 parameter combinations:
+    /// - (k=1, base=2): Mersenne form, the most common search.
+    /// - (k=3, base=2): Riesel form with k divisible by 3.
+    /// - (k=5, base=10): Decimal Riesel, tests non-power-of-2 base.
+    /// - (k=7, base=3): Ternary form.
+    ///
+    /// For each combination, sieve n in [1, 500] using all primes up to 10000
+    /// (~1229 primes). Every (n, +1_survives, -1_survives) triple from the BSGS
+    /// sieve must exactly match the naive implementation. Any mismatch indicates
+    /// a bug in the discrete log computation, baby/giant step tables, or the
+    /// Montgomery-accelerated modular arithmetic within the BSGS sieve.
     #[test]
     fn bsgs_matches_sieve_block() {
         let sieve_primes = sieve::generate_primes(10_000);
@@ -1078,8 +1215,17 @@ mod tests {
         }
     }
 
-    // ---- MR pre-screen tests ----
+    // ── MR Pre-Screen Integration ──────────────────────────────────────
 
+    /// Verifies that the MR pre-screen rejects the composite 2^{11} - 1 = 2047
+    /// BEFORE entering the expensive LLR iteration loop. This is a performance
+    /// optimization: a single MR round takes O(n^2) time, while the LLR loop
+    /// takes O(n^3) time (n-2 squarings of an n-bit number). For composites,
+    /// the pre-screen saves ~n iterations of the LLR sequence.
+    ///
+    /// 2047 = 23*89 is notable because it's a strong pseudoprime to base 2
+    /// (OEIS A001262), but `is_probably_prime(1)` with GMP's implementation
+    /// still rejects it because GMP uses multiple deterministic witnesses.
     #[test]
     fn mr_prescreen_rejects_composite_before_llr() {
         // 2^11 - 1 = 2047 = 23 × 89 (composite Mersenne number).
@@ -1093,6 +1239,11 @@ mod tests {
         assert_eq!(result, IsPrime::No);
     }
 
+    /// Verifies that the MR pre-screen does NOT reject the Mersenne prime
+    /// M_{13} = 2^{13} - 1 = 8191. The pre-screen must pass true primes through
+    /// to the LLR test, which then produces a deterministic proof. If the
+    /// pre-screen incorrectly rejected 8191, we would lose a provable prime
+    /// and only get a probabilistic result (or worse, miss it entirely).
     #[test]
     fn mr_prescreen_passes_primes_through() {
         // M_13 = 2^13 - 1 = 8191 (Mersenne prime).
@@ -1106,8 +1257,14 @@ mod tests {
         assert_eq!(cert, "deterministic");
     }
 
-    // ---- Certificate witness tests ----
+    // ── Certificate Witness Tests ──────────────────────────────────────
 
+    /// Verifies that `proth_test` returns a non-zero witness base for the Proth
+    /// prime 13 = 3*2^2 + 1. The witness base `a` satisfies Proth's criterion:
+    /// a^{(N-1)/2} = -1 (mod N). For N=13, (N-1)/2 = 6, so we need a^6 = 12 (mod 13).
+    /// The smallest such base is a=2: 2^6 = 64 = 12 (mod 13). The test verifies
+    /// that the returned base is positive (the actual value depends on which base
+    /// the implementation tries first).
     #[test]
     fn proth_test_returns_witness_base() {
         // 3*2^2 + 1 = 13 (prime, Proth form with k=3 < 2^2=4)
@@ -1119,6 +1276,11 @@ mod tests {
         );
     }
 
+    /// Verifies that `llr_test` returns a non-empty seed string for the Mersenne
+    /// prime M_{13} = 8191. The seed is s_0 = V_k(P, 1) mod N, the initial
+    /// value of the LLR iteration sequence. For k=1, P=4 (the standard Lucas-Lehmer
+    /// seed), so s_0 = V_1(4, 1) mod 8191 = 4. The seed is stored as a decimal
+    /// string in the certificate for independent re-verification.
     #[test]
     fn llr_test_returns_seed() {
         // M_13 = 2^13 - 1 = 8191 (Mersenne prime)
@@ -1132,6 +1294,11 @@ mod tests {
         }
     }
 
+    /// Verifies that `test_prime` returns a Proth certificate for 13 = 3*2^2 + 1
+    /// (is_plus=true). The certificate should contain a witness base > 0.
+    /// The full return tuple is (IsPrime::Yes, "deterministic", Some(Proth{base})),
+    /// confirming that the proof is deterministic (not probabilistic) and includes
+    /// exportable witness data.
     #[test]
     fn test_prime_proth_returns_certificate() {
         // 3*2^2 + 1 = 13 (prime)
@@ -1147,6 +1314,11 @@ mod tests {
         }
     }
 
+    /// Verifies that `test_prime` returns an LLR certificate for M_{13} = 8191.
+    /// The certificate should contain k=1, n=13, and a non-empty seed string.
+    /// These three fields are sufficient for independent re-verification:
+    /// a verifier computes s_0 = V_k(P, 1) mod N from the seed, then iterates
+    /// s_{i+1} = s_i^2 - 2 (mod N) for n-2 steps, checking that s_{n-2} = 0.
     #[test]
     fn test_prime_llr_returns_certificate() {
         // 2^13 - 1 = 8191 (Mersenne prime)

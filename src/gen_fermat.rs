@@ -55,6 +55,8 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Instant;
 
+use tracing::info;
+
 use crate::checkpoint::{self, Checkpoint};
 use crate::db::Database;
 use crate::events::{self, EventBus};
@@ -180,7 +182,7 @@ pub fn search(
     };
 
     if min_b > max_b {
-        eprintln!("No even bases in range. Search complete.");
+        info!("no even bases in range, search complete");
         return Ok(());
     }
 
@@ -192,14 +194,17 @@ pub fn search(
 
     let sieve_primes = sieve::generate_primes(sieve_limit);
     let total_bases = (max_b - min_b) / 2 + 1;
-    eprintln!(
-        "Generalized Fermat search: b^(2^{}) + 1, b even in [{}, {}] ({} bases)",
-        fermat_n, min_b, max_b, total_bases
+    info!(
+        fermat_n,
+        min_b,
+        max_b,
+        total_bases,
+        "generalized Fermat search started"
     );
-    eprintln!(
-        "Sieve initialized with {} primes up to {}",
-        sieve_primes.len(),
-        sieve_limit
+    info!(
+        prime_count = sieve_primes.len(),
+        sieve_limit,
+        "sieve initialized"
     );
 
     let resume_from = match checkpoint::load(checkpoint_path) {
@@ -207,7 +212,7 @@ pub fn search(
             if last_base >= min_b && last_base < max_b =>
         {
             let next = last_base + 2;
-            eprintln!("Resuming generalized Fermat search from b={}", next);
+            info!(resume_b = next, "resuming generalized Fermat search");
             next
         }
         _ => min_b,
@@ -216,10 +221,10 @@ pub fn search(
     // Minimum b where b^(2^n) + 1 > sieve_limit
     let sieve_min_b =
         ((sieve_limit as f64).powf(1.0 / (1u64 << fermat_n) as f64)).ceil() as u64 + 1;
-    eprintln!("Sieve active for b >= {}", sieve_min_b);
+    info!(sieve_min_b, "sieve active");
 
     // Sieve
-    eprintln!("Running sieve...");
+    info!("running sieve");
     let survives = sieve_gf(resume_from, max_b, fermat_n, &sieve_primes, sieve_min_b);
     let survivors: Vec<u64> = (0..survives.len())
         .filter(|&i| survives[i])
@@ -228,12 +233,12 @@ pub fn search(
 
     let total_range = ((max_b - resume_from) / 2 + 1) as usize;
     let eliminated = total_range - survivors.len();
-    eprintln!(
-        "Sieve eliminated {} of {} bases ({} survivors, {:.1}%)",
+    info!(
         eliminated,
-        total_range,
-        survivors.len(),
-        survivors.len() as f64 / total_range.max(1) as f64 * 100.0,
+        total = total_range,
+        survivors = survivors.len(),
+        survivor_pct = survivors.len() as f64 / total_range.max(1) as f64 * 100.0,
+        "sieve complete"
     );
 
     // Process in blocks for checkpointing
@@ -307,9 +312,11 @@ pub fn search(
                     timestamp: Instant::now(),
                 });
             } else {
-                eprintln!(
-                    "*** GENERALIZED FERMAT PRIME FOUND: {} ({} digits, {}) ***",
-                    expr, digits, certainty
+                info!(
+                    expression = %expr,
+                    digits,
+                    certainty = %certainty,
+                    "generalized Fermat prime found"
                 );
             }
             db.insert_prime_sync(
@@ -336,7 +343,7 @@ pub fn search(
                     max_base: Some(max_b),
                 },
             )?;
-            eprintln!("Checkpoint saved at b={}", block_max);
+            info!(b = block_max, "checkpoint saved");
             last_checkpoint = Instant::now();
         }
 
@@ -350,16 +357,13 @@ pub fn search(
                     max_base: Some(max_b),
                 },
             )?;
-            eprintln!(
-                "Stop requested by coordinator, checkpoint saved at b={}",
-                block_max
-            );
+            info!(b = block_max, "stop requested by coordinator, checkpoint saved");
             return Ok(());
         }
     }
 
     checkpoint::clear(checkpoint_path);
-    eprintln!("Generalized Fermat search complete.");
+    info!("generalized Fermat search complete");
     Ok(())
 }
 

@@ -92,7 +92,8 @@ export function StatsBar() {
   ];
 
   return (
-    <section className="border-y border-border bg-card">
+    <section className="relative border-y border-border/50">
+      <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-accent-purple/30 to-transparent" />
       <div className="mx-auto max-w-7xl px-6 sm:px-8 lg:px-12 py-8">
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-6">
           {items.map((stat) => (
@@ -100,12 +101,12 @@ export function StatsBar() {
               <div className="flex items-center justify-center gap-2 mb-1">
                 {stat.isLive && (
                   <span
-                    className={`inline-block w-2 h-2 rounded-full ${
+                    className={`inline-block w-1.5 h-1.5 rounded-full ${
                       live ? "bg-accent-green pulse-green" : "bg-muted-foreground/40"
                     }`}
                   />
                 )}
-                <span className="text-3xl font-bold font-mono text-foreground">
+                <span className="text-3xl font-bold font-mono tracking-tight text-foreground">
                   {stat.value}
                 </span>
               </div>
@@ -114,6 +115,7 @@ export function StatsBar() {
           ))}
         </div>
       </div>
+      <div className="absolute inset-x-0 bottom-0 h-px bg-gradient-to-r from-transparent via-accent-purple/30 to-transparent" />
     </section>
   );
 }

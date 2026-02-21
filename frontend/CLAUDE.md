@@ -59,7 +59,7 @@ src/
 │   ├── login/page.tsx             # Email/password login (Supabase Auth)
 │   ├── browse/page.tsx            # Primes browser (filter, paginate, detail dialog)
 │   ├── searches/page.tsx          # Search job management
-│   ├── fleet/page.tsx             # Fleet monitoring (workers, health)
+│   ├── network/page.tsx           # Network monitoring (nodes, health)
 │   ├── agents/page.tsx            # AI agent management (tasks, budgets, memory)
 │   ├── projects/page.tsx          # Project campaigns
 │   ├── leaderboard/page.tsx       # Form leaderboard rankings
@@ -248,7 +248,8 @@ The frontend calls these Rust backend endpoints (via WebSocket and REST):
 | `/api/docs/*` | GET | Documentation content |
 | `/api/observability/*` | GET | Metrics, logs, charts |
 | `/api/releases/*` | GET/POST | Release channels |
-| `/api/volunteer/*` | GET/POST | Volunteer management |
+| `/api/v1/operators/*` | GET/POST | Operator management |
+| `/api/v1/nodes/*` | GET/POST | Node management |
 | `/api/notifications/*` | GET/POST | Push notifications |
 
 ## Roadmap

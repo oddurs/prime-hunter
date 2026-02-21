@@ -42,6 +42,8 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Instant;
 
+use tracing::info;
+
 use crate::checkpoint::{self, Checkpoint};
 use crate::db::Database;
 use crate::events::{self, EventBus};
@@ -121,23 +123,16 @@ pub fn search(
     let sieve_limit = sieve::resolve_sieve_limit(sieve_limit, candidate_bits, n_range);
 
     let sieve_primes = sieve::generate_primes(sieve_limit);
-    eprintln!(
-        "Repunit search: R({}, n) = ({}^n-1)/{}, n prime in [{}, {}]",
-        base,
-        base,
-        base - 1,
-        min_n,
-        max_n
-    );
-    eprintln!(
-        "Sieve initialized with {} primes up to {}",
-        sieve_primes.len(),
-        sieve_limit
+    info!(base, min_n, max_n, "repunit search started");
+    info!(
+        prime_count = sieve_primes.len(),
+        sieve_limit,
+        "sieve initialized"
     );
 
     let resume_from = match checkpoint::load(checkpoint_path) {
         Some(Checkpoint::Repunit { last_n, .. }) if last_n >= min_n && last_n < max_n => {
-            eprintln!("Resuming repunit search from n={}", last_n + 1);
+            info!(resume_n = last_n + 1, "resuming repunit search");
             last_n + 1
         }
         _ => min_n,
@@ -150,11 +145,11 @@ pub fn search(
         .filter(|&p| p >= resume_from)
         .collect();
 
-    eprintln!("{} prime exponents in range", prime_exponents.len());
+    info!(count = prime_exponents.len(), "prime exponents in range");
 
     if prime_exponents.is_empty() {
         checkpoint::clear(checkpoint_path);
-        eprintln!("No prime exponents in range. Search complete.");
+        info!("no prime exponents in range, search complete");
         return Ok(());
     }
 
@@ -166,7 +161,7 @@ pub fn search(
     } else {
         u64::MAX
     };
-    eprintln!("Sieve active for n >= {}", sieve_min_n);
+    info!(sieve_min_n, "sieve active");
 
     // Sieve
     let survives = sieve_repunit(&prime_exponents, base, &sieve_primes, sieve_min_n);
@@ -178,12 +173,12 @@ pub fn search(
         .collect();
 
     let eliminated = prime_exponents.len() - survivors.len();
-    eprintln!(
-        "Sieve eliminated {} of {} candidates ({} survivors, {:.1}%)",
+    info!(
         eliminated,
-        prime_exponents.len(),
-        survivors.len(),
-        survivors.len() as f64 / prime_exponents.len().max(1) as f64 * 100.0,
+        total = prime_exponents.len(),
+        survivors = survivors.len(),
+        survivor_pct = survivors.len() as f64 / prime_exponents.len().max(1) as f64 * 100.0,
+        "sieve complete"
     );
 
     // Process in blocks for checkpointing
@@ -258,9 +253,11 @@ pub fn search(
                     timestamp: Instant::now(),
                 });
             } else {
-                eprintln!(
-                    "*** REPUNIT PRIME FOUND: {} ({} digits, {}) ***",
-                    expr, digits, certainty
+                info!(
+                    expression = %expr,
+                    digits,
+                    certainty = %certainty,
+                    "repunit prime found"
                 );
             }
             db.insert_prime_sync(
@@ -287,7 +284,7 @@ pub fn search(
                     max_n: Some(max_n),
                 },
             )?;
-            eprintln!("Checkpoint saved at n={}", block_max);
+            info!(n = block_max, "checkpoint saved");
             last_checkpoint = Instant::now();
         }
 
@@ -301,31 +298,69 @@ pub fn search(
                     max_n: Some(max_n),
                 },
             )?;
-            eprintln!(
-                "Stop requested by coordinator, checkpoint saved at n={}",
-                block_max
-            );
+            info!(n = block_max, "stop requested by coordinator, checkpoint saved");
             return Ok(());
         }
     }
 
     checkpoint::clear(checkpoint_path);
-    eprintln!("Repunit search complete.");
+    info!("repunit search complete");
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
+    //! Tests for the repunit prime search module.
+    //!
+    //! ## Mathematical Form
+    //!
+    //! Repunit primes are primes of the form R(b, n) = (b^n - 1)/(b - 1), which
+    //! equals the number consisting of n repetitions of the digit 1 in base b.
+    //! In base 10: R(10,1) = 1, R(10,2) = 11, R(10,3) = 111, etc.
+    //!
+    //! A necessary condition for R(b, n) to be prime is that n itself is prime
+    //! (since R(b, ab) has algebraic factors via the cyclotomic polynomial).
+    //! The base-2 repunits R(2, n) = 2^n - 1 are the Mersenne numbers.
+    //!
+    //! Known repunit prime exponents:
+    //!   - Base 10: n in {2, 19, 23, 317, 1031, ...} (OEIS [A004023](https://oeis.org/A004023))
+    //!   - Base 2: n in {2, 3, 5, 7, 13, 17, 19, 31, ...} (Mersenne, OEIS [A000043](https://oeis.org/A000043))
+    //!   - Base 3: n in {3, 7, 13, 71, 103, ...} (OEIS [A028491](https://oeis.org/A028491))
+    //!   - Base 5: n in {3, 7, 11, 13, ...} (OEIS [A004061](https://oeis.org/A004061))
+    //!
+    //! ## Key References
+    //!
+    //! - Harvey Dubner, "Generalized Repunit Primes", Mathematics of Computation,
+    //!   61(204), 1993.
+    //! - Repunit sieve: each sieve prime q eliminates at most one exponent n
+    //!   (where n = ord_q(b) if that order is prime). This "one-per-prime"
+    //!   property makes the sieve less effective than for other forms.
+    //!
+    //! ## Testing Strategy
+    //!
+    //! 1. **Known primes**: Verify known repunit primes across bases 2, 3, 5, 10.
+    //! 2. **Known composites**: Confirm composite repunits fail MR.
+    //! 3. **Sieve correctness**: Verify the multiplicative-order sieve eliminates
+    //!    composites without affecting primes.
+    //! 4. **Algebraic factoring**: Test divisibility of composite-index repunits.
+    //! 5. **Formula verification**: Confirm R(b, n) values match expectations.
+
     use super::*;
 
+    /// Helper: compute the repunit R(base, n) = (base^n - 1) / (base - 1).
     fn repunit(base: u32, n: u64) -> Integer {
         (Integer::from(base).pow(crate::checked_u32(n)) - 1u32) / (base - 1) as u32
     }
 
+    // ── Known Primes (OEIS A004023) ─────────────────────────────────────
+
+    /// Verifies known base-10 repunit primes pass Miller-Rabin.
+    ///
+    /// R(10, 2) = 11 and R(10, 19) = 1111111111111111111 are prime
+    /// (OEIS A004023). R(10, 23) is also prime with 23 digits.
+    /// These are the only known base-10 repunit primes with n < 100.
     #[test]
     fn known_repunit_primes_base10() {
-        // R(10,2) = 11, R(10,19) = 1111111111111111111
-        // Both are prime (OEIS A004023)
         for &n in &[2u64, 19, 23] {
             let r = repunit(10, n);
             assert_ne!(
@@ -338,12 +373,19 @@ mod tests {
         }
     }
 
+    /// Verifies that composite base-10 repunits are correctly identified.
+    ///
+    /// Despite having prime exponents, these R(10, n) values are composite:
+    ///   - R(10, 3) = 111 = 3 * 37
+    ///   - R(10, 5) = 11111 = 41 * 271
+    ///   - R(10, 7) = 1111111 = 239 * 4649
+    ///   - R(10, 11) = 21649 * 513239
+    ///   - R(10, 13) and R(10, 17) are also composite
+    ///
+    /// The sparsity of base-10 repunit primes is remarkable: only 5 are known
+    /// among the first ~100000 prime exponents.
     #[test]
     fn known_repunit_composites_base10() {
-        // R(10,3) = 111 = 3*37
-        // R(10,5) = 11111 = 41*271
-        // R(10,7) = 1111111 = 239*4649
-        // R(10,11) = 21649*513239
         for &n in &[3u64, 5, 7, 11, 13, 17] {
             let r = repunit(10, n);
             assert_eq!(
@@ -356,10 +398,17 @@ mod tests {
         }
     }
 
+    /// Verifies Mersenne primes as base-2 repunits: R(2, n) = 2^n - 1.
+    ///
+    /// Mersenne primes (OEIS A000668) are the most studied repunit class.
+    /// Known exponents: n in {2, 3, 5, 7, 13, 17, 19, 31, 61, 89, 107, ...}
+    /// (OEIS A000043). This test covers the first 7 Mersenne prime exponents.
+    ///
+    /// The Lucas-Lehmer test provides a deterministic primality test for
+    /// Mersenne numbers, but the repunit search module uses the general
+    /// MR approach since it handles arbitrary bases.
     #[test]
     fn known_repunit_primes_base2() {
-        // R(2,n) = 2^n - 1 (Mersenne numbers)
-        // Prime for n = 2, 3, 5, 7, 13, 17, 19
         for &n in &[2u64, 3, 5, 7, 13, 17, 19] {
             let r = repunit(2, n);
             assert_ne!(
@@ -372,10 +421,14 @@ mod tests {
         }
     }
 
+    /// Verifies known base-3 repunit primes (OEIS A028491).
+    ///
+    /// R(3, n) = (3^n - 1)/2. Known prime exponents: n in {3, 7, 13, 71, 103, ...}.
+    ///   - R(3, 3) = 13
+    ///   - R(3, 7) = 1093 (notable: 1093 is a Wieferich prime)
+    ///   - R(3, 13) = 797161
     #[test]
     fn known_repunit_primes_base3() {
-        // R(3,n) prime for n = 3 (13), 7 (1093), 13 (797161)
-        // OEIS A028491
         for &n in &[3u64, 7, 13] {
             let r = repunit(3, n);
             assert_ne!(
@@ -388,9 +441,14 @@ mod tests {
         }
     }
 
+    /// Verifies composite base-3 repunits.
+    ///
+    /// R(3, 5) = (243-1)/2 = 121 = 11^2 is a perfect square — an interesting
+    /// case because perfect-square repunits are extremely rare. R(3, 11) is
+    /// also composite. These confirm the test pipeline correctly rejects
+    /// composite repunits in non-decimal bases.
     #[test]
     fn repunit_composites_base3() {
-        // R(3,5) = (243-1)/2 = 121 = 11^2
         let r = repunit(3, 5);
         assert_eq!(r, 121);
         assert_eq!(r.is_probably_prime(25), IsPrime::No, "R(3,5) = 121 = 11^2");
@@ -404,6 +462,17 @@ mod tests {
         );
     }
 
+    // ── Sieve Correctness ─────────────────────────────────────────────
+
+    /// Verifies the multiplicative-order sieve: eliminated candidates must be composite,
+    /// and known primes must survive.
+    ///
+    /// The repunit sieve uses a distinctive approach: for each sieve prime q,
+    /// compute ord_q(b) (the multiplicative order of b mod q). If ord_q(b) is
+    /// prime and equals some exponent n in our search range, then q | R(b, n).
+    /// This "one elimination per sieve prime" property is verified here by
+    /// checking that every eliminated candidate is actually composite, and
+    /// that the known primes R(10, 2), R(10, 19), R(10, 23) survive.
     #[test]
     fn sieve_eliminates_composites() {
         let sieve_primes = sieve::generate_primes(10_000);
@@ -444,6 +513,14 @@ mod tests {
         }
     }
 
+    // ── Form Generation ─────────────────────────────────────────────────
+
+    /// Verifies the repunit formula R(b, n) = (b^n - 1)/(b - 1) for small values.
+    ///
+    /// Cross-checks the computed values against known decimal equivalents:
+    ///   - R(10, 1) = 1, R(10, 2) = 11, R(10, 3) = 111, R(10, 4) = 1111
+    ///   - R(2, 3) = 7 (Mersenne: 2^3 - 1)
+    ///   - R(3, 3) = 13 (base-3: (27-1)/2)
     #[test]
     fn repunit_values_correct() {
         assert_eq!(repunit(10, 1), 1);
@@ -454,12 +531,18 @@ mod tests {
         assert_eq!(repunit(3, 3), 13); // (27-1)/2 = 13
     }
 
-    // ---- Additional repunit tests ----
+    // ── Additional Base Tests ──────────────────────────────────────────
 
+    /// Verifies known base-5 repunit primes (OEIS A004061).
+    ///
+    /// R(5, n) = (5^n - 1)/4. Known prime exponents: n in {3, 7, 11, 13, ...}.
+    ///   - R(5, 3) = 31 (prime)
+    ///   - R(5, 7) = 19531 (prime)
+    ///
+    /// Testing multiple bases ensures the formula and sieve generalize beyond
+    /// the commonly-studied base-10 and base-2 cases.
     #[test]
     fn repunit_base5_known_primes() {
-        // R(5,3) = (125-1)/4 = 31 (prime)
-        // R(5,7) = (5^7-1)/4 = 19531 (prime)
         let r3 = repunit(5, 3);
         assert_eq!(r3, 31);
         assert_ne!(
@@ -477,9 +560,14 @@ mod tests {
         );
     }
 
+    /// Verifies composite Mersenne numbers (base-2 repunit composites).
+    ///
+    ///   - R(2, 11) = 2047 = 23 * 89 — the smallest Mersenne number with prime
+    ///     exponent that is composite. Historically notable as a counterexample
+    ///     to the conjecture that 2^p - 1 is always prime for prime p.
+    ///   - R(2, 23) = 8388607 = 47 * 178481
     #[test]
     fn repunit_base2_composites() {
-        // R(2,11) = 2^11-1 = 2047 = 23*89 (composite)
         let r11 = repunit(2, 11);
         assert_eq!(r11, 2047);
         assert_eq!(
@@ -494,9 +582,16 @@ mod tests {
         assert_eq!(r23.is_probably_prime(25), IsPrime::No, "R(2,23) composite");
     }
 
+    // ── Sieve Theory Verification ──────────────────────────────────────
+
+    /// Verifies the multiplicative-order divisibility: ord_41(10) = 5, so 41 | R(10,5).
+    ///
+    /// The core sieve theorem: if q does not divide (b-1), then q | R(b, n) iff
+    /// ord_q(b) | n. Since n must be prime for R(b, n) to be prime, this means
+    /// n = ord_q(b) when ord_q(b) is itself prime. Here ord_41(10) = 5 (prime),
+    /// so 41 | R(10, 5) = 11111. Verified: 11111 = 41 * 271.
     #[test]
     fn sieve_repunit_divisibility_by_order() {
-        // ord_41(10) = 5 (since 10^5 ≡ 1 mod 41), so 41 | R(10,5) = 11111
         let r5 = repunit(10, 5);
         assert_eq!(r5, 11111);
         assert!(
@@ -507,9 +602,17 @@ mod tests {
         assert_eq!(sieve::multiplicative_order(10, 41), 5);
     }
 
+    /// Verifies the (b-1) divisibility case: when q | (b-1), R(b,n) = n (mod q).
+    ///
+    /// When q divides (b-1), the geometric series formula gives
+    /// R(b, n) = sum(b^i, i=0..n-1) = n * 1 = n (mod q), since b = 1 (mod q).
+    /// Therefore q | R(b, n) iff q | n, i.e., n = q.
+    ///
+    /// Example: 3 | (10-1) = 9, so R(10, n) = n (mod 3).
+    /// Thus 3 | R(10, 3) = 111 (since 3 = 0 mod 3), but 3 does not divide
+    /// R(10, 2) = 11 (since 2 != 0 mod 3).
     #[test]
     fn sieve_repunit_b_minus_1_case() {
-        // 3 | (10-1) = 9, so R(10,n) ≡ n (mod 3)
         // Therefore 3 | R(10,3) = 111 (since 3 ≡ 0 mod 3)
         let r3 = repunit(10, 3);
         assert_eq!(r3, 111);
@@ -523,10 +626,17 @@ mod tests {
         assert!(!r2.is_divisible_u(3), "3 should NOT divide R(10,2) = 11");
     }
 
+    // ── Algebraic Factoring ────────────────────────────────────────────
+
+    /// Verifies algebraic factoring: R(b, mn) is divisible by R(b, m) and R(b, n).
+    ///
+    /// For composite exponent c = a*b: R(base, c) = R(base, a) * (base^(a*(b-1)) + ... + 1).
+    /// This is why only prime exponents can yield repunit primes.
+    ///
+    /// R(10, 6) must be divisible by both R(10, 2) = 11 and R(10, 3) = 111
+    /// since 6 = 2 * 3. Verified: R(10, 6) = 111111 = 111 * 1001 = 11 * 10101.
     #[test]
     fn repunit_composite_exponents_factor() {
-        // R(10,6) should be divisible by R(10,2) = 11 and R(10,3) = 111
-        // Since 6 = 2*3, algebraic factoring gives R(b,ab) = R(b,a) * something
         let r6 = repunit(10, 6);
         let r2 = repunit(10, 2);
         let r3 = repunit(10, 3);
@@ -540,10 +650,14 @@ mod tests {
         );
     }
 
+    /// Soundness check: known repunit prime exponents must survive the sieve.
+    ///
+    /// Tests that R(10, 2), R(10, 19), and R(10, 23) — the three smallest
+    /// base-10 repunit primes — are not eliminated by the sieve. A false
+    /// elimination would mean the multiplicative-order computation or the
+    /// sieve logic has a bug.
     #[test]
     fn sieve_repunit_preserves_known_primes() {
-        // Known repunit prime indices in base 10: 2, 19, 23
-        // These should survive the sieve
         let sieve_primes = sieve::generate_primes(10_000);
         let exponents: Vec<u64> = vec![2, 3, 5, 7, 11, 13, 17, 19, 23];
         let sieve_min_n = 5u64;

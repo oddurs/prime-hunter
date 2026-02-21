@@ -1,5 +1,7 @@
 # Public Compute Roadmap
 
+> **Deprecated (Feb 2026):** This roadmap has been superseded by [`architecture.md`](architecture.md) and [`network.md`](network.md). Retained for historical context. New work should reference those documents instead.
+
 Build a volunteer-grade public compute offering for darkreach.
 
 **Goal:** match the release, reliability, and operator quality of GIMPS/PrimeGrid while keeping darkreach's own architecture and search strategy.

@@ -67,11 +67,6 @@ struct Cli {
     #[arg(long)]
     pfgw_path: Option<PathBuf>,
 
-    /// Coordinator dashboard URL (e.g. http://coordinator:7001). When set, worker registers
-    /// itself, heartbeats progress, and reports found primes to the coordinator.
-    #[arg(long)]
-    coordinator: Option<String>,
-
     /// Worker ID for fleet identification (defaults to hostname)
     #[arg(long)]
     worker_id: Option<String>,
@@ -266,8 +261,9 @@ enum Commands {
         #[command(subcommand)]
         action: ProjectAction,
     },
-    /// Register as a volunteer and receive an API key
-    Join {
+    /// Register as an operator and receive an API key
+    #[command(alias = "join")]
+    Register {
         /// Your username
         #[arg(long)]
         username: String,
@@ -278,8 +274,9 @@ enum Commands {
         #[arg(long)]
         server: String,
     },
-    /// Run as a volunteer worker (claim work, compute, submit results)
-    Volunteer,
+    /// Run as an operator node (claim work, compute, submit results)
+    #[command(alias = "volunteer")]
+    Run,
 }
 
 #[derive(Subcommand)]
@@ -329,14 +326,22 @@ enum ProjectAction {
 fn main() -> Result<()> {
     let _ = dotenvy::dotenv();
 
-    // Initialize structured logging: LOG_FORMAT=json for K8s, human-readable otherwise
+    // Initialize structured logging with RUST_LOG filtering.
+    // LOG_FORMAT=json for K8s/log aggregation, human-readable otherwise.
     let log_format = std::env::var("LOG_FORMAT").unwrap_or_default();
+    let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("darkreach=info,tower_http=info"));
     if log_format == "json" {
-        tracing_subscriber::fmt().json().with_target(false).init();
+        tracing_subscriber::fmt()
+            .json()
+            .with_target(true)
+            .with_env_filter(env_filter)
+            .init();
     } else {
         tracing_subscriber::fmt()
             .with_writer(std::io::stderr)
             .with_target(false)
+            .with_env_filter(env_filter)
             .init();
     }
 
@@ -392,12 +397,12 @@ fn main() -> Result<()> {
                 tool,
             )
         }
-        Commands::Join {
+        Commands::Register {
             username,
             email,
             server,
-        } => cli::run_join(server, username, email),
-        Commands::Volunteer => cli::run_volunteer(&cli),
+        } => cli::run_register(server, username, email),
+        Commands::Run => cli::run_operator(&cli),
         _ => cli::run_search(&cli),
     }
 }

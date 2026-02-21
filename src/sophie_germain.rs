@@ -46,6 +46,8 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Instant;
 
+use tracing::info;
+
 use crate::checkpoint::{self, Checkpoint};
 use crate::db::Database;
 use crate::events::{self, EventBus};
@@ -81,19 +83,16 @@ pub fn search(
     let sieve_limit = sieve::resolve_sieve_limit(sieve_limit, candidate_bits, n_range);
 
     let sieve_primes = sieve::generate_primes(sieve_limit);
-    eprintln!(
-        "Sophie Germain search: p={}*{}^n-1, 2p+1={}*{}^n-1, n=[{}, {}]",
-        k, base, k2, base, min_n, max_n
-    );
-    eprintln!(
-        "Sieve initialized with {} primes up to {}",
-        sieve_primes.len(),
-        sieve_limit
+    info!(k, k2, base, min_n, max_n, "Sophie Germain search started");
+    info!(
+        prime_count = sieve_primes.len(),
+        sieve_limit,
+        "sieve initialized"
     );
 
     let resume_from = match checkpoint::load(checkpoint_path) {
         Some(Checkpoint::SophieGermain { last_n, .. }) if last_n >= min_n && last_n < max_n => {
-            eprintln!("Resuming Sophie Germain search from n={}", last_n + 1);
+            info!(resume_n = last_n + 1, "resuming Sophie Germain search");
             last_n + 1
         }
         _ => min_n,
@@ -108,21 +107,15 @@ pub fn search(
         u64::MAX
     };
     // For 2k form, sieve_min_n is at most the same (2k is larger)
-    eprintln!("Sieve active for n >= {}", sieve_min_n);
+    info!(sieve_min_n, "sieve active");
 
     // Sieve for p = k*b^n - 1
-    eprintln!(
-        "Running sieve for p={}*{}^n-1 over n=[{}..{}]...",
-        k, base, resume_from, max_n
-    );
+    info!(k, base, from = resume_from, to = max_n, "running sieve for p=k*b^n-1");
     let (_plus_surv_k, minus_surv_k) =
         kbn::bsgs_sieve(resume_from, max_n, k, base, &sieve_primes, sieve_min_n);
 
     // Sieve for 2p+1 = 2k*b^n - 1
-    eprintln!(
-        "Running sieve for 2p+1={}*{}^n-1 over n=[{}..{}]...",
-        k2, base, resume_from, max_n
-    );
+    info!(k = k2, base, from = resume_from, to = max_n, "running sieve for 2p+1=2k*b^n-1");
     let (_plus_surv_k2, minus_surv_k2) =
         kbn::bsgs_sieve(resume_from, max_n, k2, base, &sieve_primes, sieve_min_n);
 
@@ -130,11 +123,11 @@ pub fn search(
     let sg_survivors: u64 = (0..minus_surv_k.len())
         .filter(|&i| minus_surv_k.get(i) && minus_surv_k2.get(i))
         .count() as u64;
-    eprintln!(
-        "Sieve complete: {} Sophie Germain candidates of {} ({:.1}%)",
+    info!(
         sg_survivors,
         total_range,
-        sg_survivors as f64 / total_range as f64 * 100.0,
+        survivor_pct = sg_survivors as f64 / total_range as f64 * 100.0,
+        "sieve complete"
     );
 
     let mut last_checkpoint = Instant::now();
@@ -228,9 +221,11 @@ pub fn search(
                     timestamp: Instant::now(),
                 });
             } else {
-                eprintln!(
-                    "*** SOPHIE GERMAIN PRIME FOUND: p={} ({} digits, {}) ***",
-                    expr, digits, certainty
+                info!(
+                    expression = %expr,
+                    digits,
+                    certainty = %certainty,
+                    "Sophie Germain prime found"
                 );
             }
             db.insert_prime_sync(
@@ -258,10 +253,7 @@ pub fn search(
                     max_n: Some(max_n),
                 },
             )?;
-            eprintln!(
-                "Checkpoint saved at n={} (sieved out: {})",
-                block_end, total_sieved
-            );
+            info!(n = block_end, sieved_out = total_sieved, "checkpoint saved");
             last_checkpoint = Instant::now();
         }
 
@@ -276,10 +268,7 @@ pub fn search(
                     max_n: Some(max_n),
                 },
             )?;
-            eprintln!(
-                "Stop requested by coordinator, checkpoint saved at n={}",
-                block_end
-            );
+            info!(n = block_end, "stop requested by coordinator, checkpoint saved");
             return Ok(());
         }
 
@@ -287,21 +276,59 @@ pub fn search(
     }
 
     checkpoint::clear(checkpoint_path);
-    eprintln!(
-        "Sophie Germain search complete. Sieve eliminated {} candidates.",
-        total_sieved
-    );
+    info!(total_sieved, "Sophie Germain search complete");
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
+    //! Tests for the Sophie Germain prime search module.
+    //!
+    //! ## Mathematical Form
+    //!
+    //! A Sophie Germain prime is a prime p such that 2p + 1 (the "safe prime")
+    //! is also prime. In the k*b^n form used by this module:
+    //!   - p = k*b^n - 1 (Riesel form)
+    //!   - 2p + 1 = 2k*b^n - 1 (also Riesel form, with doubled k)
+    //!
+    //! The first Sophie Germain primes are: 2, 3, 5, 11, 23, 29, 41, 53, 83, 89, ...
+    //! (OEIS [A005384](https://oeis.org/A005384))
+    //!
+    //! The corresponding safe primes are: 5, 7, 11, 23, 47, 59, 83, 107, 167, 179, ...
+    //! (OEIS [A005385](https://oeis.org/A005385))
+    //!
+    //! ## Key References
+    //!
+    //! - Sophie Germain (1776-1831) used these primes in her partial proof of
+    //!   Fermat's Last Theorem for Case 1 (1823).
+    //! - The Hardy-Littlewood conjecture predicts infinitely many SG primes,
+    //!   with density ~ 2*C2 / (ln x)^2 where C2 ~ 1.32 is the twin prime constant.
+    //! - LLR (Lucas-Lehmer-Riesel) test provides deterministic proofs for both
+    //!   p and 2p+1 when base=2 and k is odd.
+    //!
+    //! ## Testing Strategy
+    //!
+    //! 1. **Known SG pairs**: Verify both p and 2p+1 are prime for known pairs.
+    //! 2. **Non-SG cases**: Test where p is prime but 2p+1 is composite (or vice versa).
+    //! 3. **Dual sieve intersection**: Verify the sieve for k and 2k correctly
+    //!    intersects to produce SG candidates.
+    //! 4. **Deterministic proofs**: Verify LLR provides certificates for both sides.
+    //! 5. **Edge cases**: Overflow detection, non-binary bases.
+
     use super::*;
 
+    /// Helper: compute k*base^n - 1.
     fn kb_minus(k: u64, base: u32, n: u64) -> Integer {
         Integer::from(k) * Integer::from(base).pow(crate::checked_u32(n)) - 1u32
     }
 
+    // ── Known Sophie Germain Pairs ──────────────────────────────────────
+
+    /// Verifies the simplest SG pair in k=1, base=2 form: p = 2^2 - 1 = 3, 2p+1 = 7.
+    ///
+    /// k=1, b=2, n=2: p = 4-1 = 3, safe = 2*4-1 = 7. Both prime.
+    /// Also checks non-SG cases: n=3 gives p=7 (prime) but 2p+1=15=3*5 (composite),
+    /// and n=5 gives p=31 but 2p+1=63=9*7 (composite).
     #[test]
     fn known_sophie_germain_k1_base2() {
         // k=1, base=2: p = 2^n - 1 (Mersenne), safe = 2^(n+1) - 1
@@ -316,12 +343,17 @@ mod tests {
         assert_ne!(safe.is_probably_prime(25), IsPrime::No);
     }
 
+    /// Verifies a rich SG sequence: k=3, base=2 yields SG pairs at n=1,2,3.
+    ///
+    ///   - n=1: p = 3*2-1 = 5, 2p+1 = 6*2-1 = 11 (SG pair)
+    ///   - n=2: p = 3*4-1 = 11, 2p+1 = 6*4-1 = 23 (SG pair)
+    ///   - n=3: p = 3*8-1 = 23, 2p+1 = 6*8-1 = 47 (SG pair)
+    ///
+    /// This is an unusually productive k value — three consecutive n values all
+    /// yield SG pairs. The search module tests both p = k*b^n - 1 and
+    /// 2p+1 = 2k*b^n - 1 using `kbn::test_prime`.
     #[test]
     fn known_sophie_germain_k3_base2() {
-        // k=3, base=2: p = 3*2^n - 1
-        // n=1: p=5, 2p+1=11 — both prime (SG pair)
-        // n=2: p=11, 2p+1=23 — both prime (SG pair)
-        // n=3: p=23, 2p+1=47 — both prime (SG pair)
         for &n in &[1u64, 2, 3] {
             let p = kb_minus(3, 2, n);
             let safe = kb_minus(6, 2, n);
@@ -342,10 +374,15 @@ mod tests {
         }
     }
 
+    // ── Non-SG Cases ──────────────────────────────────────────────────
+
+    /// Verifies rejection when p is prime but the safe prime 2p+1 is composite.
+    ///
+    /// k=3, base=2, n=4: p = 3*16-1 = 47 (prime), but 2p+1 = 6*16-1 = 95 = 5*19
+    /// (composite). This is NOT a Sophie Germain pair. The search must test both
+    /// sides and reject the pair when either is composite.
     #[test]
     fn non_sophie_germain_p_prime_safe_composite() {
-        // k=3, base=2, n=6: p=3*64-1=191 (prime), 2p+1=383 (prime!) — actually SG
-        // k=3, base=2, n=4: p=3*16-1=47 (prime), 2p+1=95=5*19 — NOT SG
         let p = kb_minus(3, 2, 4);
         assert_eq!(p, 47);
         assert_ne!(p.is_probably_prime(25), IsPrime::No, "47 is prime");
@@ -358,9 +395,13 @@ mod tests {
         );
     }
 
+    /// Verifies rejection when p itself is composite.
+    ///
+    /// k=3, base=2, n=5: p = 3*32-1 = 95 = 5*19 (composite). The search
+    /// tests p first and immediately skips the 2p+1 test when p is composite,
+    /// saving the cost of the second primality test.
     #[test]
     fn non_sophie_germain_p_composite() {
-        // k=3, base=2, n=5: p=3*32-1=95=5*19 (composite)
         let p = kb_minus(3, 2, 5);
         assert_eq!(p, 95);
         assert_eq!(
@@ -370,9 +411,16 @@ mod tests {
         );
     }
 
+    // ── Deterministic Proofs ───────────────────────────────────────────
+
+    /// Verifies that both p and 2p+1 receive deterministic LLR proofs.
+    ///
+    /// k=3, base=2, n=2: p = 11, safe = 23. Both are of the form k*2^n - 1
+    /// (Riesel form) with odd k and base 2, so the Lucas-Lehmer-Riesel test
+    /// provides a deterministic certificate. The search reports "deterministic"
+    /// only when BOTH sides have deterministic proofs.
     #[test]
     fn sophie_germain_deterministic_proof() {
-        // k=3, base=2, n=2: p=11, safe=23 — both should get deterministic LLR proofs
         let p = kb_minus(3, 2, 2);
         let safe = kb_minus(6, 2, 2);
 
@@ -385,6 +433,16 @@ mod tests {
         assert_eq!(cert_safe, "deterministic");
     }
 
+    // ── Dual Sieve Intersection ────────────────────────────────────────
+
+    /// Verifies correctness of the dual BSGS sieve intersection for SG pairs.
+    ///
+    /// The SG search runs two independent BSGS sieves: one for p = k*b^n - 1
+    /// and one for 2p+1 = 2k*b^n - 1. Only n-values where BOTH survive are
+    /// tested. This test verifies:
+    ///   1. If the k-sieve eliminates n, then k*b^n-1 is actually composite.
+    ///   2. If the 2k-sieve eliminates n, then 2k*b^n-1 is actually composite.
+    ///   3. The SG intersection is a subset of both individual survivor sets.
     #[test]
     fn sieve_intersects_correctly() {
         let sieve_primes = sieve::generate_primes(10_000);
@@ -436,11 +494,18 @@ mod tests {
         assert!(sg_count <= k2_count);
     }
 
-    // ---- Additional Sophie Germain tests ----
+    // ── OEIS Verification ─────────────────────────────────────────────
 
+    /// Verifies the first 10 Sophie Germain primes from OEIS A005384.
+    ///
+    /// OEIS A005384: 2, 3, 5, 11, 23, 29, 41, 53, 83, 89
+    /// For each p in this list, both p and 2p+1 must be prime. This serves as
+    /// ground truth validation independent of the k*b^n representation.
+    ///
+    /// Note: these small primes don't directly correspond to k*b^n form values
+    /// tested in the search, but validate the mathematical definition itself.
     #[test]
     fn known_sg_small_primes_oeis() {
-        // OEIS A005384: first 10 Sophie Germain primes: 2, 3, 5, 11, 23, 29, 41, 53, 83, 89
         let sg_primes = [2u32, 3, 5, 11, 23, 29, 41, 53, 83, 89];
         for &p in &sg_primes {
             let p_int = Integer::from(p);
@@ -461,6 +526,7 @@ mod tests {
         }
     }
 
+    /// Verifies k=1, base=2, n=2: p=3, safe=7 — the simplest SG pair in k*b^n form.
     #[test]
     fn sg_k1_base2_n2_is_germain_pair() {
         // k=1, b=2, n=2: p = 1*4-1 = 3, 2p+1 = 7 — both prime
@@ -472,18 +538,29 @@ mod tests {
         assert_ne!(safe.is_probably_prime(25), IsPrime::No);
     }
 
+    /// Verifies that p=7 is NOT a Sophie Germain prime (2*7+1 = 15 = 3*5).
+    ///
+    /// Not all primes are Sophie Germain primes. 7 is prime but 15 is composite,
+    /// so the pair (7, 15) does not qualify. This tests the rejection path
+    /// where the safe prime check fails.
     #[test]
     fn sg_not_germain_safe_composite() {
-        // p=7 is prime, but 2*7+1=15=3*5 is composite — NOT a SG pair
         let p = Integer::from(7u32);
         assert_ne!(p.is_probably_prime(25), IsPrime::No, "7 is prime");
         let safe = Integer::from(15u32);
         assert_eq!(safe.is_probably_prime(25), IsPrime::No, "15 is composite");
     }
 
+    // ── Edge Cases ──────────────────────────────────────────────────────
+
+    /// Verifies overflow detection when computing 2k.
+    ///
+    /// The search doubles k to compute the safe prime form 2k*b^n - 1. If k is
+    /// near u64::MAX/2, the multiplication overflows. The search uses
+    /// `checked_mul(2)` to detect this and panic with a clear message rather
+    /// than silently wrapping.
     #[test]
     fn sg_k_overflow_detection() {
-        // (u64::MAX/2 + 1).checked_mul(2) should return None (overflow)
         let big_k = u64::MAX / 2 + 1;
         assert!(
             big_k.checked_mul(2).is_none(),
@@ -491,10 +568,13 @@ mod tests {
         );
     }
 
+    /// Verifies SG pairs in base 3: k=2, base=3, n=1 gives (5, 11).
+    ///
+    /// p = 2*3-1 = 5, safe = 4*3-1 = 11. Both prime — a Sophie Germain pair.
+    /// Testing non-binary bases ensures the module generalizes beyond the
+    /// base-2 case where LLR provides deterministic proofs.
     #[test]
     fn sg_base3_known_pairs() {
-        // k=2, base=3: p = 2*3^n - 1
-        // n=1: p=5, 2p+1=11 — both prime (SG pair)
         let p = kb_minus(2, 3, 1);
         assert_eq!(p, 5);
         let safe = kb_minus(4, 3, 1); // 4*3-1 = 11
@@ -503,9 +583,14 @@ mod tests {
         assert_ne!(safe.is_probably_prime(25), IsPrime::No, "11 is prime");
     }
 
+    /// Property test: the SG sieve intersection is <= min(k_survivors, 2k_survivors).
+    ///
+    /// The intersection of two independent boolean filters can never exceed
+    /// either individual filter's survivor count. This is a basic set-theoretic
+    /// invariant (|A intersect B| <= min(|A|, |B|)) that validates the sieve
+    /// intersection logic.
     #[test]
     fn sg_sieve_intersection_smaller_than_either() {
-        // The intersection of two independent sieves should be <= min of both
         let sieve_primes = sieve::generate_primes(10_000);
         let sieve_min_n = 14u64;
 
@@ -527,9 +612,13 @@ mod tests {
         );
     }
 
+    /// Verifies deterministic proofs for both sides: k=3, b=2, n=3 -> (23, 47).
+    ///
+    /// Both 23 = 3*2^3 - 1 and 47 = 6*2^3 - 1 are Riesel numbers with odd k
+    /// and base 2. The LLR test (Lucas-Lehmer-Riesel) provides deterministic
+    /// certificates for both, so the pair is certified deterministic.
     #[test]
     fn sg_deterministic_both_sides() {
-        // k=3, b=2, n=3: p = 3*8-1 = 23, 2p+1 = 6*8-1 = 47 — both prime
         let p = kb_minus(3, 2, 3);
         let safe = kb_minus(6, 2, 3);
         assert_eq!(p, 23);

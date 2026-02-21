@@ -1,5 +1,7 @@
 # Cluster Coordination Roadmap
 
+> **Deprecated (Feb 2026):** This roadmap has been superseded by [`architecture.md`](architecture.md) and [`network.md`](network.md). Retained for historical context. New work should reference those documents instead.
+
 Status: **MVP complete** — workers heartbeat to PostgreSQL, block-based work claiming works.
 
 ## Completed (MVP)

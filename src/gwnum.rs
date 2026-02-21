@@ -700,8 +700,35 @@ pub fn gwnum_pow_mod(
 
 #[cfg(test)]
 mod tests {
+    //! Tests for the GWNUM FFI wrapper and accelerated primality tests.
+    //!
+    //! Validates feature-gate behavior (Unavailable without `gwnum` feature),
+    //! parameter validation (small p rejected), and — when the gwnum feature
+    //! is enabled — the Vrba-Reix test for Wagstaff primes, GWNUM-accelerated
+    //! Proth test, LLR test, and generic modular exponentiation.
+    //!
+    //! ## Feature Gating
+    //!
+    //! Without `cfg(feature = "gwnum")`, all GWNUM operations return
+    //! `GwError::Unavailable`. This allows the crate to compile on platforms
+    //! where gwnum.a is not available (e.g., ARM/Apple Silicon). The tests
+    //! marked `#[cfg(not(feature = "gwnum"))]` verify this fallback behavior.
+    //!
+    //! ## Accelerated Tests (require gwnum.a)
+    //!
+    //! Tests marked `#[ignore]` require gwnum.a linked and the `gwnum` feature
+    //! enabled. They verify:
+    //! - Vrba-Reix test against known Wagstaff primes (p=3,5,7,11,13) and composites
+    //! - GWNUM Proth test for 3*2^50000+1 (known prime)
+    //! - Cross-verification of GWNUM Proth against GMP Miller-Rabin
+
     use super::*;
 
+    // ── Feature-Gate Fallbacks ───────────────────────────────────────
+
+    /// Without the gwnum feature, GwContext::new must return Unavailable.
+    /// This is the graceful fallback for ARM/Apple Silicon platforms where
+    /// gwnum.a (x86-64 only) cannot be linked.
     #[test]
     fn gw_context_unavailable_without_feature() {
         // Without the gwnum feature, GwContext::new should return Unavailable
@@ -712,12 +739,19 @@ mod tests {
         }
     }
 
+    // ── Parameter Validation ───────────────────────────────────────
+
+    /// The Vrba-Reix test requires p >= 3 (the algorithm performs p-2
+    /// squarings, so p=2 would mean 0 squarings which is degenerate).
+    /// Returns SetupFailed for p < 3.
     #[test]
     fn vrba_reix_rejects_small_p() {
         let result = vrba_reix_test(2);
         assert!(result.is_err());
     }
 
+    /// Vrba-Reix without the gwnum feature returns Unavailable (GwContext::new
+    /// fails immediately). The wagstaff module falls back to GMP PRP testing.
     #[test]
     #[cfg(not(feature = "gwnum"))]
     fn vrba_reix_unavailable_without_feature() {
@@ -725,6 +759,8 @@ mod tests {
         assert!(matches!(result, Err(GwError::Unavailable)));
     }
 
+    /// GWNUM Proth test without the feature returns Unavailable. The kbn
+    /// module falls back to GMP-based Proth testing.
     #[test]
     #[cfg(not(feature = "gwnum"))]
     fn gwnum_proth_unavailable_without_feature() {
@@ -732,6 +768,8 @@ mod tests {
         assert!(matches!(result, Err(GwError::Unavailable)));
     }
 
+    /// GWNUM LLR test without the feature returns Unavailable. The kbn
+    /// module falls back to GMP-based LLR testing.
     #[test]
     #[cfg(not(feature = "gwnum"))]
     fn gwnum_llr_unavailable_without_feature() {
@@ -739,6 +777,8 @@ mod tests {
         assert!(matches!(result, Err(GwError::Unavailable)));
     }
 
+    /// Generic GWNUM modular exponentiation without the feature returns
+    /// Unavailable. Used for Pocklington/Morrison witness computation.
     #[test]
     #[cfg(not(feature = "gwnum"))]
     fn gwnum_pow_mod_unavailable_without_feature() {
@@ -748,7 +788,12 @@ mod tests {
         assert!(matches!(result, Err(GwError::Unavailable)));
     }
 
-    // Tests that require the gwnum feature and gwnum.a installed
+    // ── GWNUM Integration Tests (require gwnum.a) ─────────────────
+
+    /// Vrba-Reix test against known Wagstaff primes: (2^p+1)/3 for
+    /// p in {3, 5, 7, 11, 13}. These are the first 5 Wagstaff prime
+    /// exponents (OEIS A000978). The test performs p-2 GWNUM squarings
+    /// with S(i) = S(i-1)^2 - 2 and checks S(p-2) == 0.
     #[test]
     #[ignore] // Requires gwnum.a installed
     #[cfg(feature = "gwnum")]
@@ -760,6 +805,8 @@ mod tests {
         }
     }
 
+    /// Vrba-Reix test against known composite Wagstaff numbers: (2^p+1)/3
+    /// for p in {29, 37, 41}. These must return false (S(p-2) != 0).
     #[test]
     #[ignore] // Requires gwnum.a installed
     #[cfg(feature = "gwnum")]
@@ -770,6 +817,8 @@ mod tests {
         }
     }
 
+    /// GWNUM-accelerated Proth test for 3*2^50000+1, a known Proth prime.
+    /// Uses IBDWT for modular squaring (50x speedup over GMP at this size).
     #[test]
     #[ignore] // Requires gwnum.a installed
     #[cfg(feature = "gwnum")]
@@ -779,6 +828,9 @@ mod tests {
         assert_eq!(result, Some(true), "3*2^50000+1 should be prime");
     }
 
+    /// Cross-verification: GWNUM Proth test for 3*2^10+1 = 3073 must agree
+    /// with GMP's is_probably_prime(25). This validates that GWNUM and GMP
+    /// produce the same primality verdict, guarding against FFI binding bugs.
     #[test]
     #[ignore] // Requires gwnum.a installed
     #[cfg(feature = "gwnum")]

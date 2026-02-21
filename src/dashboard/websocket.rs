@@ -1,10 +1,15 @@
 //! WebSocket handler — pushes coordination-only data every 2 seconds.
+//!
+//! Pushes PG-sourced data: fleet status, search jobs, coordinator metrics,
+//! agent status, project state, and notifications. Deployment and subprocess
+//! search data has been removed — all coordination is now PostgreSQL-backed.
 
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::State;
 use axum::response::IntoResponse;
 use std::sync::Arc;
 use std::time::Duration;
+use tracing::info;
 
 use super::routes_fleet::build_fleet_data;
 use super::routes_status::StatusResponse;
@@ -24,9 +29,21 @@ async fn ws_loop(
     state: Arc<AppState>,
     mut notif_rx: tokio::sync::broadcast::Receiver<String>,
 ) {
+    state.prom_metrics.ws_connections_active.inc();
+    let active = state.prom_metrics.ws_connections_active.get();
+    info!(active_connections = active, "websocket client connected");
+
     if let Some(msg) = build_update(&state).await {
-        if socket.send(Message::Text(msg.into())).await.is_err() {
-            return;
+        match socket.send(Message::Text(msg.into())).await {
+            Ok(_) => {
+                state.prom_metrics.ws_messages_sent.inc();
+            }
+            Err(_) => {
+                state.prom_metrics.ws_connections_active.dec();
+                let active = state.prom_metrics.ws_connections_active.get();
+                info!(active_connections = active, "websocket client disconnected");
+                return;
+            }
         }
     }
 
@@ -37,16 +54,18 @@ async fn ws_loop(
         tokio::select! {
             _ = interval.tick() => {
                 if let Some(msg) = build_update(&state).await {
-                    if socket.send(Message::Text(msg.into())).await.is_err() {
-                        break;
+                    match socket.send(Message::Text(msg.into())).await {
+                        Ok(_) => { state.prom_metrics.ws_messages_sent.inc(); }
+                        Err(_) => break,
                     }
                 }
             }
             result = notif_rx.recv() => {
                 match result {
                     Ok(msg) => {
-                        if socket.send(Message::Text(msg.into())).await.is_err() {
-                            break;
+                        match socket.send(Message::Text(msg.into())).await {
+                            Ok(_) => { state.prom_metrics.ws_messages_sent.inc(); }
+                            Err(_) => break,
                         }
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
@@ -61,6 +80,10 @@ async fn ws_loop(
             }
         }
     }
+
+    state.prom_metrics.ws_connections_active.dec();
+    let active = state.prom_metrics.ws_connections_active.get();
+    info!(active_connections = active, "websocket client disconnected");
 }
 
 pub(super) async fn build_update(state: &Arc<AppState>) -> Option<String> {
@@ -74,15 +97,6 @@ pub(super) async fn build_update(state: &Arc<AppState>) -> Option<String> {
         active: cp.is_some() || has_running_jobs || !workers.is_empty(),
         checkpoint: cp.and_then(|c| serde_json::to_value(&c).ok()),
     };
-    {
-        let worker_stats: Vec<(String, u64, u64)> = workers
-            .iter()
-            .map(|w| (w.worker_id.clone(), w.tested, w.found))
-            .collect();
-        lock_or_recover(&state.searches).sync_worker_stats(&worker_stats);
-    }
-    let searches = lock_or_recover(&state.searches).get_all();
-    let deployments = lock_or_recover(&state.deployments).get_all();
     let coord_metrics = lock_or_recover(&state.coordinator_metrics).clone();
     let recent_notifications = state.event_bus.recent_notifications(20);
     let agent_tasks = state
@@ -94,13 +108,17 @@ pub(super) async fn build_update(state: &Arc<AppState>) -> Option<String> {
     let running_agents = lock_or_recover(&state.agents).get_all();
     let projects = state.db.get_projects(None).await.unwrap_or_default();
     let records = state.db.get_records().await.unwrap_or_default();
+    let strategy_config = state.db.get_strategy_config().await.ok();
+    let strategy_decisions = state
+        .db
+        .get_strategy_decisions(10)
+        .await
+        .unwrap_or_default();
     serde_json::to_string(&serde_json::json!({
         "type": "update",
         "status": status,
         "fleet": fleet_data,
-        "searches": searches,
         "search_jobs": search_jobs,
-        "deployments": deployments,
         "coordinator": coord_metrics,
         "notifications": recent_notifications,
         "agent_tasks": agent_tasks,
@@ -108,6 +126,10 @@ pub(super) async fn build_update(state: &Arc<AppState>) -> Option<String> {
         "running_agents": running_agents,
         "projects": projects,
         "records": records,
+        "strategy": {
+            "enabled": strategy_config.as_ref().map(|c| c.enabled).unwrap_or(false),
+            "recent_decisions": strategy_decisions,
+        },
     }))
     .ok()
 }

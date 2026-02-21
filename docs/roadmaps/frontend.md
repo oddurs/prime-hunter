@@ -153,19 +153,21 @@ Automate checking discoveries against known OEIS sequences (A002981, A002982, A0
 
 ## Phase 7: Multi-Node Coordination
 
+> **Architecture note (Feb 2026):** Network coordination now uses PG-only model. Operator pages (`/network`) show node status. Role-based navigation distinguishes operator vs admin views. The fleet page has been renamed to network.
+
 ### Agent architecture
 
 Each server runs `darkreach agent --server <url> --token <token>`. Agents connect via WebSocket, receive assignments, report progress.
 
 ### Work distribution
 
-- **Factorial:** Split n-range across agents
+- **Factorial:** Split n-range across nodes
 - **KBN:** Split n-range (clean, no dependencies)
 - **Palindromic:** Split by digit count or half-value range
 
-### Agent monitoring page
+### Node monitoring page
 
-New `/agents` page: hostname, cores, assignment, throughput, heartbeat, uptime. Aggregate throughput across fleet.
+New `/network` page: hostname, cores, assignment, throughput, heartbeat, uptime. Aggregate throughput across network.
 
 ### Authentication
 

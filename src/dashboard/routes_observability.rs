@@ -404,3 +404,9 @@ pub(super) async fn handler_top_workers(
         Err(e) => Json(serde_json::json!({ "workers": [], "error": e.to_string() })),
     }
 }
+
+pub(super) async fn handler_catalog() -> impl IntoResponse {
+    Json(serde_json::json!({
+        "metrics": crate::prom_metrics::Metrics::catalog()
+    }))
+}

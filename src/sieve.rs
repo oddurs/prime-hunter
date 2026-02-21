@@ -569,8 +569,67 @@ impl Iterator for BitIter {
 
 #[cfg(test)]
 mod tests {
+    //! # Sieve and Modular Arithmetic Tests
+    //!
+    //! Validates the foundational primitives for candidate generation and
+    //! composite elimination across all 12 search forms:
+    //!
+    //! - **Prime generation** (`generate_primes`): Wheel-30 sieve of Eratosthenes
+    //!   producing all primes up to a limit. Tests verify correctness against known
+    //!   pi(x) values (OEIS [A000720](https://oeis.org/A000720)): pi(100)=25,
+    //!   pi(1000)=168, pi(10000)=1229, pi(100000)=9592. Boundary tests at the
+    //!   wheel modulus (30, 60) catch off-by-one errors in the spoke iteration.
+    //!
+    //! - **Modular exponentiation** (`pow_mod`): Binary method using u128
+    //!   intermediate products to avoid overflow in u64 arithmetic. Cross-validated
+    //!   against known values: 2^{10} mod 1000 = 24, 3^4 mod 100 = 81.
+    //!
+    //! - **Montgomery multiplication** (`MontgomeryCtx`): Converts to/from
+    //!   Montgomery form (a * R mod n where R = 2^{64}) to replace modular division
+    //!   with a multiply-and-shift (Montgomery, 1985). Tests cross-validate every
+    //!   operation (mul, pow_mod, mod_inverse, to_mont/from_mont roundtrip) against
+    //!   naive `pow_mod` for 11 different prime moduli from 3 to 999999999999999877.
+    //!
+    //! - **Multiplicative order and BSGS** (`multiplicative_order`, `discrete_log_bsgs`):
+    //!   Baby-step Giant-step discrete logarithm in O(sqrt(ord)) time and space.
+    //!   Tests verify ord_7(2)=3, ord_7(3)=6 (primitive root), ord_13(2)=12, and
+    //!   BSGS solutions for specific DLP instances including the no-solution case.
+    //!
+    //! - **Modular inverse** (`mod_inverse`): Extended Euclidean algorithm for
+    //!   a^{-1} mod m. Tests verify 3^{-1} mod 7 = 5, 2^{-1} mod 5 = 3, and
+    //!   the None case for gcd(a,m) > 1.
+    //!
+    //! - **Integer factoring** (`factor_u64`): Trial division returning
+    //!   (prime, exponent) pairs. Tests verify factorizations: 12 = 2^2 * 3,
+    //!   360 = 2^3 * 3^2 * 5, 97 = 97^1 (prime).
+    //!
+    //! - **Auto sieve depth** (`auto_sieve_depth`, `resolve_sieve_limit`):
+    //!   Adaptive sieve limit based on candidate bit size and range count.
+    //!   Tests verify monotonicity (larger candidates get deeper sieving),
+    //!   capping at SIEVE_LIMIT for tiny ranges, and explicit override behavior.
+    //!
+    //! - **BitSieve** (`BitSieve`): Packed u64 bitmap for 8x memory reduction over
+    //!   Vec<bool>. Tests verify all operations at word boundaries (63, 64, 127, 128),
+    //!   count_ones consistency with iter_set_bits, and correct handling of
+    //!   non-multiple-of-64 lengths (extra bits in last word must be clear).
+    //!
+    //! ## References
+    //!
+    //! - Eratosthenes of Cyrene, ~240 BCE (sieve algorithm).
+    //! - Peter L. Montgomery, "Modular Multiplication Without Trial Division", 1985.
+    //! - Daniel Shanks, "Class number, a theory of factorization, and genera", 1971
+    //!   (Baby-step Giant-step algorithm).
+    //! - OEIS A000720: pi(n), the prime counting function.
+
     use super::*;
 
+    // ── Modular Inverse ─────────────────────────────────────────────────
+
+    /// Verifies `mod_inverse` against known results:
+    /// - 3^{-1} mod 7: 3*5 = 15 = 1 (mod 7), cross-checked via pow_mod(3,5,7).
+    /// - 2^{-1} mod 5: 2*3 = 6 = 1 (mod 5).
+    /// - 0^{-1} mod 7: undefined (gcd(0,7) = 7 > 1), returns None.
+    /// - 7^{-1} mod 7: undefined (gcd(7,7) = 7 > 1), returns None.
     #[test]
     fn test_mod_inverse() {
         assert_eq!(mod_inverse(3, 7), Some(pow_mod(3, 5, 7))); // 3*5=15≡1(mod7)
@@ -579,6 +638,14 @@ mod tests {
         assert_eq!(mod_inverse(7, 7), None);
     }
 
+    // ── Integer Factoring (factor_u64) ─────────────────────────────────
+
+    /// Verifies trial-division factorization returning sorted (prime, exponent) pairs.
+    /// - 1 = (empty): the unit has no prime factors.
+    /// - 2 = 2^1: the smallest prime.
+    /// - 12 = 2^2 * 3^1: smallest number with two distinct prime factors.
+    /// - 360 = 2^3 * 3^2 * 5^1: highly composite number with three distinct primes.
+    /// - 97 = 97^1: a prime number (single factor with exponent 1).
     #[test]
     fn test_factor_u64() {
         let empty: Vec<(u64, u32)> = vec![];
@@ -589,6 +656,17 @@ mod tests {
         assert_eq!(factor_u64(97), vec![(97, 1)]); // prime
     }
 
+    // ── Multiplicative Order ───────────────────────────────────────────
+
+    /// Verifies the multiplicative order ord_m(a) = min{k > 0 : a^k = 1 (mod m)}.
+    /// - ord_7(2) = 3: the powers 2^1=2, 2^2=4, 2^3=8=1 (mod 7).
+    /// - ord_7(3) = 6: 3 is a primitive root mod 7 (generates all of (Z/7Z)*).
+    /// - ord_13(2) = 12: 2 is a primitive root mod 13.
+    /// - ord_5(2) = 4: the full group (Z/5Z)* has order phi(5)=4.
+    ///
+    /// The multiplicative order is fundamental to the BSGS sieve in kbn.rs:
+    /// it determines the period of b^n mod p, which controls which n values
+    /// make k*b^n +/- 1 divisible by the sieve prime p.
     #[test]
     fn test_multiplicative_order() {
         // ord_7(2) = 3: 2^1=2, 2^2=4, 2^3=8≡1(mod7)
@@ -601,6 +679,19 @@ mod tests {
         assert_eq!(multiplicative_order(2, 5), 4);
     }
 
+    // ── Baby-Step Giant-Step Discrete Logarithm ────────────────────────
+
+    /// Verifies the Shanks Baby-step Giant-step algorithm for computing
+    /// discrete logarithms: find x such that g^x = h (mod p) given ord(g).
+    ///
+    /// - 2^x = 4 (mod 7), ord=3: x=2 since 2^2=4.
+    /// - 3^x = 5 (mod 7), ord=6: x=5 since 3^5=243=5 (mod 7).
+    /// - 2^x = 1 (mod 7), ord=3: x=0 since g^0=1 by convention.
+    /// - 2^x = 3 (mod 5), ord=4: x=3 since 2^3=8=3 (mod 5).
+    ///
+    /// The BSGS algorithm runs in O(sqrt(ord)) time and space, a dramatic
+    /// improvement over brute-force O(ord) for the sieve prime moduli used
+    /// in kbn::bsgs_sieve.
     #[test]
     fn test_discrete_log_bsgs() {
         // 2^x ≡ 4 (mod 7), order=3 → x=2
@@ -613,18 +704,32 @@ mod tests {
         assert_eq!(discrete_log_bsgs(2, 3, 5, 4), Some(3));
     }
 
+    /// When g generates a proper subgroup of (Z/pZ)* and h is not in that
+    /// subgroup, no solution exists. Here 4 has order 3 mod 7 (generating
+    /// {1, 2, 4}) and 3 is not in this subgroup, so BSGS correctly returns None.
     #[test]
     fn test_discrete_log_bsgs_no_solution() {
         // 4^x ≡ 3 (mod 7): 4 has order 3 (4^1=4, 4^2=2, 4^3=1), so 3 is unreachable
         assert_eq!(discrete_log_bsgs(4, 3, 7, 3), None);
     }
 
+    // ── Prime Generation (Wheel-30 Sieve of Eratosthenes) ──────────────
+
+    /// Verifies the wheel-30 sieve against the known list of primes up to 30.
+    /// There are exactly pi(30) = 10 primes: 2, 3, 5, 7, 11, 13, 17, 19, 23, 29.
+    /// The wheel modulus is 30 = 2*3*5, so primes 2, 3, 5 are handled specially
+    /// as the wheel's "axle" primes, and remaining primes are found via the
+    /// 8 spoke residues coprime to 30: {1, 7, 11, 13, 17, 19, 23, 29}.
     #[test]
     fn test_generate_primes() {
         let primes = generate_primes(30);
         assert_eq!(primes, vec![2, 3, 5, 7, 11, 13, 17, 19, 23, 29]);
     }
 
+    /// Edge cases for very small sieve limits: 0 and 1 produce empty lists
+    /// (no primes exist below 2). Limits 2 through 11 test the axle primes
+    /// (2, 3, 5) and the first spoke prime (7). The limit 10 is notable because
+    /// it falls strictly between primes 7 and 11, testing the inclusive upper bound.
     #[test]
     fn test_generate_primes_small_limits() {
         assert_eq!(generate_primes(0), Vec::<u64>::new());
@@ -639,6 +744,12 @@ mod tests {
         assert_eq!(generate_primes(11), vec![2, 3, 5, 7, 11]);
     }
 
+    /// Validates prime counts against the prime counting function pi(x)
+    /// (OEIS [A000720](https://oeis.org/A000720)):
+    /// - pi(100) = 25, pi(1000) = 168, pi(10000) = 1229, pi(100000) = 9592.
+    /// These are well-established values from number theory tables. Any
+    /// deviation indicates a bug in the wheel sieve's spoke iteration or
+    /// crossing-off logic.
     #[test]
     fn test_generate_primes_known_count() {
         // pi(100) = 25
@@ -651,6 +762,15 @@ mod tests {
         assert_eq!(generate_primes(100000).len(), 9592);
     }
 
+    /// Tests at boundaries around the wheel modulus 30 and its multiples:
+    /// - limit=29: exactly pi(29)=10 primes (29 is the last prime before 30).
+    /// - limit=31: pi(31)=11 (31 is the first spoke prime in the second wheel).
+    /// - limit=59: pi(59)=17 (59 is just before 60=2*30).
+    /// - limit=60: pi(60)=17 (60 is composite, no new prime).
+    /// - limit=61: pi(61)=18 (61 is a spoke prime at 2*30+1).
+    ///
+    /// These boundary values test the transition between wheel rotations,
+    /// where off-by-one errors in the spoke indices are most likely.
     #[test]
     fn test_generate_primes_boundary_around_30() {
         // Test values around wheel modulus boundaries
@@ -666,6 +786,15 @@ mod tests {
         assert_eq!(p61.len(), 18); // pi(61) = 18
     }
 
+    // ── Modular Exponentiation (pow_mod) ───────────────────────────────
+
+    /// Verifies the binary method modular exponentiation against known values:
+    /// - 2^{10} mod 1000 = 1024 mod 1000 = 24.
+    /// - 3^4 mod 100 = 81 mod 100 = 81.
+    /// - 5^0 mod 7 = 1 (any base to the 0th power is 1).
+    ///
+    /// Uses u128 intermediate products to avoid overflow: for 64-bit moduli,
+    /// the product a*b can be up to (2^{64}-1)^2 which fits in u128.
     #[test]
     fn test_pow_mod() {
         assert_eq!(pow_mod(2, 10, 1000), 24); // 1024 mod 1000
@@ -673,8 +802,17 @@ mod tests {
         assert_eq!(pow_mod(5, 0, 7), 1);
     }
 
-    // ---- Montgomery cross-validation tests ----
+    // ── Montgomery Multiplication Cross-Validation ─────────────────────
 
+    /// Exhaustive cross-validation of Montgomery multiplication against naive
+    /// modular multiplication for 11 prime moduli: 3, 5, 7, 11, 13, 17, 97,
+    /// 101, 1009, 10007, 100003. For each modulus p, tests all pairs (a, b)
+    /// with 0 <= a, b < min(p, 50).
+    ///
+    /// Montgomery multiplication (Montgomery, 1985) computes a*b*R^{-1} mod p
+    /// where R = 2^{64}, replacing the expensive division in naive modular
+    /// arithmetic with a multiply-and-shift. The to_mont/from_mont conversions
+    /// handle the R factor: to_mont(a) = a*R mod p, from_mont(x) = x*R^{-1} mod p.
     #[test]
     fn mont_mul_matches_naive() {
         for &p in &[3u64, 5, 7, 11, 13, 17, 97, 101, 1009, 10007, 100003] {
@@ -695,6 +833,11 @@ mod tests {
         }
     }
 
+    /// Cross-validates Montgomery exponentiation against naive `pow_mod` for
+    /// 9 prime moduli. For each modulus p, tests all pairs (base, exp) with
+    /// 1 <= base < min(p, 20) and 0 <= exp < min(p, 30). The Montgomery
+    /// pow_mod uses repeated squaring in Montgomery form, converting only
+    /// at the boundaries (to_mont before, from_mont after).
     #[test]
     fn mont_pow_mod_matches_pow_mod() {
         for &p in &[3u64, 5, 7, 11, 97, 101, 1009, 10007, 100003] {
@@ -714,6 +857,10 @@ mod tests {
         }
     }
 
+    /// Cross-validates Montgomery modular inverse against the naive computation
+    /// a^{-1} = pow_mod(a, p-2, p) (Fermat's little theorem for prime p).
+    /// For each modulus p and each a in [1, min(p, 50)), verifies that
+    /// from_mont(ctx.mod_inverse(to_mont(a))) = pow_mod(a, p-2, p).
     #[test]
     fn mont_inverse_matches_naive() {
         for &p in &[3u64, 5, 7, 11, 97, 101, 1009, 10007, 100003] {
@@ -732,6 +879,10 @@ mod tests {
         }
     }
 
+    /// Verifies the roundtrip identity: from_mont(to_mont(a)) = a for all
+    /// a in [0, min(p, 100)) across 6 prime moduli including the near-u64-max
+    /// prime 999999937. This tests that R * R^{-1} = 1 (mod p) holds exactly
+    /// for the precomputed Montgomery constants.
     #[test]
     fn mont_context_identity() {
         // Verify to_mont/from_mont roundtrip
@@ -745,6 +896,10 @@ mod tests {
         }
     }
 
+    /// Verifies that `ctx.one()` (= R mod p, the Montgomery representation of 1)
+    /// is the multiplicative identity: a * one = a for all a in Montgomery form.
+    /// This is a ring axiom critical for the correctness of Montgomery pow_mod,
+    /// which initializes its accumulator to `one`.
     #[test]
     fn mont_one_is_identity() {
         for &p in &[3u64, 7, 101, 10007] {
@@ -758,6 +913,11 @@ mod tests {
         }
     }
 
+    /// Stress test with a prime near u64 max: p = 999999999999999877 (< 2^{63},
+    /// as required by the Montgomery implementation which uses u128 for
+    /// intermediate products). Tests both multiplication (123456789 * 987654321
+    /// mod p) and exponentiation (123456789^{1000} mod p) against naive pow_mod.
+    /// This exercises the u128 overflow handling at near-maximum modulus size.
     #[test]
     fn mont_large_prime() {
         // Test with a prime near u64 max (< 2^63 as required)
@@ -778,8 +938,13 @@ mod tests {
         assert_eq!(result_pow, expected_pow);
     }
 
-    // ---- Auto sieve depth tests ----
+    // ── Auto Sieve Depth ──────────────────────────────────────────────
 
+    /// For 1000-bit candidates (~300 digits), the sieve depth should be at
+    /// least 1M but not excessively large (< 100M). The optimal sieve depth
+    /// balances the cost of sieving (linear in depth) against the benefit of
+    /// eliminating composites before expensive primality tests. For 1000-bit
+    /// numbers, each eliminated composite saves ~0.5ms of MR time.
     #[test]
     fn auto_sieve_depth_small_candidates() {
         // 1000-bit candidates → ~10M sieve (the old default)
@@ -792,6 +957,10 @@ mod tests {
         );
     }
 
+    /// For 100K-bit candidates (~30000 digits, typical of large kbn searches),
+    /// the sieve depth should exceed 10M. At this candidate size, each MR round
+    /// takes several seconds, so deeper sieving pays for itself many times over
+    /// by eliminating composites that would waste expensive primality tests.
     #[test]
     fn auto_sieve_depth_large_candidates() {
         // 100K-bit candidates (like large kbn searches) → should be much deeper
@@ -803,6 +972,9 @@ mod tests {
         );
     }
 
+    /// With only 50 candidates in the range, the sieve depth is capped at
+    /// SIEVE_LIMIT (the default) because the overhead of generating a large
+    /// prime table exceeds the savings from eliminating a few candidates.
     #[test]
     fn auto_sieve_depth_tiny_range() {
         // Very small range → capped at SIEVE_LIMIT
@@ -814,12 +986,17 @@ mod tests {
         );
     }
 
+    /// Degenerate inputs (0-bit candidates or 0-count range) should return
+    /// the safe default SIEVE_LIMIT rather than crashing or returning 0.
     #[test]
     fn auto_sieve_depth_zero_inputs() {
         assert_eq!(auto_sieve_depth(0, 1000), SIEVE_LIMIT);
         assert_eq!(auto_sieve_depth(1000, 0), SIEVE_LIMIT);
     }
 
+    /// The sieve depth must be monotonically non-decreasing in candidate size:
+    /// larger candidates benefit more from deeper sieving because their primality
+    /// tests are more expensive. Tests three points: 1K, 10K, 100K bits.
     #[test]
     fn auto_sieve_depth_monotonic() {
         // Larger candidates should get deeper sieving
@@ -840,12 +1017,18 @@ mod tests {
         );
     }
 
+    /// When the user provides an explicit sieve_limit > 0, it overrides the
+    /// auto-tuning logic. This allows advanced users to fine-tune sieve depth
+    /// for specific workloads (e.g., deep sieve for very large candidates).
     #[test]
     fn resolve_sieve_limit_explicit_wins() {
         // Explicit sieve_limit should be used as-is
         assert_eq!(resolve_sieve_limit(5_000_000, 100_000, 10000), 5_000_000);
     }
 
+    /// When sieve_limit=0 (the default), auto-tuning kicks in and selects a
+    /// depth based on candidate bit size and range count. For 10K-bit candidates
+    /// with a range of 10000, the auto-tuned depth should be at least 1M.
     #[test]
     fn resolve_sieve_limit_zero_auto_tunes() {
         // sieve_limit=0 should auto-tune
@@ -853,8 +1036,12 @@ mod tests {
         assert!(depth >= 1_000_000);
     }
 
-    // ---- BitSieve tests ----
+    // ── BitSieve (Packed u64 Bitmap) ───────────────────────────────────
 
+    /// Verifies that `new_all_set(100)` creates a bitmap with all 100 bits set.
+    /// The BitSieve packs bits into u64 words (64 bits each), using ceil(100/64)=2
+    /// words. The last word has 36 "real" bits set and 28 padding bits clear.
+    /// `count_ones` must return 100 (not 128), verifying correct padding masking.
     #[test]
     fn bitsieve_new_all_set() {
         let bs = BitSieve::new_all_set(100);
@@ -865,6 +1052,8 @@ mod tests {
         }
     }
 
+    /// Verifies that `new_all_clear(100)` creates a bitmap with all 100 bits clear.
+    /// Both `count_ones` and individual `get(i)` checks must return 0/false.
     #[test]
     fn bitsieve_new_all_clear() {
         let bs = BitSieve::new_all_clear(100);
@@ -875,6 +1064,11 @@ mod tests {
         }
     }
 
+    /// Tests set/clear/get operations at word boundary positions: 0, 63 (last bit
+    /// of word 0), 64 (first bit of word 1), 127 (last bit of word 1), 128 (first
+    /// bit of word 2), and 199 (last valid index). These boundaries are where
+    /// the bit index calculation `i / 64` and `i % 64` transitions between words,
+    /// making them the most likely positions for off-by-one errors.
     #[test]
     fn bitsieve_set_clear_get() {
         let mut bs = BitSieve::new_all_clear(200);
@@ -899,6 +1093,9 @@ mod tests {
         assert_eq!(bs.count_ones(), 5);
     }
 
+    /// Dedicated word-boundary test with a 256-bit sieve (4 words). Sets bits
+    /// at every word boundary (63, 64, 127, 128, 191, 192) plus the last bit (255).
+    /// Verifies that operations spanning word boundaries don't corrupt adjacent words.
     #[test]
     fn bitsieve_word_boundary() {
         // Test at exact word boundaries: 63, 64, 127, 128
@@ -912,6 +1109,10 @@ mod tests {
         }
     }
 
+    /// Verifies `count_ones` after clearing every other bit: starting with all
+    /// 100 bits set, clear bits 0, 2, 4, ..., 98 (50 bits), leaving exactly 50
+    /// set bits at positions 1, 3, 5, ..., 99. This tests that `count_ones` uses
+    /// hardware `popcnt` (or equivalent) correctly across word boundaries.
     #[test]
     fn bitsieve_count_ones() {
         let mut bs = BitSieve::new_all_set(100);
@@ -923,6 +1124,10 @@ mod tests {
         assert_eq!(bs.count_ones(), 50);
     }
 
+    /// Verifies that `iter_set_bits` yields exactly the set bit positions in
+    /// ascending order: {0, 1, 63, 64, 65, 127, 128, 199}. This exercises the
+    /// word-by-word iteration with `trailing_zeros()` to find set bits within
+    /// each u64 word, including word transitions at indices 63->64 and 127->128.
     #[test]
     fn bitsieve_iter_set_bits() {
         let mut bs = BitSieve::new_all_clear(200);
@@ -934,6 +1139,9 @@ mod tests {
         assert_eq!(collected, expected);
     }
 
+    /// Edge case: a zero-length BitSieve should have len=0, is_empty=true,
+    /// count_ones=0, and an empty iterator. This tests the degenerate case
+    /// where no candidates survive the sieve (or the range is empty).
     #[test]
     fn bitsieve_empty() {
         let bs = BitSieve::new_all_set(0);
@@ -943,6 +1151,9 @@ mod tests {
         assert_eq!(bs.iter_set_bits().count(), 0);
     }
 
+    /// Stress test: a 10-million-bit BitSieve (1.25 MB of memory vs. 10 MB for
+    /// Vec<bool>). Verifies that count_ones returns the exact length when all
+    /// bits are set. This size is representative of real kbn sieve ranges.
     #[test]
     fn bitsieve_large() {
         let n = 10_000_000;
@@ -951,6 +1162,10 @@ mod tests {
         assert_eq!(bs.len(), n);
     }
 
+    /// Non-multiple-of-64 length: len=65 requires 2 words. The second word has
+    /// only 1 valid bit (index 64). The remaining 63 bits in that word must be
+    /// clear to avoid polluting `count_ones`. Verifies: count_ones=65, 2 words
+    /// total, and word[1] has exactly 1 bit set (the valid bit at position 0).
     #[test]
     fn bitsieve_non_multiple_of_64() {
         // len=65 → 2 words. Last word should only have bit 0 set.
@@ -962,6 +1177,12 @@ mod tests {
         assert_eq!(bs.words[1].count_ones(), 1);
     }
 
+    /// Consistency check: `count_ones()` (using word-level popcnt) must agree
+    /// with `iter_set_bits().count()` (using trailing_zeros iteration). Creates
+    /// a non-trivial pattern by starting with all 1000 bits set, then clearing
+    /// multiples of the first 9 primes (2, 3, 5, ..., 23) to simulate a
+    /// mini sieve of Eratosthenes. The resulting pattern is irregular across
+    /// word boundaries, exercising both counting methods thoroughly.
     #[test]
     fn bitsieve_iter_set_bits_matches_count() {
         let mut bs = BitSieve::new_all_set(1000);

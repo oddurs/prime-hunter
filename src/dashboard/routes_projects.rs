@@ -6,6 +6,7 @@ use axum::response::IntoResponse;
 use axum::Json;
 use serde::Deserialize;
 use std::sync::Arc;
+use tracing::info;
 
 use super::AppState;
 use crate::project;
@@ -101,10 +102,7 @@ pub(super) async fn handler_api_projects_create(
     match state.db.create_project(&config, Some(&toml_str)).await {
         Ok(id) => {
             let slug = project::slugify(&payload.name);
-            eprintln!(
-                "Project '{}' created (id={}, slug={})",
-                payload.name, id, slug
-            );
+            info!(name = %payload.name, id, slug, "project created");
             (
                 StatusCode::CREATED,
                 Json(serde_json::json!({"id": id, "slug": slug})),
@@ -143,10 +141,7 @@ pub(super) async fn handler_api_projects_import(
     match state.db.create_project(&config, Some(&payload.toml)).await {
         Ok(id) => {
             let slug = project::slugify(&config.project.name);
-            eprintln!(
-                "Project '{}' imported (id={}, slug={})",
-                config.project.name, id, slug
-            );
+            info!(name = %config.project.name, id, slug, "project imported");
             (
                 StatusCode::CREATED,
                 Json(serde_json::json!({"id": id, "slug": slug})),
@@ -255,7 +250,7 @@ pub(super) async fn handler_api_project_activate(
         .await
         .ok();
 
-    eprintln!("Project '{}' activated via API", slug);
+    info!(slug, "project activated via API");
     Json(serde_json::json!({"ok": true, "status": "active"})).into_response()
 }
 
@@ -470,7 +465,7 @@ pub(super) async fn handler_api_records_refresh(
 ) -> impl IntoResponse {
     match project::refresh_all_records(&state.db).await {
         Ok(n) => {
-            eprintln!("Records manually refreshed: {} forms updated", n);
+            info!(updated = n, "records manually refreshed");
             Json(serde_json::json!({"ok": true, "updated": n})).into_response()
         }
         Err(e) => (

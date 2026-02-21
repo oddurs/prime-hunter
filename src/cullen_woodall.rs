@@ -43,6 +43,7 @@ use std::path::Path;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Instant;
+use tracing::{info, debug};
 
 use crate::checkpoint::{self, Checkpoint};
 use crate::db::Database;
@@ -75,11 +76,11 @@ fn sieve_cullen_woodall(
 
     for (pi, &p) in sieve_primes.iter().enumerate() {
         if pi % log_interval == 0 && pi > 0 {
-            eprintln!(
-                "  Cullen/Woodall sieve: {}/{} primes ({:.0}%)",
-                pi,
+            debug!(
+                progress_index = pi,
                 total_primes,
-                pi as f64 / total_primes as f64 * 100.0
+                percent = format_args!("{:.0}", pi as f64 / total_primes as f64 * 100.0),
+                "Cullen/Woodall sieve progress"
             );
         }
 
@@ -192,15 +193,11 @@ pub fn search(
     let sieve_limit = sieve::resolve_sieve_limit(sieve_limit, candidate_bits, n_range);
 
     let sieve_primes = sieve::generate_primes(sieve_limit);
-    eprintln!(
-        "Sieve initialized with {} primes up to {}",
-        sieve_primes.len(),
-        sieve_limit
-    );
+    info!(prime_count = sieve_primes.len(), sieve_limit, "sieve initialized");
 
     let resume_from = match checkpoint::load(checkpoint_path) {
         Some(Checkpoint::CullenWoodall { last_n, .. }) if last_n >= min_n && last_n < max_n => {
-            eprintln!("Resuming Cullen/Woodall search from n={}", last_n + 1);
+            info!(n = last_n + 1, "resuming Cullen/Woodall search");
             last_n + 1
         }
         _ => min_n,
@@ -217,28 +214,27 @@ pub fn search(
         }
         n
     };
-    eprintln!("Sieve active for n >= {}", sieve_min_n);
+    info!(sieve_min_n, "sieve active");
 
     // Run sieve over the entire range
-    eprintln!(
-        "Running Cullen/Woodall sieve over n=[{}..{}] ({} candidates)...",
-        resume_from,
+    info!(
+        min_n = resume_from,
         max_n,
-        max_n - resume_from + 1
+        candidates = max_n - resume_from + 1,
+        "running Cullen/Woodall sieve"
     );
     let (cullen_survives, woodall_survives) =
         sieve_cullen_woodall(resume_from, max_n, &sieve_primes, sieve_min_n);
     let cullen_survivors: u64 = cullen_survives.iter().filter(|&&b| b).count() as u64;
     let woodall_survivors: u64 = woodall_survives.iter().filter(|&&b| b).count() as u64;
     let total_range = max_n - resume_from + 1;
-    eprintln!(
-        "Sieve complete: Cullen survivors {}/{} ({:.1}%), Woodall survivors {}/{} ({:.1}%)",
+    info!(
         cullen_survivors,
-        total_range,
-        cullen_survivors as f64 / total_range as f64 * 100.0,
         woodall_survivors,
         total_range,
-        woodall_survivors as f64 / total_range as f64 * 100.0,
+        cullen_pct = format_args!("{:.1}", cullen_survivors as f64 / total_range as f64 * 100.0),
+        woodall_pct = format_args!("{:.1}", woodall_survivors as f64 / total_range as f64 * 100.0),
+        "sieve complete"
     );
 
     let mut last_checkpoint = Instant::now();
@@ -382,9 +378,12 @@ pub fn search(
                     timestamp: Instant::now(),
                 });
             } else {
-                eprintln!(
-                    "*** PRIME FOUND: {} ({} digits, {}) ***",
-                    expr, digits, certainty
+                info!(
+                    expression = %expr,
+                    digits,
+                    certainty = %certainty,
+                    form,
+                    "*** PRIME FOUND ***"
                 );
             }
             db.insert_prime_sync(rt, form, &expr, digits, search_params, &certainty, None)?;
@@ -402,10 +401,7 @@ pub fn search(
                     max_n: Some(max_n),
                 },
             )?;
-            eprintln!(
-                "Checkpoint saved at n={} (sieved out: {})",
-                block_end, total_sieved
-            );
+            info!(n = block_end, total_sieved, "checkpoint saved");
             last_checkpoint = Instant::now();
         }
 
@@ -418,10 +414,7 @@ pub fn search(
                     max_n: Some(max_n),
                 },
             )?;
-            eprintln!(
-                "Stop requested by coordinator, checkpoint saved at n={}",
-                block_end
-            );
+            info!(n = block_end, "stop requested by coordinator, checkpoint saved");
             return Ok(());
         }
 
@@ -429,10 +422,7 @@ pub fn search(
     }
 
     checkpoint::clear(checkpoint_path);
-    eprintln!(
-        "Cullen/Woodall sieve eliminated {} candidates.",
-        total_sieved
-    );
+    info!(total_sieved, "Cullen/Woodall sieve eliminated candidates");
     Ok(())
 }
 

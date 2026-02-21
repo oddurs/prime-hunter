@@ -42,9 +42,9 @@ loop {
 ```
 
 **Key decisions:**
-- **Subprocess model:** Each agent task spawns a Claude Code CLI process (`claude --task "..." --model <model>`). This isolates agents from each other and from the coordinator.
+- **Subprocess model:** Each agent task spawns a Claude Code CLI process (`claude --task "..." --model <model>`). This isolates agents from each other and from the central service.
 - **Concurrency limit:** Configurable `max_agents` (default: 2). Prevents runaway spending and resource exhaustion.
-- **Task claiming:** Use `FOR UPDATE SKIP LOCKED` pattern (same as work blocks) so multiple coordinators don't double-claim.
+- **Task claiming:** Use `FOR UPDATE SKIP LOCKED` pattern (same as work blocks) so multiple dashboard instances don't double-claim.
 
 ### Agent Process Management
 
@@ -267,7 +267,7 @@ Give agents persistent knowledge across tasks.
 - `CLAUDE.md` and domain-specific `CLAUDE.md` files
 - Relevant roadmap sections based on task type
 - Recent git log (last 20 commits)
-- Summary of currently running searches and fleet status
+- Summary of currently running searches and network status
 
 This is assembled into a context document and passed to the agent process as a system prompt file.
 
@@ -341,7 +341,7 @@ Purpose-built agent configurations for different domains.
 
 **Templates:**
 - `deploy-update`: Build release → Deploy to server → Verify health → Report
-- `scale-fleet`: Analyze current load → Recommend scaling → Deploy workers
+- `scale-network`: Analyze current load → Recommend scaling → Deploy nodes
 
 ### Research Agent
 
@@ -395,7 +395,7 @@ CREATE TABLE agent_schedules (
 |-------|---------|-------------|
 | Prime discovered | `INSERT` on `primes` table | Verify prime, update docs, post notification |
 | Search job completed | `work_blocks` all done | Generate completion report, suggest next range |
-| Worker offline > 10min | Stale heartbeat | Diagnose issue, attempt restart |
+| Node offline > 10min | Stale heartbeat | Diagnose issue, attempt restart |
 | Budget threshold (80%) | Budget check | Alert user, suggest cost optimizations |
 | New commit pushed | Git webhook | Run tests, check for regressions |
 
@@ -462,24 +462,25 @@ CREATE INDEX idx_agent_logs_task ON agent_logs (task_id, created_at);
 
 ---
 
-## Phase 9: Multi-Coordinator & Scaling
+## Phase 9: Multi-Instance & Scaling
 
-Scale the agent system beyond a single coordinator.
+> **Architecture note (Feb 2026):** The strategy engine concept from Phase 4 (AI-driven campaign design and autonomous search management) is a key differentiator. Agents can analyze network throughput and optimize work distribution across nodes.
 
-### Coordinator High Availability
+Scale the agent system beyond a single dashboard instance.
 
-**Target:** Multiple coordinator instances can run simultaneously:
-- Task claiming already uses `FOR UPDATE SKIP LOCKED` — works with multiple coordinators
-- Agent process spawned by the coordinator that claimed the task
-- Heartbeat-based coordinator registry (similar to worker registry)
-- If a coordinator dies, its in-progress tasks are reclaimed after timeout
+### Dashboard High Availability
+
+**Target:** Multiple dashboard instances can run simultaneously:
+- Task claiming already uses `FOR UPDATE SKIP LOCKED` — works with multiple instances
+- Agent process spawned by the instance that claimed the task
+- Heartbeat-based instance registry (similar to node registry)
+- If an instance dies, its in-progress tasks are reclaimed after timeout
 
 ### Agent Process Distribution
 
 **Target:** Spawn agent processes on remote machines:
-- Reuse the existing SSH deployment infrastructure (`deploy.rs`)
-- Agent process runs on the remote machine, reports back to coordinator via PostgreSQL
-- Useful for: running agents close to the code (local dev machine) while coordinator is in the cloud
+- Agent process runs on the remote machine, reports back to central service via PostgreSQL
+- Useful for: running agents close to the code (local dev machine) while the dashboard is in the cloud
 
 ### Rate Limiting & Fairness
 
@@ -503,7 +504,7 @@ Scale the agent system beyond a single coordinator.
 | 6. Specialized roles | Medium | Medium | Phases 2, 3, 5 |
 | 7. Scheduling & automation | Medium | High | Phases 1, 3 |
 | 8. Observability | Medium | Medium | Phase 1 |
-| 9. Multi-coordinator | Large | Low (until fleet grows) | All |
+| 9. Multi-instance | Large | Low (until network grows) | All |
 
 **Recommended order:** 1 → 4 → 2 → 5 → 3 → 8 → 7 → 6 → 9
 
@@ -513,7 +514,7 @@ Phase 1 and 4 are the critical path — nothing works without an execution engin
 
 ## Design Principles
 
-1. **Agents are subprocesses, not threads.** Isolation prevents a rogue agent from crashing the coordinator or corrupting shared state.
+1. **Agents are subprocesses, not threads.** Isolation prevents a rogue agent from crashing the central service or corrupting shared state.
 
 2. **Budget is a hard limit, not a suggestion.** An agent that exceeds its budget is killed immediately. Operators must never be surprised by a bill.
 

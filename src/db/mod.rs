@@ -44,12 +44,18 @@ mod records;
 mod releases;
 mod roles;
 mod schedules;
+pub mod strategy;
 pub mod operators;
+pub mod trust;
 /// Backward compatibility re-export.
 pub mod volunteers {
     pub use super::operators::*;
 }
+mod user_profiles;
 mod workers;
+pub use user_profiles::UserProfile;
+pub use strategy::{FormYieldRateRow, StrategyConfigRow, StrategyDecisionRow};
+pub use trust::{NodeReliability, VerificationBlock, VerificationOutcome, WorkBlockWithCheckpoint};
 pub use observability::{
     MetricPoint, MetricSample, MetricSeries, SystemLogEntry, SystemLogRow, WorkerRateRow,
 };
@@ -166,7 +172,7 @@ pub struct WorkerRow {
 
 // ── Search job types ────────────────────────────────────────────
 
-#[derive(Serialize, sqlx::FromRow)]
+#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
 pub struct SearchJobRow {
     pub id: i64,
     pub search_type: String,
@@ -188,6 +194,17 @@ pub struct WorkBlock {
     pub block_id: i64,
     pub block_start: i64,
     pub block_end: i64,
+}
+
+/// Work block details for verification queue population.
+#[derive(sqlx::FromRow)]
+pub struct WorkBlockDetails {
+    pub block_id: i64,
+    pub block_start: i64,
+    pub block_end: i64,
+    pub tested: i64,
+    pub found: i64,
+    pub claimed_by: String,
 }
 
 #[derive(Serialize, sqlx::FromRow)]

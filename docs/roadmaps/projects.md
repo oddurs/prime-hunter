@@ -2,6 +2,8 @@
 
 Campaign-style prime discovery management: orchestration, cost tracking, records, strategy.
 
+> **Architecture note (Feb 2026):** AI-driven project creation is planned — agents will analyze network capacity, competitive landscape, and historical results to autonomously propose and configure projects.
+
 **Key files:** `src/project.rs`, `src/db.rs` (project methods), `src/dashboard.rs` (project API), `frontend/src/app/projects/page.tsx`
 
 ---
@@ -141,7 +143,7 @@ darkreach project retry-phase <slug> <phase-name>
 POST /api/projects/estimate
 Body: { form, objective, target, strategy }
 Response: { estimated_candidates, total_core_hours, total_cost_usd,
-            estimated_duration_hours, workers_recommended }
+            estimated_duration_hours, nodes_recommended }
 ```
 
 ### 2.4 Calibrate cost model against actual measurements
@@ -232,20 +234,20 @@ if should_generate_followup_phase(&project, &completed_phase) {
 
 **Current:** The `[infrastructure]` section in TOML (`min_ram_gb`, `min_cores`, `required_tools`) is stored but never checked.
 
-**Target:** At phase activation time, verify that at least one worker in the fleet meets the infrastructure requirements:
-- Check worker heartbeats for RAM and core count
+**Target:** At phase activation time, verify that at least one node in the network meets the infrastructure requirements:
+- Check node heartbeats for RAM and core count
 - Check available tools (PFGW, GWNUM) against `required_tools`
-- If no suitable worker exists, log event and skip activation until one appears
-- Optionally auto-assign phases to workers that meet requirements
+- If no suitable node exists, log event and skip activation until one appears
+- Optionally auto-assign phases to nodes that meet requirements
 
-### 3.5 Worker count auto-scaling
+### 3.5 Node count auto-scaling
 
-**Current:** The `[workers]` section (`min_workers`, `max_workers`, `recommended_workers`) is stored but never read.
+**Current:** The `[nodes]` section (`min_nodes`, `max_nodes`, `recommended_nodes`) is stored but never read.
 
-**Target:** Use worker config to influence orchestration:
-- Don't activate a phase unless `min_workers` are available in the fleet
-- Set `block_size` inversely proportional to `recommended_workers` for even distribution
-- Emit warnings if fewer than `recommended_workers` are active
+**Target:** Use node config to influence orchestration:
+- Don't activate a phase unless `min_nodes` are available in the network
+- Set `block_size` inversely proportional to `recommended_nodes` for even distribution
+- Emit warnings if fewer than `recommended_nodes` are active
 
 ---
 
@@ -287,7 +289,7 @@ if should_generate_followup_phase(&project, &completed_phase) {
 
 **Current:** Actions (activate, pause, cancel) are per-project only.
 
-**Target:** Multi-select in project list with bulk pause/activate/cancel. Useful for fleet-wide operations (e.g., pause all projects before maintenance).
+**Target:** Multi-select in project list with bulk pause/activate/cancel. Useful for network-wide operations (e.g., pause all projects before maintenance).
 
 ---
 
@@ -295,12 +297,12 @@ if should_generate_followup_phase(&project, &completed_phase) {
 
 ### 5.1 Multi-project resource scheduling
 
-**Current:** Each project operates independently. If multiple active projects compete for workers, they all generate work blocks and workers claim arbitrarily.
+**Current:** Each project operates independently. If multiple active projects compete for nodes, they all generate work blocks and nodes claim arbitrarily.
 
 **Target:** Priority-based scheduling:
 - Project priority field (1-10)
 - Higher-priority projects get work blocks claimed first
-- Fair-share scheduling: each project gets proportional worker time
+- Fair-share scheduling: each project gets proportional node time
 - Preemption: high-priority project can steal blocks from low-priority
 
 ### 5.2 Project templates and cloning

@@ -25,7 +25,7 @@ use chrono::Utc;
 use serde::Serialize;
 use std::collections::HashMap;
 
-use crate::search_manager::SearchParams;
+use crate::search_params::SearchParams;
 
 #[derive(Clone, Debug, Serialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
@@ -313,8 +313,35 @@ pub async fn ssh_stop(
 
 #[cfg(test)]
 mod tests {
+    //! Tests for the SSH-based remote worker deployment manager.
+    //!
+    //! Validates the DeploymentManager lifecycle: creation, ID auto-increment,
+    //! status transitions (Deploying -> Running -> Paused -> Stopped/Failed),
+    //! no-op behavior for nonexistent IDs, descending sort order for get_all(),
+    //! SSH command generation for all 11 search forms, and deployment status
+    //! serde (snake_case serialization).
+    //!
+    //! ## Deployment Lifecycle
+    //!
+    //! ```text
+    //! deploy() -> Deploying -> mark_running(pid) -> Running
+    //!                                                  |
+    //!                                          mark_paused() -> Paused
+    //!                                                  |            |
+    //!                                          mark_stopped()  mark_resuming() -> Deploying
+    //!                                                  |
+    //!                                          mark_failed(err) -> Failed
+    //! ```
+    //!
+    //! Each status transition is tested independently. The SSH command builder
+    //! is tested for all 11 forms to ensure correct argument formatting.
+
     use super::*;
 
+    // ── Manager Lifecycle ────────────────────────────────────────────
+
+    /// A fresh DeploymentManager has no deployments. get_all() returns empty
+    /// and get(any_id) returns None.
     #[test]
     fn deployment_manager_new_empty() {
         let dm = DeploymentManager::new();
@@ -322,6 +349,9 @@ mod tests {
         assert!(dm.get(1).is_none());
     }
 
+    /// deploy() creates a Deployment with status=Deploying, auto-generated
+    /// worker_id ("deploy-N"), and no remote_pid yet. The deployment is
+    /// stored in the HashMap and retrievable via get(id).
     #[test]
     fn deploy_creates_deployment() {
         let mut dm = DeploymentManager::new();
@@ -346,6 +376,9 @@ mod tests {
         assert!(dm.get(1).is_some());
     }
 
+    /// Each deploy() call increments the ID counter. Sequential deployments
+    /// get IDs 1, 2, 3, ... This provides a stable identifier for the
+    /// dashboard to track deployment status across page reloads.
     #[test]
     fn deploy_increments_id() {
         let mut dm = DeploymentManager::new();
@@ -373,6 +406,10 @@ mod tests {
         assert_eq!(d2.id, 2);
     }
 
+    // ── Status Transitions ─────────────────────────────────────────
+
+    /// Deploying -> Running: SSH subprocess started, remote PID captured.
+    /// mark_running stores the PID so ssh_stop can kill the process later.
     #[test]
     fn status_lifecycle_deploying_to_running() {
         let mut dm = DeploymentManager::new();
@@ -393,6 +430,9 @@ mod tests {
         assert_eq!(d.remote_pid, Some(12345));
     }
 
+    /// Running -> Paused: worker stopped but deployment retained for resume.
+    /// The remote_pid is cleared (process was killed), so a new SSH session
+    /// is needed to resume.
     #[test]
     fn status_lifecycle_running_to_paused() {
         let mut dm = DeploymentManager::new();
@@ -414,6 +454,9 @@ mod tests {
         assert!(d.remote_pid.is_none()); // cleared on pause
     }
 
+    /// Paused -> Deploying (resuming): the deployment goes back to Deploying
+    /// state while a new SSH session is established. On success, mark_running
+    /// transitions it to Running again.
     #[test]
     fn status_lifecycle_paused_to_resuming() {
         let mut dm = DeploymentManager::new();
@@ -434,6 +477,9 @@ mod tests {
         assert_eq!(d.status, DeploymentStatus::Deploying);
     }
 
+    /// Any state -> Failed: SSH connection refused, binary not found, etc.
+    /// The error message is stored for display in the dashboard deployment
+    /// panel. Failed deployments can be retried via a new deploy() call.
     #[test]
     fn status_lifecycle_to_failed() {
         let mut dm = DeploymentManager::new();
@@ -454,6 +500,8 @@ mod tests {
         assert_eq!(d.error, Some("SSH connection refused".into()));
     }
 
+    /// Running -> Stopped: user explicitly stopped the deployment. Terminal
+    /// state — the deployment remains in history but cannot be resumed.
     #[test]
     fn status_lifecycle_to_stopped() {
         let mut dm = DeploymentManager::new();
@@ -474,6 +522,11 @@ mod tests {
         assert_eq!(d.status, DeploymentStatus::Stopped);
     }
 
+    // ── Edge Cases ────────────────────────────────────────────────
+
+    /// Status transitions on nonexistent deployment IDs must be silent no-ops.
+    /// This handles race conditions where a deployment is removed while the
+    /// dashboard is sending status updates.
     #[test]
     fn mark_nonexistent_is_noop() {
         let mut dm = DeploymentManager::new();
@@ -483,6 +536,8 @@ mod tests {
         dm.mark_stopped(999);
     }
 
+    /// get_all() returns deployments sorted by ID descending (newest first).
+    /// The dashboard deployment list shows the most recent deployment at top.
     #[test]
     fn get_all_sorted_by_id_desc() {
         let mut dm = DeploymentManager::new();
@@ -524,6 +579,12 @@ mod tests {
         assert_eq!(all[2].id, 1);
     }
 
+    // ── SSH Command Generation ─────────────────────────────────────
+
+    /// Validates the full SSH command for a factorial search deployment.
+    /// The command must include: nohup (background), DATABASE_URL, coordinator
+    /// URL, worker ID, checkpoint path, log path, the form-specific subcommand
+    /// with its arguments, and "echo $!" to capture the remote PID.
     #[test]
     fn build_ssh_command_factorial() {
         let cmd = build_ssh_command(
@@ -542,6 +603,8 @@ mod tests {
         assert!(cmd.contains("echo $!"));
     }
 
+    /// KBN form uses 4 parameters (k, base, min_n, max_n). The deployment
+    /// ID is embedded in the worker_id and checkpoint/log paths.
     #[test]
     fn build_ssh_command_kbn() {
         let cmd = build_ssh_command(
@@ -559,6 +622,9 @@ mod tests {
         assert!(cmd.contains("deploy-5"));
     }
 
+    /// Exhaustive test: build_ssh_command must not panic for any of the 11
+    /// search form variants. Each form produces a different subcommand string
+    /// with form-specific CLI arguments (start/end, min-n/max-n, k/base, etc.).
     #[test]
     fn build_ssh_command_all_forms() {
         // Just verify none of them panic
@@ -618,6 +684,12 @@ mod tests {
         }
     }
 
+    // ── Serialization ──────────────────────────────────────────────
+
+    /// DeploymentStatus uses `#[serde(rename_all = "snake_case")]`, so enum
+    /// variants serialize as lowercase strings: "deploying", "running",
+    /// "paused", "failed", "stopped". The frontend matches on these strings
+    /// to display appropriate status badges.
     #[test]
     fn deployment_status_serde() {
         let statuses = vec![

@@ -53,7 +53,7 @@ src/
 │   ├── routes_searches.rs     # /api/searches/* — search management
 │   ├── routes_status.rs       # /api/status — coordinator status
 │   ├── routes_verify.rs       # /api/verify — prime re-verification
-│   ├── routes_volunteer.rs    # /api/volunteer/* — volunteer worker management
+│   ├── routes_operator.rs     # /api/v1/operators/*, /api/v1/nodes/* — operator API
 │   └── routes_workers.rs      # /api/workers/* — worker heartbeat, registration
 │
 ├── db/                        # PostgreSQL via sqlx (Supabase)
@@ -70,7 +70,7 @@ src/
 │   ├── records.rs             # World record tracking
 │   ├── observability.rs       # Metrics, logs, worker rates
 │   ├── releases.rs            # Worker release channels, adoption tracking
-│   └── volunteers.rs          # Volunteer worker registration, capabilities
+│   └── operators.rs           # Operator account management, node registration
 │
 ├── project/                   # Campaign-style discovery management
 │   ├── mod.rs                 # Module re-exports
@@ -92,7 +92,7 @@ src/
 ├── events.rs                  # Event bus (prime notifications, search status)
 ├── metrics.rs                 # System metrics (CPU, memory, disk)
 ├── prom_metrics.rs            # Prometheus metric export
-├── volunteer.rs               # Volunteer worker management
+├── operator.rs                # Operator node management
 └── progress.rs                # Atomic counters, background 30s reporter
 ```
 
@@ -181,6 +181,8 @@ PostgreSQL via `sqlx::PgPool` connecting to Supabase. Operations split by domain
 
 ### Fleet coordination
 
+> **Note:** The fleet model is being migrated to a network model. See `docs/roadmaps/architecture.md`.
+
 - Workers register via HTTP heartbeat (10s) or PostgreSQL polling
 - `fleet.rs`: in-memory registry, stale pruning (60s)
 - `pg_worker.rs`: `FOR UPDATE SKIP LOCKED` for work block claiming
@@ -257,7 +259,7 @@ cargo bench                             # All benchmarks
 - Engine: `docs/roadmaps/engine.md`
 - Server: `docs/roadmaps/server.md`
 - Agents: `docs/roadmaps/agents.md`
-- Fleet: `docs/roadmaps/fleet.md`
+- Network: `docs/roadmaps/network.md`
 - Projects: `docs/roadmaps/projects.md`
 - GWNUM/FLINT: `docs/roadmaps/gwnum-flint.md`
 - Testing: `docs/roadmaps/testing.md`

@@ -1,4 +1,9 @@
-//! # Worker Client — HTTP Coordination Client
+//! # Worker Client — HTTP Coordination Client (Deprecated)
+//!
+//! **Deprecated**: The HTTP-based worker client has been superseded by
+//! `PgWorkerClient` in `pg_worker.rs`. All nodes now coordinate directly
+//! via PostgreSQL. This module is retained for backward compatibility but
+//! is no longer used by the CLI.
 //!
 //! The worker side of fleet coordination: registers with the coordinator,
 //! sends heartbeats every 10 seconds, and reports discovered primes. Uses
@@ -30,6 +35,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
+use tracing::{info, warn};
 
 #[derive(Clone, Serialize)]
 struct RegisterPayload {
@@ -110,8 +116,8 @@ impl WorkerClient {
         };
 
         match agent.post(&url).send_json(&payload) {
-            Ok(_) => eprintln!("Registered with coordinator at {}", coordinator_url),
-            Err(e) => eprintln!("Warning: failed to register with coordinator: {}", e),
+            Ok(_) => info!(coordinator_url, "Registered with coordinator"),
+            Err(e) => warn!(error = %e, "Failed to register with coordinator"),
         }
 
         WorkerClient {
@@ -167,18 +173,18 @@ impl WorkerClient {
                         if let Ok(body) = resp.body_mut().read_to_string() {
                             // Re-register if coordinator doesn't recognize us
                             if body.contains("re-register") {
-                                eprintln!("Coordinator lost registration, re-registering...");
+                                warn!("Coordinator lost registration, re-registering");
                                 let _ = agent.post(&register_url).send_json(&register_payload);
                             }
                             // Check for stop command from coordinator
                             if body.contains("\"command\":\"stop\"") {
-                                eprintln!("Received stop command from coordinator");
+                                info!("Received stop command from coordinator");
                                 stop_requested.store(true, Ordering::Relaxed);
                             }
                         }
                     }
                     Err(e) => {
-                        eprintln!("Warning: heartbeat failed: {}", e);
+                        warn!(error = %e, "Heartbeat failed");
                     }
                 }
             }
@@ -208,7 +214,7 @@ impl WorkerClient {
         };
 
         if let Err(e) = self.agent.post(&url).send_json(&payload) {
-            eprintln!("Warning: failed to report prime to coordinator: {}", e);
+            warn!(error = %e, "Failed to report prime to coordinator");
         }
     }
 
@@ -220,7 +226,7 @@ impl WorkerClient {
         };
 
         if let Err(e) = self.agent.post(&url).send_json(&payload) {
-            eprintln!("Warning: failed to deregister from coordinator: {}", e);
+            warn!(error = %e, "Failed to deregister from coordinator");
         }
     }
 }
@@ -249,4 +255,223 @@ fn gethostname() -> Option<String> {
         .and_then(|o| String::from_utf8(o.stdout).ok())
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
+}
+
+#[cfg(test)]
+mod tests {
+    //! Tests for the HTTP worker client (deprecated, retained for compatibility).
+    //!
+    //! Validates serialization of all 4 HTTP payload types (register, heartbeat,
+    //! prime report, deregister), atomic counter behavior for shared state
+    //! between engine and heartbeat threads, and the stop signal mechanism.
+    //!
+    //! ## Data Flow Under Test
+    //!
+    //! The worker client uses atomic counters (tested, found) and Mutex-guarded
+    //! strings (current, checkpoint) shared between the engine search thread
+    //! and the background heartbeat thread. The stop_requested AtomicBool
+    //! provides the coordinator's ability to gracefully halt a search.
+
+    use super::*;
+
+    // ── Payload Serialization ──────────────────────────────────────
+
+    /// Validates RegisterPayload JSON output containing worker_id, hostname,
+    /// cores, search_type, and search_params. Sent once on startup via
+    /// POST /api/worker/register.
+    #[test]
+    fn register_payload_serializes() {
+        let payload = RegisterPayload {
+            worker_id: "host-12345678".to_string(),
+            hostname: "testhost".to_string(),
+            cores: 8,
+            search_type: "factorial".to_string(),
+            search_params: "{\"start\":1,\"end\":100}".to_string(),
+        };
+        let json = serde_json::to_string(&payload).unwrap();
+        assert!(json.contains("worker_id"));
+        assert!(json.contains("host-12345678"));
+        assert!(json.contains("\"cores\":8"));
+        assert!(json.contains("factorial"));
+    }
+
+    /// Validates HeartbeatPayload JSON output with counters and current status.
+    /// Sent every 10 seconds by the background thread.
+    #[test]
+    fn heartbeat_payload_serializes() {
+        let payload = HeartbeatPayload {
+            worker_id: "w1".to_string(),
+            tested: 5000,
+            found: 3,
+            current: "testing n=42".to_string(),
+            checkpoint: Some("{\"last_n\":42}".to_string()),
+            metrics: None,
+        };
+        let json = serde_json::to_string(&payload).unwrap();
+        assert!(json.contains("\"tested\":5000"));
+        assert!(json.contains("\"found\":3"));
+        assert!(json.contains("testing n=42"));
+    }
+
+    /// Heartbeat with hardware metrics attached. The metrics field is
+    /// populated from sysinfo collection on each heartbeat cycle.
+    #[test]
+    fn heartbeat_payload_with_metrics() {
+        let hw = crate::metrics::HardwareMetrics {
+            cpu_usage_percent: 75.0,
+            memory_used_gb: 12.0,
+            memory_total_gb: 16.0,
+            memory_usage_percent: 75.0,
+            disk_used_gb: 200.0,
+            disk_total_gb: 500.0,
+            disk_usage_percent: 40.0,
+            load_avg_1m: 2.0,
+            load_avg_5m: 1.5,
+            load_avg_15m: 1.0,
+        };
+        let payload = HeartbeatPayload {
+            worker_id: "w1".to_string(),
+            tested: 100,
+            found: 0,
+            current: "".to_string(),
+            checkpoint: None,
+            metrics: Some(hw),
+        };
+        let json = serde_json::to_string(&payload).unwrap();
+        assert!(json.contains("cpu_usage_percent"));
+        assert!(json.contains("75"));
+    }
+
+    /// Validates PrimePayload for POST /api/worker/prime. Sent immediately
+    /// when a prime is discovered, before the next heartbeat cycle.
+    #[test]
+    fn prime_payload_serializes() {
+        let payload = PrimePayload {
+            worker_id: "w1".to_string(),
+            form: "kbn".to_string(),
+            expression: "3*2^100+1".to_string(),
+            digits: 31,
+            search_params: "{}".to_string(),
+            proof_method: "proth".to_string(),
+        };
+        let json = serde_json::to_string(&payload).unwrap();
+        assert!(json.contains("3*2^100+1"));
+        assert!(json.contains("\"digits\":31"));
+        assert!(json.contains("proth"));
+    }
+
+    /// Validates DeregisterPayload JSON for POST /api/worker/deregister.
+    /// Sent on graceful shutdown to remove the worker from the coordinator's
+    /// active registry, preventing stale-worker alerts.
+    #[test]
+    fn deregister_payload_serializes() {
+        let payload = DeregisterPayload {
+            worker_id: "w1".to_string(),
+        };
+        let json = serde_json::to_string(&payload).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(v["worker_id"], "w1");
+    }
+
+    // ── Stop Signal ────────────────────────────────────────────────
+
+    /// The stop_requested flag must default to false. Workers start in an
+    /// active state; only the coordinator can set the stop flag via a
+    /// heartbeat response containing `"command":"stop"`.
+    #[test]
+    fn stop_requested_default_false() {
+        let flag = Arc::new(AtomicBool::new(false));
+        assert!(!flag.load(Ordering::Relaxed));
+    }
+
+    /// Verifies that the stop flag transitions from false to true. The
+    /// heartbeat thread sets this flag when the coordinator responds with
+    /// a stop command, causing the engine search loop to exit gracefully.
+    #[test]
+    fn stop_requested_can_be_set() {
+        let flag = Arc::new(AtomicBool::new(false));
+        flag.store(true, Ordering::Relaxed);
+        assert!(flag.load(Ordering::Relaxed));
+    }
+
+    // ── Atomic Counters ──────────────────────────────────────────────
+
+    /// Validates that AtomicU64 counters correctly accumulate via fetch_add.
+    /// The engine search thread calls fetch_add on `tested` and `found` from
+    /// rayon worker threads; the heartbeat thread reads them with load().
+    /// Relaxed ordering is sufficient since counters are monotonic and
+    /// approximate values are acceptable in heartbeat payloads.
+    #[test]
+    fn atomic_counters_increment() {
+        let tested = Arc::new(AtomicU64::new(0));
+        let found = Arc::new(AtomicU64::new(0));
+
+        tested.fetch_add(100, Ordering::Relaxed);
+        tested.fetch_add(50, Ordering::Relaxed);
+        found.fetch_add(2, Ordering::Relaxed);
+
+        assert_eq!(tested.load(Ordering::Relaxed), 150);
+        assert_eq!(found.load(Ordering::Relaxed), 2);
+    }
+
+    // ── Platform Utilities ────────────────────────────────────────────
+
+    /// On any real machine, the `hostname` command should succeed and return
+    /// a non-empty string. The hostname is included in the registration
+    /// payload to identify workers in the dashboard fleet view.
+    #[test]
+    fn gethostname_returns_something() {
+        // On any real machine, hostname should return a non-empty string
+        let h = gethostname();
+        assert!(h.is_some(), "gethostname should return Some on real machine");
+        assert!(!h.unwrap().is_empty());
+    }
+
+    // ── Mutex-Guarded Shared State ─────────────────────────────────
+
+    /// The `current` field is a Mutex<String> that holds the human-readable
+    /// description of what the engine is currently testing (e.g., "4999! (~16324 digits)").
+    /// Updated once per block by the engine thread, read by the heartbeat thread.
+    #[test]
+    fn mutex_current_string_works() {
+        let current = Arc::new(Mutex::new(String::new()));
+        {
+            let mut guard = current.lock().unwrap();
+            *guard = "testing n=42".to_string();
+        }
+        let val = current.lock().unwrap().clone();
+        assert_eq!(val, "testing n=42");
+    }
+
+    /// The `checkpoint` field is a Mutex<Option<String>> holding the latest
+    /// checkpoint JSON. None until the first checkpoint save (60s after search
+    /// start), then periodically updated. Sent in heartbeat payloads so the
+    /// coordinator can track search progress for resumption.
+    #[test]
+    fn mutex_checkpoint_option_works() {
+        let checkpoint = Arc::new(Mutex::new(None::<String>));
+        {
+            let mut guard = checkpoint.lock().unwrap();
+            *guard = Some("{\"last_n\":100}".to_string());
+        }
+        let val = checkpoint.lock().unwrap().clone();
+        assert_eq!(val, Some("{\"last_n\":100}".to_string()));
+    }
+
+    /// When no checkpoint exists yet (first 60 seconds of a search), the
+    /// checkpoint field serializes as JSON null. The coordinator must handle
+    /// this gracefully without attempting to parse a checkpoint path.
+    #[test]
+    fn heartbeat_payload_null_checkpoint() {
+        let payload = HeartbeatPayload {
+            worker_id: "w1".to_string(),
+            tested: 0,
+            found: 0,
+            current: "".to_string(),
+            checkpoint: None,
+            metrics: None,
+        };
+        let json = serde_json::to_string(&payload).unwrap();
+        assert!(json.contains("\"checkpoint\":null"));
+    }
 }

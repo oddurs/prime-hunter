@@ -33,6 +33,7 @@ Migrations are numbered sequentially in `supabase/migrations/`. Apply in order.
 | 022 | `worker_release_channels.sql` | `worker_releases`, `worker_release_channels` | Release channel management |
 | 023 | `volunteer_worker_release_tracking.sql` | `volunteer_workers` (alter) | Release version tracking |
 | 024 | `metric_rollups_daily.sql` | `metric_rollups_daily`, RPCs | Daily metric aggregation |
+| 025 | `operator_rename.sql` | Renames | Rename volunteer tables → operator tables + backward-compat views |
 
 ## Schema Overview
 
@@ -101,6 +102,8 @@ system_metrics — Time-series metrics (CPU, memory, throughput)
 system_logs — Structured log entries
 metric_rollups_daily — Aggregated daily metrics
 volunteer_workers — Volunteer registration and capabilities
+  Note: Tables renamed in migration 025: volunteers → operators, volunteer_workers → operator_nodes,
+  volunteer_trust → operator_trust, credit_log → operator_credits. Old names available as views.
 worker_releases — Binary release metadata
 worker_release_channels — Release channel config (stable, beta, nightly)
 cost_calibrations — Per-form cost model coefficients
@@ -140,7 +143,7 @@ cost_calibrations — Per-form cost model coefficients
 | `projects`, `project_*` | `db/projects.rs` | `routes_projects` |
 | `records` | `db/records.rs` | `routes_projects` |
 | `system_*`, `metric_*` | `db/observability.rs` | `routes_observability` |
-| `volunteer_*` | `db/volunteers.rs` | `routes_volunteer` |
+| `operators`, `operator_*` | `db/operators.rs` | `routes_operator` |
 | `worker_release*` | `db/releases.rs` | `routes_releases` |
 | `cost_calibrations` | `db/calibrations.rs` | `routes_projects` |
 

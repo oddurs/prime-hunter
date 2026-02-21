@@ -27,6 +27,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::{Path, PathBuf};
+use tracing::{info, warn};
 
 /// Number of backup generations to keep.
 const GENERATIONS: usize = 3;
@@ -196,10 +197,10 @@ pub fn load(path: &Path) -> Option<Checkpoint> {
         let p = generation_path(path, gen);
         if let Some(cp) = load_single(&p) {
             if gen > 0 {
-                eprintln!(
-                    "Warning: recovered checkpoint from generation {} ({})",
-                    gen,
-                    p.display()
+                warn!(
+                    generation = gen,
+                    path = %p.display(),
+                    "Recovered checkpoint from older generation"
                 );
             }
             return Some(cp);
@@ -209,7 +210,7 @@ pub fn load(path: &Path) -> Option<Checkpoint> {
     // Legacy fallback: try loading without envelope (pre-hardening checkpoints)
     let data = fs::read_to_string(path).ok()?;
     let cp: Checkpoint = serde_json::from_str(&data).ok()?;
-    eprintln!("Loaded legacy checkpoint (no checksum)");
+    info!("Loaded legacy checkpoint (no checksum)");
     Some(cp)
 }
 
@@ -222,11 +223,11 @@ fn load_single(path: &Path) -> Option<Checkpoint> {
     let data_str = serde_json::to_string_pretty(&envelope.data).ok()?;
     let expected = sha256_hex(&data_str);
     if expected != envelope.checksum {
-        eprintln!(
-            "Checkpoint integrity check failed: {} (expected {}, got {})",
-            path.display(),
-            &expected[..12],
-            &envelope.checksum[..12.min(envelope.checksum.len())]
+        warn!(
+            path = %path.display(),
+            expected = &expected[..12],
+            got = &envelope.checksum[..12.min(envelope.checksum.len())],
+            "Checkpoint integrity check failed"
         );
         return None;
     }
@@ -245,9 +246,35 @@ pub fn clear(path: &Path) {
 
 #[cfg(test)]
 mod tests {
+    //! Tests for the checkpoint subsystem — resumable search state persistence.
+    //!
+    //! Validates the atomic write strategy (write to .tmp, rename), SHA-256
+    //! integrity verification, generational rotation (3 generations max),
+    //! corruption fallback, legacy format loading, and save/load round-trips
+    //! for all 12 checkpoint variants.
+    //!
+    //! ## Atomic Write + Generation Rotation Strategy
+    //!
+    //! Each save() performs: rotate .1->.2, current->.1, write new to .tmp,
+    //! rename .tmp to current. This ensures:
+    //! 1. A crash during write leaves the .tmp file (ignored on load)
+    //! 2. Corruption of current falls back to generation .1 or .2
+    //! 3. Disk usage is bounded to 3x the checkpoint size
+    //!
+    //! ## Integrity Verification
+    //!
+    //! Each checkpoint is wrapped in a CheckpointEnvelope containing a SHA-256
+    //! hash of the pretty-printed data JSON. On load, the hash is recomputed
+    //! and compared — any tampering or bit-rot is detected.
+
     use super::*;
     use std::io::Write;
 
+    // ── Round-Trip Tests ───────────────────────────────────────────
+
+    /// Basic save/load round-trip for the Factorial variant. Verifies that
+    /// all fields (last_n, start, end) survive serialization through the
+    /// CheckpointEnvelope wrapper with SHA-256 integrity.
     #[test]
     fn save_load_roundtrip() {
         let dir = tempfile::tempdir().unwrap();
@@ -271,6 +298,11 @@ mod tests {
         }
     }
 
+    // ── Generation Rotation ──────────────────────────────────────
+
+    /// Validates that 3 consecutive saves create 3 generation files with
+    /// correct values: current=30, .1=20, .2=10. The rotation strategy
+    /// shifts each file down one generation on every save.
     #[test]
     fn rotation_keeps_generations() {
         let dir = tempfile::tempdir().unwrap();
@@ -313,6 +345,11 @@ mod tests {
         }
     }
 
+    // ── Corruption Recovery ──────────────────────────────────────
+
+    /// When the current checkpoint is corrupted (invalid JSON), load() must
+    /// fall back to generation .1. This simulates a power loss during write
+    /// or disk corruption of the most recent file.
     #[test]
     fn fallback_on_corruption() {
         let dir = tempfile::tempdir().unwrap();
@@ -352,6 +389,10 @@ mod tests {
         }
     }
 
+    // ── Legacy Format ────────────────────────────────────────────
+
+    /// Pre-hardening checkpoints (no envelope, raw JSON) must still load.
+    /// This ensures backward compatibility when upgrading from older versions.
     #[test]
     fn legacy_checkpoint_loads() {
         let dir = tempfile::tempdir().unwrap();
@@ -375,6 +416,12 @@ mod tests {
         }
     }
 
+    // ── All-Variants Exhaustive ──────────────────────────────────
+
+    /// Exhaustive round-trip test for all 12 checkpoint variants. Each form
+    /// stores different state (last_n, digit_count, exponent, etc.) and
+    /// optional bounds. A missing variant here means a new search form was
+    /// added without updating the checkpoint system.
     #[test]
     fn all_checkpoint_variants_roundtrip() {
         let dir = tempfile::tempdir().unwrap();
@@ -501,6 +548,8 @@ mod tests {
         }
     }
 
+    /// Optional fields (start, end) set to None must round-trip correctly.
+    /// Older checkpoints may lack these fields due to #[serde(default)].
     #[test]
     fn checkpoint_with_none_optional_fields() {
         let dir = tempfile::tempdir().unwrap();
@@ -523,6 +572,11 @@ mod tests {
         }
     }
 
+    // ── Integrity Verification ──────────────────────────────────
+
+    /// Tampering with the data field (changing 42 to 99) while keeping the
+    /// original checksum must cause load_single to reject the file. This
+    /// validates the SHA-256 integrity check.
     #[test]
     fn checkpoint_checksum_detects_tampering() {
         let dir = tempfile::tempdir().unwrap();
@@ -547,6 +601,11 @@ mod tests {
         assert!(load_single(&path).is_none());
     }
 
+    // ── Clear and Cleanup ────────────────────────────────────────
+
+    /// clear() must remove all generation files (current, .1, .2). Called
+    /// when a search completes successfully and the checkpoint is no longer
+    /// needed.
     #[test]
     fn clear_removes_all() {
         let dir = tempfile::tempdir().unwrap();
@@ -569,5 +628,248 @@ mod tests {
         assert!(!path.exists());
         assert!(!generation_path(&path, 1).exists());
         assert!(!generation_path(&path, 2).exists());
+    }
+
+    // ── Hash Function ───────────────────────────────────────────
+
+    /// SHA-256 of "abc" must match the NIST test vector. This is the same
+    /// hash function used for checkpoint integrity verification.
+    #[test]
+    fn sha256_hex_known_value() {
+        // SHA-256 of "abc" (well-known test vector)
+        let hash = sha256_hex("abc");
+        assert_eq!(
+            hash,
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+    }
+
+    /// SHA-256 of empty string must match the well-known empty digest.
+    #[test]
+    fn sha256_hex_empty_string() {
+        let hash = sha256_hex("");
+        assert_eq!(
+            hash,
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        );
+    }
+
+    // ── Path Generation ──────────────────────────────────────────
+
+    /// Generation 0 returns the base path unchanged; generations 1+ append
+    /// ".N" suffix. This naming scheme is assumed by both save() and load().
+    #[test]
+    fn generation_path_formats_correctly() {
+        let base = Path::new("/tmp/checkpoint.json");
+        assert_eq!(generation_path(base, 0), PathBuf::from("/tmp/checkpoint.json"));
+        assert_eq!(generation_path(base, 1), PathBuf::from("/tmp/checkpoint.json.1"));
+        assert_eq!(generation_path(base, 2), PathBuf::from("/tmp/checkpoint.json.2"));
+    }
+
+    // ── Edge Cases ──────────────────────────────────────────────
+
+    /// Loading a nonexistent file must return None (fresh search, no resume).
+    #[test]
+    fn load_nonexistent_file_returns_none() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("does_not_exist.json");
+        assert!(load(&path).is_none());
+    }
+
+    /// save() must create the file if it does not exist.
+    #[test]
+    fn save_creates_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("cp.json");
+        assert!(!path.exists());
+        save(
+            &path,
+            &Checkpoint::Factorial {
+                last_n: 1,
+                start: None,
+                end: None,
+            },
+        )
+        .unwrap();
+        assert!(path.exists());
+    }
+
+    /// The .tmp file must not remain after a successful save. A leftover
+    /// .tmp file indicates a crash during the atomic write, and is intentionally
+    /// ignored by load().
+    #[test]
+    fn save_cleans_up_tmp_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("cp.json");
+        save(
+            &path,
+            &Checkpoint::Factorial {
+                last_n: 1,
+                start: None,
+                end: None,
+            },
+        )
+        .unwrap();
+        // The .tmp file should not remain after a successful save
+        let tmp_path = path.with_extension("tmp");
+        assert!(!tmp_path.exists(), ".tmp file should not remain after save");
+    }
+
+    /// The saved file must be valid JSON containing both "checksum" and "data"
+    /// fields (the CheckpointEnvelope structure).
+    #[test]
+    fn saved_file_is_valid_json() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("cp.json");
+        save(
+            &path,
+            &Checkpoint::Kbn {
+                last_n: 500,
+                min_n: Some(1),
+                max_n: Some(1000),
+            },
+        )
+        .unwrap();
+        let raw = fs::read_to_string(&path).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        assert!(parsed.get("checksum").is_some(), "Envelope should have checksum");
+        assert!(parsed.get("data").is_some(), "Envelope should have data");
+    }
+
+    /// The stored checksum must match the SHA-256 of the pretty-printed data.
+    /// This verifies the envelope was constructed correctly by save().
+    #[test]
+    fn envelope_checksum_matches_data() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("cp.json");
+        save(
+            &path,
+            &Checkpoint::Primorial {
+                last_prime: 29,
+                start: Some(2),
+                end: Some(100),
+            },
+        )
+        .unwrap();
+
+        let raw = fs::read_to_string(&path).unwrap();
+        let envelope: CheckpointEnvelope = serde_json::from_str(&raw).unwrap();
+        let data_str = serde_json::to_string_pretty(&envelope.data).unwrap();
+        let expected_checksum = sha256_hex(&data_str);
+        assert_eq!(envelope.checksum, expected_checksum);
+    }
+
+    /// Validates that checkpoint file rotation discards the oldest generation
+    /// when exceeding the 3-generation limit. After 4 saves with values
+    /// [10, 20, 30, 40], the files should contain [40, 30, 20] and the
+    /// original value 10 should be gone. This rotation strategy ensures
+    /// crash recovery always has at least one valid checkpoint, while bounding
+    /// disk usage to 3x the checkpoint size.
+    #[test]
+    fn fourth_save_discards_oldest_generation() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("checkpoint.json");
+
+        // Save 4 checkpoints: gen 0 (last_n=10) should be discarded
+        for n in [10u64, 20, 30, 40] {
+            save(
+                &path,
+                &Checkpoint::Factorial {
+                    last_n: n,
+                    start: None,
+                    end: None,
+                },
+            )
+            .unwrap();
+        }
+
+        // Current should be 40, .1 should be 30, .2 should be 20
+        // The original 10 should be gone
+        match load_single(&path).unwrap() {
+            Checkpoint::Factorial { last_n, .. } => assert_eq!(last_n, 40),
+            _ => panic!("Wrong type"),
+        }
+        match load_single(&generation_path(&path, 1)).unwrap() {
+            Checkpoint::Factorial { last_n, .. } => assert_eq!(last_n, 30),
+            _ => panic!("Wrong type"),
+        }
+        match load_single(&generation_path(&path, 2)).unwrap() {
+            Checkpoint::Factorial { last_n, .. } => assert_eq!(last_n, 20),
+            _ => panic!("Wrong type"),
+        }
+    }
+
+    // ── Form-Specific Round-Trips ─────────────────────────────────
+
+    /// NearRepdigit has additional fields (d, m) beyond the standard last_n.
+    /// Verifies all 5 fields survive the round-trip.
+    #[test]
+    fn near_repdigit_checkpoint_roundtrip() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("cp.json");
+        let cp = Checkpoint::NearRepdigit {
+            digit_count: 15,
+            d: 7,
+            m: 3,
+            min_digits: Some(5),
+            max_digits: Some(99),
+        };
+        save(&path, &cp).unwrap();
+        let loaded = load(&path).unwrap();
+        match loaded {
+            Checkpoint::NearRepdigit { digit_count, d, m, min_digits, max_digits } => {
+                assert_eq!(digit_count, 15);
+                assert_eq!(d, 7);
+                assert_eq!(m, 3);
+                assert_eq!(min_digits, Some(5));
+                assert_eq!(max_digits, Some(99));
+            }
+            _ => panic!("Wrong type"),
+        }
+    }
+
+    /// Twin has optional k and base fields for the k*b^n form parameters.
+    /// All 5 fields must survive the round-trip.
+    #[test]
+    fn twin_checkpoint_roundtrip() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("cp.json");
+        let cp = Checkpoint::Twin {
+            last_n: 5000,
+            k: Some(3),
+            base: Some(2),
+            min_n: Some(1),
+            max_n: Some(10000),
+        };
+        save(&path, &cp).unwrap();
+        let loaded = load(&path).unwrap();
+        match loaded {
+            Checkpoint::Twin { last_n, k, base, min_n, max_n } => {
+                assert_eq!(last_n, 5000);
+                assert_eq!(k, Some(3));
+                assert_eq!(base, Some(2));
+                assert_eq!(min_n, Some(1));
+                assert_eq!(max_n, Some(10000));
+            }
+            _ => panic!("Wrong type"),
+        }
+    }
+
+    /// clear() must also remove leftover .tmp files from interrupted saves.
+    #[test]
+    fn clear_also_removes_tmp_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("checkpoint.json");
+        let tmp = path.with_extension("tmp");
+        // Create a leftover .tmp file
+        fs::write(&tmp, "leftover").unwrap();
+        save(
+            &path,
+            &Checkpoint::Factorial { last_n: 1, start: None, end: None },
+        )
+        .unwrap();
+
+        clear(&path);
+        assert!(!tmp.exists(), ".tmp file should be removed by clear()");
     }
 }

@@ -42,11 +42,11 @@ deploy/
 |------|---------|
 | `deploy.sh` | Quick SSH deploy: install Rust/GMP, clone/update, build release, copy to `/usr/local/bin`, install systemd units |
 | `production-deploy.sh` | Full production: swap, UFW, kernel tuning, nginx, systemd, frontend deploy, search launch, verification |
-| `worker-deploy.sh` | Worker-only deployment with coordinator URL config |
+| `worker-deploy.sh` | Node deployment with coordinator URL config (legacy; new nodes use `darkreach run`) |
 | `pgo-build.sh` | PGO build: instrument → profile run → optimized build (5-15% speedup) |
 | `nginx-darkreach.conf` | Nginx: rate limiting, WebSocket upgrade, static caching, security headers, gzip |
 | `darkreach-coordinator.service` | Coordinator: port 7001, strict filesystem, no new privs, 512M memory limit, 65k fds |
-| `darkreach-worker@.service` | Worker template: `%i` instance, `--coordinator` flag, auto-restart 10s |
+| `darkreach-worker@.service` | Node template: `%i` instance, `--coordinator` flag, auto-restart 10s |
 
 ## Deployment Flow
 
@@ -57,6 +57,10 @@ deploy.sh → SSH to target → install deps (Rust, GMP)
   → systemctl enable/start coordinator + worker units
 ```
 
+## Architecture Migration Note
+
+> **Note:** The architecture is migrating from fleet/worker terminology to network/node terminology. Nodes now self-update via `darkreach run` instead of requiring SSH deployment. Old deployment scripts (`worker-deploy.sh`) remain for legacy setups but new nodes use the auto-update mechanism. See `docs/roadmaps/architecture.md`.
+
 ## Fleet Architecture
 
 ```
@@ -66,10 +70,11 @@ Coordinator (1 instance, CX22)
   ├── REST API + WebSocket for frontend
   └── PostgreSQL-based work distribution (Supabase)
 
-Workers (N instances, CCX23 4-worker)
+Nodes (N instances, CCX23 4-node)
   ├── Register via HTTP heartbeat (10s interval)
   ├── Claim work blocks via FOR UPDATE SKIP LOCKED
   ├── Run search subcommands
+  ├── Self-update via `darkreach run` auto-updater
   └── Report primes to coordinator + database
 ```
 
@@ -122,10 +127,10 @@ helm install darkreach deploy/helm/darkreach/ -f deploy/helm/darkreach/values-pr
 2. Add panel to Grafana dashboard in `deploy/grafana/darkreach.json`
 3. Add alert rule if critical
 
-### Worker release management
+### Node release management
 
 - Release manifest: `deploy/releases/worker-manifest.json`
-- Workers auto-update via release channel (see `src/db/releases.rs`)
+- Nodes auto-update via release channel (see `src/db/releases.rs`)
 - Dashboard UI at `/releases` page
 
 ## Roadmap

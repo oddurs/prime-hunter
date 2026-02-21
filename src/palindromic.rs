@@ -49,6 +49,8 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Instant;
 
+use tracing::info;
+
 use crate::checkpoint::{self, Checkpoint};
 use crate::db::Database;
 use crate::events::{self, EventBus};
@@ -167,10 +169,7 @@ pub fn search(
             let half: Integer = half_value
                 .parse()
                 .unwrap_or_else(|_| Integer::from(base).pow((digit_count.div_ceil(2) - 1) as u32));
-            eprintln!(
-                "Resuming palindromic search from {} digits, half={}",
-                digit_count, half_value
-            );
+            info!(digit_count, half_value, "resuming palindromic search");
             (digit_count, Some(half))
         }
         _ => (min_digits, None),
@@ -182,12 +181,12 @@ pub fn search(
     let all_digits: Vec<u32> = (1..base).collect();
     let valid_digits: Vec<u32> = (1..base).filter(|&d| sieve::gcd(d, base) == 1).collect();
     let total_digits = base - 1;
-    eprintln!(
-        "Leading digit filter: {}/{} digits valid for base {} ({:?})",
-        valid_digits.len(),
-        total_digits,
+    info!(
+        valid = valid_digits.len(),
+        total = total_digits,
         base,
-        valid_digits
+        ?valid_digits,
+        "leading digit filter initialized"
     );
 
     // Resolve sieve_limit: auto-tune if 0
@@ -197,10 +196,10 @@ pub fn search(
 
     let sieve_primes = sieve::generate_primes(sieve_limit);
     let filter_primes: Vec<u64> = sieve_primes.iter().copied().filter(|&p| p >= 3).collect();
-    eprintln!(
-        "Digit pre-filter initialized with {} primes up to {}",
-        filter_primes.len(),
-        filter_primes.last().copied().unwrap_or(0)
+    info!(
+        prime_count = filter_primes.len(),
+        max_prime = filter_primes.last().copied().unwrap_or(0),
+        "digit pre-filter initialized"
     );
 
     let mut last_checkpoint = Instant::now();
@@ -231,10 +230,7 @@ pub fn search(
                             timestamp: Instant::now(),
                         });
                     } else {
-                        eprintln!(
-                            "*** PRIME FOUND: {} ({} digits, {}) ***",
-                            expr, digits, cert
-                        );
+                        info!(expression = %expr, digits, cert, "prime found");
                     }
                     db.insert_prime_sync(
                         rt,
@@ -283,9 +279,13 @@ pub fn search(
             }
 
             if digit_count == resume_digits || lead_digit == digits_to_check[0] {
-                eprintln!(
-                    "Searching {}-digit palindromes in base {} (leading digit {}, half {} to {})",
-                    digit_count, base, lead_digit, start_half, sub_end
+                info!(
+                    digit_count,
+                    base,
+                    lead_digit,
+                    half_start = %start_half,
+                    half_end = %sub_end,
+                    "searching palindromes"
                 );
             }
 
@@ -387,10 +387,7 @@ pub fn search(
                             timestamp: Instant::now(),
                         });
                     } else {
-                        eprintln!(
-                            "*** PRIME FOUND: {} ({} digits, {}) ***",
-                            expr, digits, certainty
-                        );
+                        info!(expression = %expr, digits, certainty, "prime found");
                     }
                     db.insert_prime_sync(
                         rt,
@@ -418,10 +415,7 @@ pub fn search(
                             max_digits: Some(max_digits),
                         },
                     )?;
-                    eprintln!(
-                        "Checkpoint saved at {} digits, half={} (filtered: {})",
-                        digit_count, half_val, total_filtered
-                    );
+                    info!(digit_count, half_value = %half_val, total_filtered, "checkpoint saved");
                     last_checkpoint = Instant::now();
                 }
 
@@ -437,10 +431,7 @@ pub fn search(
                             max_digits: Some(max_digits),
                         },
                     )?;
-                    eprintln!(
-                        "Stop requested by coordinator, checkpoint saved at {} digits, half={}",
-                        digit_count, half_val
-                    );
+                    info!(digit_count, half_value = %half_val, "stop requested by coordinator, checkpoint saved");
                     return Ok(());
                 }
             }
@@ -448,7 +439,7 @@ pub fn search(
     }
 
     if total_filtered > 0 {
-        eprintln!("Digit pre-filter eliminated {} candidates.", total_filtered);
+        info!(total_filtered, "digit pre-filter elimination complete");
     }
     checkpoint::clear(checkpoint_path);
     Ok(())
@@ -456,35 +447,84 @@ pub fn search(
 
 #[cfg(test)]
 mod tests {
+    //! Tests for the palindromic prime search module.
+    //!
+    //! ## Mathematical Form
+    //!
+    //! Palindromic primes are primes whose digit representation in a given base
+    //! reads the same forwards and backwards. In base 10, the sequence begins:
+    //! 2, 3, 5, 7, 11, 101, 131, 151, 181, 191, 313, 353, ...
+    //! (OEIS [A002385](https://oeis.org/A002385))
+    //!
+    //! ## Key References
+    //!
+    //! - Harvey Dubner, "Palindromic Primes", Journal of Recreational Mathematics, 1989.
+    //! - Even-length palindromes in base b are always divisible by (b+1) because
+    //!   the alternating digit sum is zero. For example, all 4-digit base-10
+    //!   palindromes like 1221 are divisible by 11.
+    //! - The only even-length palindromic prime in base b is (b+1) itself (= "11").
+    //!
+    //! ## Testing Strategy
+    //!
+    //! 1. **Half-digit mirroring**: Verify correct palindrome construction for
+    //!    odd, even, and single-digit lengths.
+    //! 2. **Digit array operations**: Test increment, conversion, and modular
+    //!    arithmetic on digit arrays.
+    //! 3. **Sieve filter correctness**: Confirm composites are caught and primes
+    //!    survive the digit-based modular pre-filter.
+    //! 4. **Even-digit divisibility**: Verify the (base+1) divisibility rule.
+    //! 5. **Batch enumeration**: Confirm correct palindrome count per leading digit.
+
     use super::*;
 
+    // ── Form Generation (Mirroring) ─────────────────────────────────────
+
+    /// Verifies odd-length mirroring: [1, 2, 3] -> [1, 2, 3, 2, 1].
+    ///
+    /// For a d-digit odd-length palindrome, the half consists of ceil(d/2) digits.
+    /// The center digit appears once, and the remaining digits are reflected.
+    /// This is the most common case since even-length palindromes are always
+    /// composite (divisible by base+1).
     #[test]
     fn mirror_to_palindrome_odd_length() {
-        // [1, 2, 3] with is_odd=true → [1, 2, 3, 2, 1] (5 digits)
         let half = vec![1, 2, 3];
         let full = mirror_to_palindrome(&half, true);
         assert_eq!(full, vec![1, 2, 3, 2, 1]);
     }
 
+    /// Verifies even-length mirroring: [1, 2] -> [1, 2, 2, 1].
+    ///
+    /// Even-length palindromes are always composite in any base (divisible by
+    /// base+1), so this path is rarely used in actual searches. However, the
+    /// special case of base+1 itself ("11" in base b, a 2-digit palindrome)
+    /// may be prime, so the mirroring must still work correctly.
     #[test]
     fn mirror_to_palindrome_even_length() {
-        // [1, 2] with is_odd=false → [1, 2, 2, 1] (4 digits)
         let half = vec![1, 2];
         let full = mirror_to_palindrome(&half, false);
         assert_eq!(full, vec![1, 2, 2, 1]);
     }
 
+    /// Verifies single-digit mirroring: [5] -> [5].
+    ///
+    /// Single-digit numbers are trivially palindromic. The single-digit primes
+    /// in base 10 are {2, 3, 5, 7}. This edge case ensures the mirror function
+    /// handles the degenerate case where no reflection occurs.
     #[test]
     fn mirror_to_palindrome_single_digit() {
-        // [5] with is_odd=true → [5] (1 digit)
         let half = vec![5];
         let full = mirror_to_palindrome(&half, true);
         assert_eq!(full, vec![5]);
     }
 
+    /// Property test: all generated palindromes actually satisfy the palindrome property.
+    ///
+    /// Generates 100 palindromes for each odd digit count in {3, 5, 7} and verifies
+    /// each reads the same forwards and backwards. This is a structural invariant
+    /// that must hold regardless of the half-digit values — the mirroring function
+    /// guarantees digit[i] == digit[d-1-i] for all positions i.
     #[test]
     fn generated_palindromes_are_actually_palindromic() {
-        // Generate palindromes in base 10 and verify they read the same forwards and backwards
         for num_digits in [3, 5, 7] {
             let half_len = (num_digits + 1) / 2;
             let mut half_digits = vec![0u32; half_len];
@@ -505,6 +545,9 @@ mod tests {
         }
     }
 
+    // ── Digit Array Operations ────────────────────────────────────────
+
+    /// Verifies basic increment: [1,2,3] + 1 = [1,2,4] with no carry.
     #[test]
     fn increment_digits_basic() {
         let mut digits = vec![1, 2, 3];
@@ -513,6 +556,7 @@ mod tests {
         assert_eq!(digits, vec![1, 2, 4]);
     }
 
+    /// Verifies single carry: [1,2,9] + 1 = [1,3,0] in base 10.
     #[test]
     fn increment_digits_carry() {
         let mut digits = vec![1, 2, 9];
@@ -521,6 +565,7 @@ mod tests {
         assert_eq!(digits, vec![1, 3, 0]);
     }
 
+    /// Verifies cascading carry: [1,9,9] + 1 = [2,0,0] in base 10.
     #[test]
     fn increment_digits_multi_carry() {
         let mut digits = vec![1, 9, 9];
@@ -529,6 +574,11 @@ mod tests {
         assert_eq!(digits, vec![2, 0, 0]);
     }
 
+    /// Verifies overflow detection: [9,9,9] + 1 wraps to [0,0,0] and returns true.
+    ///
+    /// The overflow return value signals that the half-digit range for the current
+    /// leading digit has been exhausted, so the search should move to the next
+    /// leading digit or digit count.
     #[test]
     fn increment_digits_overflow() {
         let mut digits = vec![9, 9, 9];
@@ -537,6 +587,11 @@ mod tests {
         assert_eq!(digits, vec![0, 0, 0]);
     }
 
+    /// Verifies increment in non-decimal base: [1,2] + 1 = [2,0] in base 3.
+    ///
+    /// The search supports arbitrary bases, so increment must carry correctly
+    /// at the base boundary (digit >= base triggers carry). In base 3, digit 2
+    /// is the maximum, so [1,2] + 1 = [2,0].
     #[test]
     fn increment_digits_base_3() {
         let mut digits = vec![1, 2];
@@ -545,6 +600,11 @@ mod tests {
         assert_eq!(digits, vec![2, 0]); // 12 + 1 = 20 in base 3
     }
 
+    /// Verifies round-trip conversion: digits -> Integer -> digits.
+    ///
+    /// This validates both `digits_to_integer` (Horner's method evaluation) and
+    /// `integer_to_digits` (radix decomposition). The composition must be the
+    /// identity function for correctness of the palindrome construction pipeline.
     #[test]
     fn digits_to_integer_and_back() {
         let digits = vec![1, 2, 3];
@@ -555,6 +615,11 @@ mod tests {
         assert_eq!(back, digits);
     }
 
+    /// Verifies digit-to-integer conversion in base 2: [1,0,1,1] = 11 decimal.
+    ///
+    /// Binary palindromic primes are a distinct class (OEIS A016041). This test
+    /// validates that Horner's method works correctly for the smallest non-trivial
+    /// base.
     #[test]
     fn digits_to_integer_base_2() {
         let digits = vec![1, 0, 1, 1]; // 1011 in base 2 = 11
@@ -562,6 +627,12 @@ mod tests {
         assert_eq!(n, Integer::from(11));
     }
 
+    /// Verifies zero-padding when the Integer has fewer digits than requested.
+    ///
+    /// When converting a half-value back to a digit array, the result must be
+    /// left-padded with zeros to the expected length. For example, the value 42
+    /// padded to 5 digits gives [0,0,0,4,2]. This is important for palindromes
+    /// with internal zeros (e.g., 10301).
     #[test]
     fn integer_to_digits_with_padding() {
         let n = Integer::from(42);
@@ -569,9 +640,20 @@ mod tests {
         assert_eq!(digits, vec![0, 0, 0, 4, 2]); // zero-padded to 5
     }
 
+    // ── Sieve Correctness ─────────────────────────────────────────────
+
+    /// Verifies Horner's method modular evaluation against direct computation.
+    ///
+    /// `digits_mod` evaluates the polynomial d[0]*b^(n-1) + d[1]*b^(n-2) + ... + d[n-1]
+    /// mod m using Horner's method (all u64 arithmetic, no big integer allocation).
+    /// This is the core of the digit-based pre-filter that eliminates ~85-95% of
+    /// candidates before any Integer is constructed.
+    ///
+    /// Test cases:
+    ///   - 12321 mod 7 = 1 (palindrome not divisible by 7)
+    ///   - 999 mod 37 = 0 (repdigit 999 = 27*37)
     #[test]
     fn digits_mod_correct() {
-        // 12321 mod 7 = 12321 % 7 = 1760*7 + 1 = 1
         let digits = vec![1, 2, 3, 2, 1];
         assert_eq!(digits_mod(&digits, 10, 7), 12321 % 7);
 
@@ -580,17 +662,27 @@ mod tests {
         assert_eq!(digits_mod(&digits2, 10, 37), 999 % 37);
     }
 
+    /// Verifies that the digit filter catches a known composite palindrome.
+    ///
+    /// 12321 = 3^2 * 1369 = 9 * 37 * 37 = 9 * 1369. Since 3 is in the sieve
+    /// primes and 12321 mod 3 = 0, the filter correctly identifies it as composite
+    /// without constructing a big Integer. This demonstrates the filter's primary
+    /// purpose: avoiding expensive primality tests on trivially composite numbers.
     #[test]
     fn is_filter_composite_catches_divisible() {
-        // 12321 = 3 * 4107 = 3 * 3 * 1369 = 9 * 1369
         let digits = vec![1, 2, 3, 2, 1];
         let primes = vec![3, 7, 11, 13];
         assert!(is_filter_composite(&digits, 10, &primes, 5));
     }
 
+    /// Verifies that a known palindromic prime (10301) survives the digit filter.
+    ///
+    /// 10301 is a 5-digit palindromic prime (OEIS A002385). The filter uses
+    /// 1000 sieve primes (all >= 3) and must not produce a false positive.
+    /// A false positive would mean a prime is incorrectly eliminated, which
+    /// would cause the search to miss valid discoveries.
     #[test]
     fn is_filter_composite_passes_prime() {
-        // 10301 is prime
         let digits = vec![1, 0, 3, 0, 1];
         let primes: Vec<u64> = sieve::generate_primes(1000)
             .into_iter()
@@ -599,10 +691,20 @@ mod tests {
         assert!(!is_filter_composite(&digits, 10, &primes, 5));
     }
 
+    // ── Even-Digit Divisibility ───────────────────────────────────────
+
+    /// Verifies that all 4-digit base-10 palindromes are divisible by 11 (= base+1).
+    ///
+    /// This is a consequence of the alternating digit sum rule: for a 2k-digit
+    /// base-b palindrome N = d[0]*b^(2k-1) + ... + d[2k-1], the alternating
+    /// sum sum((-1)^i * d[i]) = 0 because d[i] = d[2k-1-i]. Since (b+1) divides
+    /// any number whose alternating digit sum is zero (generalized divisibility
+    /// rule), all even-length palindromes are composite.
+    ///
+    /// This is why the search skips even digit counts entirely, except for the
+    /// special case of "11" (= base+1) itself.
     #[test]
     fn even_digit_palindromes_divisible_by_base_plus_one() {
-        // All even-digit palindromes in base 10 are divisible by 11
-        // e.g., 1221, 3443, 9009, etc.
         for lead in 1..10u32 {
             for inner in 0..10u32 {
                 let palindrome = lead * 1000 + inner * 100 + inner * 10 + lead;
@@ -616,10 +718,19 @@ mod tests {
         }
     }
 
+    // ── Batch Enumeration ─────────────────────────────────────────────
+
+    /// Verifies the correct count of palindromes per leading digit sub-range.
+    ///
+    /// For 3-digit base-10 palindromes with leading digit 1: the half-value
+    /// ranges from 10 to 19 (10 values), generating palindromes 101, 111, 121,
+    /// ..., 191. This test confirms exactly 10 palindromes are enumerated and
+    /// each satisfies the palindrome property (first digit equals last digit).
+    ///
+    /// This count is important for progress estimation: the total candidate count
+    /// per digit length is sum over valid leading digits of (base^(half_len-1)).
     #[test]
     fn palindrome_batch_count() {
-        // For 3-digit base-10 palindromes with leading digit 1:
-        // half goes from 10 to 19 (10 values), each generating 101..191
         let mut half_digits = vec![1u32, 0];
         let end_digits = vec![1u32, 9];
         let mut count = 0;

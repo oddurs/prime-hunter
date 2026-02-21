@@ -147,7 +147,7 @@ Without GWNUM (GMP only), multiply these times by ~50-100x. A single p=5M test w
 **Per candidate at n~700K with GWNUM:** ~2 weeks per core. With 16 cores: ~400+ candidates/year.
 **Per candidate at n~700K with GMP (current):** ~12-14 months per core — not competitive.
 
-**Timeline:** 1-2 years for a discovery (after GWNUM + fleet).
+**Timeline:** 1-2 years for a discovery (after GWNUM + network).
 
 ### Resource ROI Comparison
 
@@ -156,7 +156,7 @@ Without GWNUM (GMP only), multiply these times by ~50-100x. A single p=5M test w
 | Sierpinski/Riesel (non-base-2) | **1-10** | Yes (LLR/Proth) | Low | **Phase 1 (now, $53/mo)** |
 | Palindromic record | **100-1,000** | Yes (BLS) | 1 team | Phase 2 (GWNUM, $215-430/mo) |
 | Wagstaff PRP | **~3,000** | No (PRP only) | None | Phase 2 (GWNUM, $215-430/mo) |
-| Factorial | **~2,300** | Yes (Pocklington/Morrison) | PrimeGrid | Phase 3 (GWNUM+fleet, $550-760/mo) |
+| Factorial | **~2,300** | Yes (Pocklington/Morrison) | PrimeGrid | Phase 3 (GWNUM+network, $550-760/mo) |
 | Primorial | **~140,000** | Yes | PrimeGrid (not viable solo) | Not recommended |
 
 ---

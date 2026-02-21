@@ -47,6 +47,9 @@ use std::path::Path;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Instant;
+use tracing::info;
+#[cfg(feature = "flint")]
+use tracing::debug;
 
 use crate::checkpoint::{self, Checkpoint};
 use crate::db::Database;
@@ -147,15 +150,15 @@ pub fn search(
     let sieve_limit = sieve::resolve_sieve_limit(sieve_limit, candidate_bits, n_range);
 
     let sieve_primes = sieve::generate_primes(sieve_limit);
-    eprintln!(
-        "Sieve initialized with {} primes up to {}",
-        sieve_primes.len(),
-        sieve_limit
+    info!(
+        prime_count = sieve_primes.len(),
+        sieve_limit,
+        "sieve initialized"
     );
 
     let resume_from = match checkpoint::load(checkpoint_path) {
         Some(Checkpoint::Factorial { last_n, .. }) if last_n >= start && last_n < end => {
-            eprintln!("Resuming factorial search from n={}", last_n + 1);
+            info!(resume_n = last_n + 1, "resuming factorial search");
             last_n + 1
         }
         _ => start,
@@ -164,27 +167,24 @@ pub fn search(
     // Compute factorial up to the starting point.
     // Use FLINT when available (3-10x faster via SIMD NTTs), otherwise GMP binary-splitting.
     let mut factorial = if resume_from > 2 {
-        eprintln!("Precomputing {}!...", resume_from - 1);
+        info!(n = resume_from - 1, "precomputing factorial");
         #[cfg(feature = "flint")]
         let f = {
-            eprintln!("  (using FLINT fmpz_fac_ui)");
+            debug!("using FLINT fmpz_fac_ui");
             crate::flint::factorial(resume_from - 1)
         };
         #[cfg(not(feature = "flint"))]
         let f = Integer::from(Integer::factorial((resume_from - 1) as u32));
-        eprintln!("Precomputation complete.");
+        info!("precomputation complete");
         f
     } else {
         Integer::from(1u32)
     };
 
     // Initialize modular sieve at (resume_from - 1)!
-    eprintln!("Initializing modular sieve...");
+    info!("initializing modular sieve");
     let mut fsieve = FactorialSieve::new(&sieve_primes, resume_from.saturating_sub(1));
-    eprintln!(
-        "Modular sieve ready ({} active primes).",
-        fsieve.entries.len()
-    );
+    info!(active_primes = fsieve.entries.len(), "modular sieve ready");
 
     // Compute minimum n where n! > sieve_limit, making the sieve safe.
     let sieve_min_n: u64 = {
@@ -196,7 +196,7 @@ pub fn search(
         }
         i - 1
     };
-    eprintln!("Sieve active for n >= {}", sieve_min_n);
+    info!(sieve_min_n, "sieve active threshold");
 
     let mut last_checkpoint = Instant::now();
     let mut sieved_out: u64 = 0;
@@ -346,9 +346,11 @@ pub fn search(
                         timestamp: Instant::now(),
                     });
                 } else {
-                    eprintln!(
-                        "*** PRIME FOUND: {} ({} digits, {}) ***",
-                        expr, digit_count, certainty
+                    info!(
+                        expression = %expr,
+                        digits = digit_count,
+                        certainty,
+                        "prime found"
                     );
                 }
                 db.insert_prime_sync(
@@ -375,7 +377,7 @@ pub fn search(
                     end: Some(end),
                 },
             )?;
-            eprintln!("Checkpoint saved at n={} (sieved out: {})", n, sieved_out);
+            info!(n, sieved_out, "checkpoint saved");
             last_checkpoint = Instant::now();
         }
 
@@ -388,30 +390,61 @@ pub fn search(
                     end: Some(end),
                 },
             )?;
-            eprintln!("Stop requested by coordinator, checkpoint saved at n={}", n);
+            info!(n, "stop requested by coordinator, checkpoint saved");
             return Ok(());
         }
     }
 
     checkpoint::clear(checkpoint_path);
-    eprintln!("Factorial sieve eliminated {} candidates.", sieved_out);
+    info!(sieved_out, "factorial sieve elimination complete");
     if wilson_eliminated > 0 {
-        eprintln!(
-            "Wilson's theorem eliminated {} n!+1 candidates.",
-            wilson_eliminated
-        );
+        info!(wilson_eliminated, "Wilson's theorem eliminated n!+1 candidates");
     }
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
+    //! Tests for the factorial prime search module (n! +/- 1).
+    //!
+    //! ## Mathematical Form
+    //!
+    //! Factorial primes are primes of the form n! + 1 or n! - 1. These are among
+    //! the most natural prime forms arising from the factorial function. The known
+    //! n values yielding primes are:
+    //!   - n! + 1 prime for n in {1, 2, 3, 11, 27, 37, 41, 73, 77, 116, 154, ...}
+    //!     (OEIS [A002981](https://oeis.org/A002981))
+    //!   - n! - 1 prime for n in {3, 4, 6, 7, 12, 14, 30, 32, 33, 38, 94, 166, ...}
+    //!     (OEIS [A002982](https://oeis.org/A002982))
+    //!
+    //! ## Key References
+    //!
+    //! - Wilson's theorem: (p-1)! = -1 (mod p) for prime p. This allows eliminating
+    //!   n!+1 candidates when n+1 is prime, since then (n+1) | (n!+1).
+    //! - Caldwell & Gallot, "On the Primality of n! +/- 1 and 2*3*5*...*p +/- 1",
+    //!   Mathematics of Computation, 71(237), 2002.
+    //!
+    //! ## Testing Strategy
+    //!
+    //! 1. **Sieve correctness**: Verify incremental modular residues (n! mod p)
+    //!    match direct computation, prime removal on advance, and composite detection.
+    //! 2. **Known primes**: Confirm known factorial primes pass Miller-Rabin and
+    //!    known composites fail.
+    //! 3. **Wilson's theorem**: Verify elimination logic for n+1 prime vs composite.
+    //! 4. **Edge cases**: n=1, n=2, single-n ranges, sieve initialization at n>1.
+
     use super::*;
 
+    // ── Sieve Correctness ───────────────────────────────────────────────
+
+    /// Verifies that `FactorialSieve::advance` produces correct residues n! mod p
+    /// for small primes where manual verification is possible.
+    ///
+    /// This is the core invariant of the incremental sieve: after advancing from
+    /// (n-1)! to n!, each entry must hold exactly n! mod p. The test walks through
+    /// 1! to 6! (values 1, 2, 6, 24, 120, 720) and checks all three sieve primes.
     #[test]
     fn factorial_sieve_advance_produces_correct_residues() {
-        // Test that advancing from 1! to n! gives correct n! mod p.
-        // Use small primes where we can verify manually.
         let sieve_primes: Vec<u64> = vec![7, 11, 13];
         let mut fsieve = FactorialSieve::new(&sieve_primes, 1);
 
@@ -451,9 +484,15 @@ mod tests {
         }
     }
 
+    /// Verifies that sieve primes are correctly removed when p divides n!.
+    ///
+    /// When n >= p for a sieve prime p, then p | n!, so n! mod p = 0 and the
+    /// entry becomes useless (both n!+1 and n!-1 are coprime to p). The sieve
+    /// must remove these entries to maintain the invariant that all residues
+    /// are nonzero. This tests the shrinking behavior at n=3 (removes p=3)
+    /// and n=5 (removes p=5).
     #[test]
     fn factorial_sieve_removes_primes_when_p_divides_n() {
-        // When n >= p, then p | n!, so the residue becomes 0 and the entry is removed
         let sieve_primes: Vec<u64> = vec![3, 5, 7, 11];
         let mut fsieve = FactorialSieve::new(&sieve_primes, 1);
         assert_eq!(fsieve.entries.len(), 4);
@@ -473,11 +512,19 @@ mod tests {
         assert_eq!(fsieve.entries.len(), 2, "p=5 should be removed after n=5");
     }
 
+    /// Verifies `check_composites` correctly identifies divisibility of n! +/- 1.
+    ///
+    /// At n=4: 4! = 24, so 4!+1 = 25 = 5^2 (composite) and 4!-1 = 23 (prime).
+    /// The sieve detects composites via residue checks:
+    ///   - 24 mod 5 = 4 = p-1, meaning 5 | (4!+1), so plus_composite = true
+    ///   - 24 mod 23 = 1, meaning 23 | (4!-1), so minus_composite = true
+    ///
+    /// Note: 4!-1 = 23 is actually prime, but the sieve correctly reports it as
+    /// "composite" because 23 itself divides 23. This is a false positive that
+    /// only occurs when the candidate equals a sieve prime (handled by the
+    /// sieve_min_n guard in the main search).
     #[test]
     fn factorial_sieve_check_composites_correct() {
-        // 4! = 24. 4!+1 = 25 = 5*5 (composite), 4!-1 = 23 (prime)
-        // For p=5: 24 mod 5 = 4 = p-1, so plus_composite = true
-        // For p=23: 24 mod 23 = 1, so minus_composite = true
         let sieve_primes: Vec<u64> = vec![5, 23, 29];
         let mut fsieve = FactorialSieve::new(&sieve_primes, 1);
         for n in 2..=4 {
@@ -488,11 +535,20 @@ mod tests {
         assert!(minus, "4!-1=23 should be detected as composite (23|23)");
     }
 
+    /// Verifies that known factorial primes survive the modular sieve.
+    ///
+    /// Known factorial primes (OEIS A002981, A002982):
+    ///   - n!+1 prime: n in {1, 2, 3, 11, 27, 37, 41}
+    ///   - n!-1 prime: n in {3, 4, 6, 7, 12, 14}
+    ///
+    /// A correct sieve must never mark a true prime as composite. This is the
+    /// most important soundness property: false negatives (missed composites)
+    /// waste compute, but false positives (eliminated primes) lose discoveries.
+    ///
+    /// Only tests for n >= 14 where n! > sieve_limit (10000), ensuring the sieve
+    /// is operating in its safe range where candidates exceed all sieve primes.
     #[test]
     fn factorial_sieve_known_primes_survive() {
-        // Known factorial primes (n!+1): n = 1, 2, 3, 11, 27, 37, 41
-        // Known factorial primes (n!-1): n = 3, 4, 6, 7, 12, 14
-        // The sieve should NOT eliminate these candidates
         let sieve_primes = sieve::generate_primes(10000);
         let known_plus: Vec<u64> = vec![1, 2, 3, 11, 27, 37, 41];
         let known_minus: Vec<u64> = vec![3, 4, 6, 7, 12, 14];
@@ -531,9 +587,16 @@ mod tests {
         }
     }
 
+    // ── Form Generation ─────────────────────────────────────────────────
+
+    /// Verifies that incremental factorial computation (n! = n * (n-1)!) matches
+    /// GMP's direct `Integer::factorial(n)` for n = 2..20.
+    ///
+    /// The incremental approach is essential for the search because recomputing
+    /// n! from scratch at each step would be prohibitively expensive for large n.
+    /// This test validates the core arithmetic invariant of the entire module.
     #[test]
     fn factorial_values_correct() {
-        // Verify incremental factorial computation matches GMP's factorial
         let mut factorial = Integer::from(1u32);
         for n in 2..=20u32 {
             factorial *= n;
@@ -542,9 +605,19 @@ mod tests {
         }
     }
 
+    // ── Known Primes (OEIS A002981, A002982) ──────────────────────────
+
+    /// Verifies that known factorial primes pass the Miller-Rabin primality test.
+    ///
+    /// Tests both n!+1 primes (OEIS A002981) and n!-1 primes (OEIS A002982)
+    /// for small n values where the results can be confirmed exactly:
+    ///   - 1!+1 = 2, 2!+1 = 3, 3!+1 = 7, 11!+1 = 39916801
+    ///   - 3!-1 = 5, 4!-1 = 23, 6!-1 = 719, 7!-1 = 5039, 12!-1 = 479001599
+    ///
+    /// Uses 25 rounds of Miller-Rabin (with `mr_screened_test` which includes
+    /// trial division pre-screening), providing error probability < 4^(-25).
     #[test]
     fn factorial_known_primes_pass_mr() {
-        // Verify that known factorial primes actually pass MR
         let cases: Vec<(u32, &str)> = vec![
             (1, "+"),  // 1!+1 = 2
             (2, "+"),  // 2!+1 = 3
@@ -575,9 +648,18 @@ mod tests {
         }
     }
 
+    /// Verifies that known factorial composites are correctly identified by MR.
+    ///
+    /// Notable composite cases include perfect squares:
+    ///   - 4!+1 = 25 = 5^2  (square of a prime)
+    ///   - 5!+1 = 121 = 11^2 (square of a prime)
+    ///   - 5!-1 = 119 = 7*17
+    ///   - 8!+1 = 40321 = 23*1753
+    ///   - 8!-1 = 40319 = 7*5759 = 7*13*443
+    ///
+    /// This ensures no false positives from the primality testing pipeline.
     #[test]
     fn factorial_known_composites_fail_mr() {
-        // 4!+1 = 25 = 5^2, 5!+1 = 121 = 11^2
         let composites: Vec<(u32, &str)> = vec![(4, "+"), (5, "+"), (5, "-"), (8, "+"), (8, "-")];
         for (n, sign) in composites {
             let f = Integer::from(Integer::factorial(n));
@@ -598,11 +680,23 @@ mod tests {
         }
     }
 
-    // ---- Wilson's theorem tests ----
+    // ── Wilson's Theorem ─────────────────────────────────────────────────
 
+    /// Verifies Wilson's theorem elimination: when n+1 is prime, (n+1) | (n!+1).
+    ///
+    /// Wilson's theorem states that for prime p: (p-1)! = -1 (mod p).
+    /// Setting p = n+1: n! = -1 (mod n+1), so n!+1 = 0 (mod n+1).
+    /// Therefore n!+1 is divisible by n+1 and composite (for n > 2, since
+    /// n!+1 > n+1).
+    ///
+    /// This elimination is free (just a primality check on n+1) and removes
+    /// approximately 1/ln(n) of all +1 candidates, or roughly 15% in typical
+    /// search ranges. Test cases:
+    ///   - n=4: 5 is prime, 4!+1 = 25 = 5*5
+    ///   - n=6: 7 is prime, 6!+1 = 721 = 7*103
+    ///   - n=10: 11 is prime, 10!+1 = 3628801 = 11*329891
     #[test]
     fn wilson_theorem_eliminates_correctly() {
-        // Wilson's theorem: if n+1 is prime and n > 2, then (n+1) | (n!+1)
         // n=4: 5 is prime, 4!+1 = 25 = 5*5 ✓
         // n=6: 7 is prime, 6!+1 = 721 = 7*103 ✓
         // n=10: 11 is prime, 10!+1 = 3628801 = 11*329891 ✓
@@ -619,9 +713,18 @@ mod tests {
         }
     }
 
+    /// Verifies that Wilson's theorem does NOT eliminate candidates when n+1
+    /// is composite.
+    ///
+    /// Wilson's theorem only applies when n+1 is prime. When n+1 is composite,
+    /// n! mod (n+1) is generally nonzero, so (n+1) does not divide n!+1.
+    /// Importantly, this means some n!+1 values with composite n+1 can be prime:
+    ///   - n=3: n+1=4 (composite), 3!+1 = 7 (prime)
+    ///   - n=7: n+1=8 (composite), 7!+1 = 5041 = 71^2 (happens to be composite)
+    ///
+    /// The key invariant: (n+1) should NOT divide n!+1 when n+1 is composite.
     #[test]
     fn wilson_theorem_does_not_eliminate_when_np1_composite() {
-        // When n+1 is composite, Wilson's theorem does NOT apply
         // n=3: n+1=4 (composite), 3!+1=7 (prime) — not eliminated by 4
         // n=7: n+1=8 (composite), 7!+1=5041 — not eliminated by 8
         for &n in &[3u64, 7] {
@@ -646,9 +749,17 @@ mod tests {
         }
     }
 
+    // ── Edge Cases ──────────────────────────────────────────────────────
+
+    /// Verifies that `FactorialSieve::new` with initial_n > 1 computes correct
+    /// initial residues.
+    ///
+    /// This tests the resume/checkpoint path: when resuming a search at n=5,
+    /// the sieve must initialize with 5! = 120 mod p for each sieve prime p.
+    /// The residues are computed from scratch in the constructor by multiplying
+    /// 1 * 2 * 3 * 4 * 5 mod p.
     #[test]
     fn factorial_sieve_new_with_initial_n_gt_1() {
-        // Initialize sieve at n=5 — residues should match 5! = 120 mod p
         let sieve_primes: Vec<u64> = vec![7, 11, 13, 17];
         let fsieve = FactorialSieve::new(&sieve_primes, 5);
 
@@ -664,11 +775,14 @@ mod tests {
         }
     }
 
+    /// Verifies that `check_composites` returns (false, false) when no sieve
+    /// prime divides either n!+1 or n!-1.
+    ///
+    /// At n=3: 3! = 6, so 3!+1 = 7 (prime) and 3!-1 = 5 (prime). Using sieve
+    /// primes {11, 13, 17} (all larger than 7), no residue matches the composite
+    /// condition (fm == p-1 or fm == 1), so both forms survive the sieve.
     #[test]
     fn factorial_sieve_check_composites_neither() {
-        // When no sieve prime divides n!±1, both should return false
-        // 3! = 6, 3!+1 = 7 (prime), 3!-1 = 5 (prime)
-        // Use sieve primes that don't divide 7 or 5
         let sieve_primes: Vec<u64> = vec![11, 13, 17]; // all > 7
         let mut fsieve = FactorialSieve::new(&sieve_primes, 1);
         for n in 2..=3 {
@@ -685,10 +799,15 @@ mod tests {
         );
     }
 
+    /// Verifies that sieve prime p is removed at exactly n=p (not before or after).
+    ///
+    /// The removal happens because p | p!, causing the residue p! mod p = 0.
+    /// This tests the precise boundary: p=5 is present at n=4 and removed at
+    /// n=5; p=7 is present at n=5 and removed at n=7. The test confirms that
+    /// the `retain` logic in `advance` correctly identifies and removes entries
+    /// only when their residue drops to zero.
     #[test]
     fn factorial_sieve_advance_removes_exact_prime() {
-        // p=5 should be removed when we advance to n=5 (since 5|5!)
-        // p=7 should be removed when we advance to n=7
         let sieve_primes: Vec<u64> = vec![5, 7, 11, 13];
         let mut fsieve = FactorialSieve::new(&sieve_primes, 1);
 
@@ -721,9 +840,13 @@ mod tests {
         );
     }
 
+    /// Verifies correct behavior for a single-n search range (start == end).
+    ///
+    /// Tests n=11 where 11!+1 = 39916801 is a known factorial prime (OEIS A002981)
+    /// and 11!-1 = 39916799 = 11 * 3628891 is composite. This validates the
+    /// boundary condition where the search loop executes exactly once.
     #[test]
     fn factorial_start_equals_end() {
-        // Single-n search (n=11): 11!+1 = 39916801 should be prime
         let f = Integer::from(Integer::factorial(11u32));
         let plus = Integer::from(&f + 1u32);
         assert_ne!(
@@ -740,9 +863,18 @@ mod tests {
         );
     }
 
+    /// Verifies the smallest factorial candidates n=1 and n=2.
+    ///
+    /// These are important edge cases:
+    ///   - 1!+1 = 2 (the smallest prime, and smallest factorial prime)
+    ///   - 1!-1 = 0 (not prime by convention; 0 has no primality)
+    ///   - 2!+1 = 3 (prime, the second factorial prime of the +1 form)
+    ///   - 2!-1 = 1 (not prime by convention; 1 is neither prime nor composite)
+    ///
+    /// The search must handle these correctly despite 0 and 1 being non-standard
+    /// inputs to primality tests.
     #[test]
     fn factorial_n_equals_1_and_2() {
-        // 1!+1=2 (prime), 1!-1=0 (not prime)
         assert_eq!(Integer::from(Integer::factorial(1u32)) + 1u32, 2);
         assert_ne!(
             Integer::from(2u32).is_probably_prime(25),

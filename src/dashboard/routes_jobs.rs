@@ -6,6 +6,7 @@ use axum::response::IntoResponse;
 use axum::Json;
 use serde::Deserialize;
 use std::sync::Arc;
+use tracing::info;
 
 use super::AppState;
 
@@ -69,9 +70,13 @@ pub(super) async fn handler_api_search_jobs_create(
         Ok(job_id) => {
             let num_blocks = ((payload.range_end - payload.range_start) + payload.block_size - 1)
                 / payload.block_size;
-            eprintln!(
-                "Created search job {} ({}, range {}..{}, {} blocks)",
-                job_id, payload.search_type, payload.range_start, payload.range_end, num_blocks
+            info!(
+                job_id,
+                search_type = %payload.search_type,
+                range_start = payload.range_start,
+                range_end = payload.range_end,
+                num_blocks,
+                "search job created"
             );
             (
                 StatusCode::CREATED,
@@ -91,7 +96,16 @@ pub(super) async fn handler_api_search_job_get(
     State(state): State<Arc<AppState>>,
     AxumPath(id): AxumPath<i64>,
 ) -> impl IntoResponse {
-    let job = match state.db.get_search_job(id).await {
+    let q_start = std::time::Instant::now();
+    let job_result = state.db.get_search_job(id).await;
+    state
+        .prom_metrics
+        .db_query_duration
+        .get_or_create(&crate::prom_metrics::QueryLabel {
+            query: "search_job_status".to_string(),
+        })
+        .observe(q_start.elapsed().as_secs_f64());
+    let job = match job_result {
         Ok(Some(j)) => j,
         Ok(None) => {
             return (
@@ -122,7 +136,7 @@ pub(super) async fn handler_api_search_job_cancel(
         .await
     {
         Ok(()) => {
-            eprintln!("Search job {} cancelled", id);
+            info!(id, "search job cancelled");
             Json(serde_json::json!({"ok": true, "id": id})).into_response()
         }
         Err(e) => (
