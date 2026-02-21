@@ -61,6 +61,7 @@ impl Database {
     ) -> Result<()> {
         sqlx::query(
             "INSERT INTO ai_engine_state (id, scoring_weights, cost_model_version, tick_count, last_tick_at, updated_at)
+             OVERRIDING SYSTEM VALUE
              VALUES (1, $1, $2, $3, NOW(), NOW())
              ON CONFLICT (id) DO UPDATE SET
                scoring_weights = EXCLUDED.scoring_weights,

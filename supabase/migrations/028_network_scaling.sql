@@ -32,8 +32,7 @@ CREATE INDEX idx_node_block_results_worker_time
     ON node_block_results (worker_id, completed_at);
 
 CREATE INDEX idx_node_block_results_recent
-    ON node_block_results (completed_at)
-    WHERE completed_at > NOW() - INTERVAL '30 days';
+    ON node_block_results (completed_at DESC);
 
 ALTER TABLE node_block_results ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "read_node_block_results" ON node_block_results
@@ -78,13 +77,14 @@ CREATE POLICY "read_verification_queue" ON verification_queue
 -- 4. benchmark_score on operator_nodes (volunteer_workers)
 -- ============================================================
 
-ALTER TABLE volunteer_workers
+ALTER TABLE operator_nodes
     ADD COLUMN IF NOT EXISTS benchmark_score REAL;
 
 -- ============================================================
 -- 5. Replace reclaim_stale_blocks — respect estimated_duration_s
 -- ============================================================
 
+DROP FUNCTION IF EXISTS reclaim_stale_blocks(INTEGER);
 CREATE OR REPLACE FUNCTION reclaim_stale_blocks(p_stale_seconds INTEGER)
 RETURNS INTEGER
 LANGUAGE plpgsql AS $$
