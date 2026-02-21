@@ -13,9 +13,11 @@
 | **Frontend** | Next.js dashboard, charts, real-time monitoring | [docs/roadmaps/frontend.md](docs/roadmaps/frontend.md) |
 | **Ops** | Deployment, build optimization, fleet management | [docs/roadmaps/ops.md](docs/roadmaps/ops.md) |
 | **Research** | Discovery strategy, publication pipeline, competitive analysis | [docs/roadmaps/research.md](docs/roadmaps/research.md) |
+| **AI Engine** | Autonomous search optimization, workforce allocation, research integration | [docs/roadmaps/ai-engine.md](docs/roadmaps/ai-engine.md) |
 | **Agents** | AI agent execution, orchestration, budgets, automation | [docs/roadmaps/agents.md](docs/roadmaps/agents.md) |
 | **Projects** | Campaign management, orchestration, cost tracking, records | [docs/roadmaps/projects.md](docs/roadmaps/projects.md) |
-| **Fleet** | Cluster coordination, distributed work claiming | [docs/roadmaps/fleet.md](docs/roadmaps/fleet.md) |
+| **Database** | PostgreSQL scaling, TimescaleDB, Redis, replicas, HA | [docs/roadmaps/database.md](docs/roadmaps/database.md) |
+| **Network** | Cluster coordination, distributed work claiming | [docs/roadmaps/network.md](docs/roadmaps/network.md) |
 | **Testing** | Test strategy, integration tests, benchmarks, CI | [docs/roadmaps/testing.md](docs/roadmaps/testing.md) |
 | **GWNUM/FLINT** | External library integration for 50-100x acceleration | [docs/roadmaps/gwnum-flint.md](docs/roadmaps/gwnum-flint.md) |
 | **Public Compute** | Volunteer onboarding, release channels, validation | [docs/roadmaps/public-compute.md](docs/roadmaps/public-compute.md) |

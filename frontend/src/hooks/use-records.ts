@@ -3,29 +3,29 @@
 /**
  * @module use-records
  *
- * React hook for querying world records from the `records` table in Supabase.
+ * React hook for querying world records from the REST API.
  *
  * The `records` table stores known world records for each prime form/category
  * (e.g., largest factorial prime, largest twin prime pair). Each record includes
- * the current holder's expression, digit count, and source — plus a comparison
+ * the current holder's expression, digit count, and source -- plus a comparison
  * to our best discovery for that form (`our_best_id`, `our_best_digits`).
  *
  * Records are periodically refreshed from external sources (OEIS, Prime Pages,
  * T5K) via the `POST /api/records/refresh` endpoint on the Rust backend.
  *
  * Hooks:
- * - `useRecords()` — list all world records with realtime updates
+ * - `useRecords()` -- list all world records with polling (every 30 seconds)
  *
  * Action functions:
- * - `refreshRecords()` — trigger a backend refresh from external sources
+ * - `refreshRecords()` -- trigger a backend refresh from external sources
  *
- * @see {@link https://t5k.org} — The Prime Pages (primary source for records)
- * @see {@link https://oeis.org} — OEIS (form-specific sequence records)
+ * @see {@link https://t5k.org} -- The Prime Pages (primary source for records)
+ * @see {@link https://oeis.org} -- OEIS (form-specific sequence records)
  */
 
 import { useEffect, useState, useCallback } from "react";
-import { supabase } from "@/lib/supabase";
-import { API_BASE } from "@/lib/format";
+
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || "";
 
 /** A world record entry for a specific prime form/category. */
 export interface WorldRecord {
@@ -57,11 +57,10 @@ export interface WorldRecord {
 }
 
 /**
- * Fetch all world records from the `records` table with realtime updates.
+ * Fetch all world records from the REST API with polling.
  *
- * Returns records ordered by form and category. Subscribes to Supabase
- * Realtime for INSERT/UPDATE/DELETE on the table so the UI stays current
- * after a refresh.
+ * Returns records ordered by form and category. Polls every 30 seconds
+ * since records change rarely.
  */
 export function useRecords() {
   const [records, setRecords] = useState<WorldRecord[]>([]);
@@ -69,17 +68,17 @@ export function useRecords() {
   const [error, setError] = useState<string | null>(null);
 
   const fetchRecords = useCallback(async () => {
-    const { data, error: queryError } = await supabase
-      .from("records")
-      .select("*")
-      .order("form")
-      .order("category");
-
-    if (queryError) {
-      setError(queryError.message);
-    } else if (data) {
-      setRecords(data as WorldRecord[]);
-      setError(null);
+    try {
+      const resp = await fetch(`${API_BASE}/api/records`);
+      if (resp.ok) {
+        const data = await resp.json();
+        setRecords(Array.isArray(data) ? data : (data.records ?? []));
+        setError(null);
+      } else {
+        setError(`Failed to fetch records: ${resp.status}`);
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to fetch records");
     }
     setLoading(false);
   }, []);
@@ -88,22 +87,10 @@ export function useRecords() {
     fetchRecords();
   }, [fetchRecords]);
 
-  // Realtime subscription for record changes
+  // Poll every 30 seconds (records change rarely)
   useEffect(() => {
-    const channel = supabase
-      .channel("records_changes")
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "records" },
-        () => {
-          fetchRecords();
-        }
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
+    const interval = setInterval(fetchRecords, 30_000);
+    return () => clearInterval(interval);
   }, [fetchRecords]);
 
   return { records, loading, error, refetch: fetchRecords };

@@ -2,8 +2,8 @@
  * @file Tests for useStats hook
  * @module __tests__/hooks/use-stats
  *
- * Validates the dashboard statistics hook which calls the Supabase RPC
- * function `get_stats` to retrieve aggregate metrics: total prime count,
+ * Validates the dashboard statistics hook which calls the REST API
+ * `/api/stats` endpoint to retrieve aggregate metrics: total prime count,
  * per-form breakdown, largest prime digits, and largest expression.
  * These stats are displayed in the stat cards on the main dashboard page.
  *
@@ -14,18 +14,13 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { renderHook, waitFor } from "@testing-library/react";
 
-// Mock the Supabase RPC method for stats retrieval
-const mockRpc = vi.fn();
-
-vi.mock("@/lib/supabase", () => ({
-  supabase: {
-    rpc: (...args: unknown[]) => mockRpc(...args),
-  },
-}));
+// Mock global fetch for REST API calls
+const mockFetch = vi.fn();
+vi.stubGlobal("fetch", mockFetch);
 
 import { useStats } from "@/hooks/use-stats";
 
-// Tests the stats data fetching lifecycle: mount -> RPC call -> data/error.
+// Tests the stats data fetching lifecycle: mount -> fetch call -> data/error.
 describe("useStats", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -33,7 +28,7 @@ describe("useStats", () => {
 
   /**
    * Verifies that the hook fetches aggregate stats on mount via the
-   * get_stats RPC. The mock returns 42 total primes, 30 factorial,
+   * /api/stats REST endpoint. The mock returns 42 total primes, 30 factorial,
    * largest at 1000 digits with expression "100!+1".
    */
   it("fetches stats on mount", async () => {
@@ -43,34 +38,43 @@ describe("useStats", () => {
       largest_digits: 1000,
       largest_expression: "100!+1",
     };
-    mockRpc.mockResolvedValue({ data: mockData, error: null });
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve(mockData),
+    });
 
     const { result } = renderHook(() => useStats());
 
     await waitFor(() => {
       expect(result.current.stats).toEqual(mockData);
     });
-    expect(mockRpc).toHaveBeenCalledWith("get_stats");
+    expect(mockFetch).toHaveBeenCalledWith(expect.stringContaining("/api/stats"));
   });
 
   /**
-   * Verifies that an RPC error results in null stats rather than throwing.
+   * Verifies that a failed response results in null stats rather than throwing.
    * The dashboard should handle null stats by showing empty/placeholder cards.
    */
   it("returns null stats on error", async () => {
-    mockRpc.mockResolvedValue({ data: null, error: { message: "fail" } });
+    mockFetch.mockResolvedValue({
+      ok: false,
+      status: 500,
+    });
 
     const { result } = renderHook(() => useStats());
 
     await waitFor(() => {
-      expect(mockRpc).toHaveBeenCalled();
+      expect(mockFetch).toHaveBeenCalled();
     });
     expect(result.current.stats).toBeNull();
   });
 
   /** Verifies that a manual refetch function is exposed for on-demand refresh. */
   it("provides a refetch function", async () => {
-    mockRpc.mockResolvedValue({ data: { total: 1, by_form: [], largest_digits: 0, largest_expression: null }, error: null });
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ total: 1, by_form: [], largest_digits: 0, largest_expression: null }),
+    });
 
     const { result } = renderHook(() => useStats());
 

@@ -1,0 +1,17 @@
+[Unit]
+Description=PgBouncer connection pooler for darkreach
+After=darkreach-postgresql.service
+Requires=darkreach-postgresql.service
+
+[Service]
+Type=simple
+User=pgbouncer
+Group=pgbouncer
+ExecStart=/usr/sbin/pgbouncer /etc/pgbouncer/pgbouncer.ini
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=always
+RestartSec=3
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target

@@ -182,7 +182,7 @@ export default function ReleasesPage() {
   }
 
   return (
-    <div className="mx-auto w-full max-w-6xl px-6 py-6 space-y-6">
+    <div className="space-y-6">
       <ViewHeader
         title="Releases"
         subtitle="Canary/ramp/rollback controls with worker adoption visibility"

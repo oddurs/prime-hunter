@@ -4,16 +4,16 @@
  * @module use-agent-tasks
  *
  * React hooks and CRUD functions for managing Claude Code agent tasks.
- * Covers task listing with realtime updates, event/timeline feeds,
+ * Covers task listing with polling, event/timeline feeds,
  * template expansion, role management, log streaming, and tree building
  * for multi-step workflows.
  *
- * @see {@link src/agent.rs} — Rust-side agent subprocess manager
+ * @see {@link src/agent.rs} -- Rust-side agent subprocess manager
  */
 
 import { useEffect, useState, useCallback } from "react";
-import { supabase } from "@/lib/supabase";
-import { API_BASE } from "@/lib/format";
+
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || "";
 
 export interface AgentTask {
   id: number;
@@ -105,19 +105,16 @@ export function useAgentTasks(statusFilter?: string) {
   const [loading, setLoading] = useState(true);
 
   const fetchTasks = useCallback(async () => {
-    let query = supabase
-      .from("agent_tasks")
-      .select("*")
-      .order("created_at", { ascending: false })
-      .limit(200);
-
-    if (statusFilter) {
-      query = query.eq("status", statusFilter);
-    }
-
-    const { data, error } = await query;
-    if (!error && data) {
-      setTasks(data as AgentTask[]);
+    try {
+      const params = new URLSearchParams({ limit: "200" });
+      if (statusFilter) params.set("status", statusFilter);
+      const resp = await fetch(`${API_BASE}/api/agents/tasks?${params}`);
+      if (resp.ok) {
+        const body = await resp.json();
+        setTasks(body.tasks ?? []);
+      }
+    } catch {
+      /* ignore fetch errors */
     }
     setLoading(false);
   }, [statusFilter]);
@@ -126,22 +123,10 @@ export function useAgentTasks(statusFilter?: string) {
     fetchTasks();
   }, [fetchTasks]);
 
-  // Realtime subscription
+  // Poll every 5 seconds
   useEffect(() => {
-    const channel = supabase
-      .channel("agent_tasks_changes")
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "agent_tasks" },
-        () => {
-          fetchTasks();
-        }
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
+    const interval = setInterval(fetchTasks, 5_000);
+    return () => clearInterval(interval);
   }, [fetchTasks]);
 
   return { tasks, loading, refetch: fetchTasks };
@@ -152,19 +137,16 @@ export function useAgentEvents(taskId?: number) {
   const [loading, setLoading] = useState(true);
 
   const fetchEvents = useCallback(async () => {
-    let query = supabase
-      .from("agent_events")
-      .select("*")
-      .order("created_at", { ascending: false })
-      .limit(200);
-
-    if (taskId !== undefined) {
-      query = query.eq("task_id", taskId);
-    }
-
-    const { data, error } = await query;
-    if (!error && data) {
-      setEvents(data as AgentEvent[]);
+    try {
+      const params = new URLSearchParams({ limit: "200" });
+      if (taskId !== undefined) params.set("task_id", String(taskId));
+      const resp = await fetch(`${API_BASE}/api/agents/events?${params}`);
+      if (resp.ok) {
+        const body = await resp.json();
+        setEvents(body.events ?? []);
+      }
+    } catch {
+      /* ignore fetch errors */
     }
     setLoading(false);
   }, [taskId]);
@@ -173,23 +155,11 @@ export function useAgentEvents(taskId?: number) {
     fetchEvents();
   }, [fetchEvents]);
 
-  // Realtime subscription
+  // Poll every 5 seconds
   useEffect(() => {
-    const channel = supabase
-      .channel(`agent_events_changes_${taskId ?? "all"}`)
-      .on(
-        "postgres_changes",
-        { event: "INSERT", schema: "public", table: "agent_events" },
-        () => {
-          fetchEvents();
-        }
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [fetchEvents, taskId]);
+    const interval = setInterval(fetchEvents, 5_000);
+    return () => clearInterval(interval);
+  }, [fetchEvents]);
 
   return { events, loading, refetch: fetchEvents };
 }
@@ -199,13 +169,14 @@ export function useAgentTemplates() {
   const [loading, setLoading] = useState(true);
 
   const fetchTemplates = useCallback(async () => {
-    const { data, error } = await supabase
-      .from("agent_templates")
-      .select("*")
-      .order("name");
-
-    if (!error && data) {
-      setTemplates(data as AgentTemplate[]);
+    try {
+      const resp = await fetch(`${API_BASE}/api/agents/templates`);
+      if (resp.ok) {
+        const body = await resp.json();
+        setTemplates(body.templates ?? []);
+      }
+    } catch {
+      /* ignore fetch errors */
     }
     setLoading(false);
   }, []);
@@ -214,40 +185,29 @@ export function useAgentTemplates() {
     fetchTemplates();
   }, [fetchTemplates]);
 
-  // Realtime subscription
+  // Poll every 5 seconds
   useEffect(() => {
-    const channel = supabase
-      .channel("agent_templates_changes")
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "agent_templates" },
-        () => {
-          fetchTemplates();
-        }
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
+    const interval = setInterval(fetchTemplates, 5_000);
+    return () => clearInterval(interval);
   }, [fetchTemplates]);
 
   return { templates, loading, refetch: fetchTemplates };
 }
 
-/** Fetch all agent roles with Supabase realtime subscription. */
+/** Fetch all agent roles with polling. */
 export function useAgentRoles() {
   const [roles, setRoles] = useState<AgentRole[]>([]);
   const [loading, setLoading] = useState(true);
 
   const fetchRoles = useCallback(async () => {
-    const { data, error } = await supabase
-      .from("agent_roles")
-      .select("*")
-      .order("name");
-
-    if (!error && data) {
-      setRoles(data as AgentRole[]);
+    try {
+      const resp = await fetch(`${API_BASE}/api/agents/roles`);
+      if (resp.ok) {
+        const body = await resp.json();
+        setRoles(body.roles ?? []);
+      }
+    } catch {
+      /* ignore fetch errors */
     }
     setLoading(false);
   }, []);
@@ -256,22 +216,10 @@ export function useAgentRoles() {
     fetchRoles();
   }, [fetchRoles]);
 
-  // Realtime subscription
+  // Poll every 5 seconds
   useEffect(() => {
-    const channel = supabase
-      .channel("agent_roles_changes")
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "agent_roles" },
-        () => {
-          fetchRoles();
-        }
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
+    const interval = setInterval(fetchRoles, 5_000);
+    return () => clearInterval(interval);
   }, [fetchRoles]);
 
   return { roles, loading, refetch: fetchRoles };
@@ -288,9 +236,10 @@ export async function createTask(
   permissionLevel: number = 1,
   roleName?: string
 ) {
-  const { data, error } = await supabase
-    .from("agent_tasks")
-    .insert({
+  const resp = await fetch(`${API_BASE}/api/agents/tasks`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
       title,
       description,
       priority,
@@ -299,12 +248,11 @@ export async function createTask(
       max_cost_usd: maxCostUsd ?? null,
       permission_level: permissionLevel,
       role_name: roleName ?? null,
-    })
-    .select()
-    .single();
-
-  if (error) throw error;
-  return data as AgentTask;
+    }),
+  });
+  const body = await resp.json();
+  if (!resp.ok) throw new Error(body.error || "Failed to create task");
+  return body as AgentTask;
 }
 
 /** Expand a template into a parent + child task tree via the REST API. */
@@ -355,7 +303,7 @@ export function buildTaskTree(tasks: AgentTask[]): TaskTreeNode[] {
 
   const nodes: TaskTreeNode[] = [];
   for (const task of tasks) {
-    // Skip child tasks — they'll appear under their parent
+    // Skip child tasks -- they'll appear under their parent
     if (task.parent_task_id != null) continue;
 
     const children = childrenByParent.get(task.id) ?? [];
@@ -368,13 +316,13 @@ export function buildTaskTree(tasks: AgentTask[]): TaskTreeNode[] {
 }
 
 export async function cancelTask(id: number) {
-  const { error } = await supabase
-    .from("agent_tasks")
-    .update({ status: "cancelled", completed_at: new Date().toISOString() })
-    .eq("id", id)
-    .in("status", ["pending", "in_progress"]);
-
-  if (error) throw error;
+  const resp = await fetch(`${API_BASE}/api/agents/tasks/${id}/cancel`, {
+    method: "POST",
+  });
+  if (!resp.ok) {
+    const body = await resp.json().catch(() => ({}));
+    throw new Error((body as Record<string, string>).error || "Failed to cancel task");
+  }
 }
 
 // --- Observability Hooks ---

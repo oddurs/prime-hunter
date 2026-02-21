@@ -199,7 +199,7 @@ export default function AccountPage() {
   const hasNameChanged = displayName !== savedDisplayName;
 
   return (
-    <div className="container mx-auto max-w-4xl px-4 py-6">
+    <div className="max-w-4xl">
       <ViewHeader
         title="Account"
         subtitle="Manage your profile, API key, and view operator stats."

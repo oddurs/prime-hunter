@@ -8,7 +8,7 @@ use super::Database;
 use anyhow::Result;
 use serde::Serialize;
 
-/// Volunteer account row from the `volunteers` table.
+/// Operator account row from the `operators` table.
 #[derive(Serialize, sqlx::FromRow)]
 pub struct OperatorRow {
     pub id: uuid::Uuid,
@@ -22,7 +22,7 @@ pub struct OperatorRow {
     pub last_seen: Option<chrono::DateTime<chrono::Utc>>,
 }
 
-/// Trust record for a volunteer (adaptive replication).
+/// Trust record for an operator (adaptive replication).
 #[derive(Serialize, sqlx::FromRow)]
 pub struct OperatorTrustRow {
     pub volunteer_id: uuid::Uuid,
@@ -32,7 +32,7 @@ pub struct OperatorTrustRow {
     pub trust_level: i16,
 }
 
-/// Leaderboard entry from the `volunteer_leaderboard` view.
+/// Leaderboard entry from the `operator_leaderboard` view.
 #[derive(Serialize, sqlx::FromRow)]
 pub struct LeaderboardRow {
     pub id: uuid::Uuid,
@@ -49,10 +49,10 @@ pub struct LeaderboardRow {
 impl Database {
     // ── Registration ──────────────────────────────────────────────
 
-    /// Register a new volunteer account. Returns the generated API key and username.
+    /// Register a new operator account. Returns the generated API key and username.
     pub async fn register_operator(&self, username: &str, email: &str) -> Result<OperatorRow> {
         let row = sqlx::query_as::<_, OperatorRow>(
-            "INSERT INTO volunteers (username, email)
+            "INSERT INTO operators (username, email)
              VALUES ($1, $2)
              RETURNING *",
         )
@@ -63,7 +63,7 @@ impl Database {
 
         // Initialize trust record
         sqlx::query(
-            "INSERT INTO volunteer_trust (volunteer_id) VALUES ($1)
+            "INSERT INTO operator_trust (volunteer_id) VALUES ($1)
              ON CONFLICT DO NOTHING",
         )
         .bind(row.id)
@@ -73,18 +73,18 @@ impl Database {
         Ok(row)
     }
 
-    /// Look up a volunteer by API key (used for authentication).
+    /// Look up an operator by API key (used for authentication).
     pub async fn get_operator_by_api_key(&self, api_key: &str) -> Result<Option<OperatorRow>> {
-        let row = sqlx::query_as::<_, OperatorRow>("SELECT * FROM volunteers WHERE api_key = $1")
+        let row = sqlx::query_as::<_, OperatorRow>("SELECT * FROM operators WHERE api_key = $1")
             .bind(api_key)
-            .fetch_optional(&self.pool)
+            .fetch_optional(&self.read_pool)
             .await?;
         Ok(row)
     }
 
-    /// Update volunteer last_seen timestamp.
+    /// Update operator last_seen timestamp.
     pub async fn touch_operator(&self, volunteer_id: uuid::Uuid) -> Result<()> {
-        sqlx::query("UPDATE volunteers SET last_seen = NOW() WHERE id = $1")
+        sqlx::query("UPDATE operators SET last_seen = NOW() WHERE id = $1")
             .bind(volunteer_id)
             .execute(&self.pool)
             .await?;
@@ -93,7 +93,7 @@ impl Database {
 
     // ── Worker Machines ───────────────────────────────────────────
 
-    /// Register a volunteer's worker machine.
+    /// Register an operator's worker machine.
     pub async fn register_operator_node(
         &self,
         volunteer_id: uuid::Uuid,
@@ -111,7 +111,7 @@ impl Database {
         update_channel: Option<&str>,
     ) -> Result<()> {
         sqlx::query(
-            "INSERT INTO volunteer_workers (
+            "INSERT INTO operator_nodes (
                volunteer_id, worker_id, hostname, cores, cpu_model,
                os, arch, ram_gb, has_gpu, gpu_model, gpu_vram_gb,
                worker_version, update_channel
@@ -149,9 +149,9 @@ impl Database {
         Ok(())
     }
 
-    /// Update heartbeat timestamp for a volunteer worker.
+    /// Update heartbeat timestamp for an operator node.
     pub async fn operator_node_heartbeat(&self, worker_id: &str) -> Result<()> {
-        sqlx::query("UPDATE volunteer_workers SET last_heartbeat = NOW() WHERE worker_id = $1")
+        sqlx::query("UPDATE operator_nodes SET last_heartbeat = NOW() WHERE worker_id = $1")
             .bind(worker_id)
             .execute(&self.pool)
             .await?;
@@ -167,21 +167,21 @@ impl Database {
             "SELECT worker_id, hostname, cores, cpu_model, os, arch,
                     ram_gb, has_gpu, gpu_model, worker_version,
                     registered_at, last_heartbeat
-             FROM volunteer_workers
+             FROM operator_nodes
              WHERE volunteer_id = $1
              ORDER BY last_heartbeat DESC NULLS LAST",
         )
         .bind(volunteer_id)
-        .fetch_all(&self.pool)
+        .fetch_all(&self.read_pool)
         .await?;
         Ok(rows)
     }
 
     /// Get operator account by ID.
     pub async fn get_operator_by_id(&self, id: uuid::Uuid) -> Result<Option<OperatorRow>> {
-        let row = sqlx::query_as::<_, OperatorRow>("SELECT * FROM volunteers WHERE id = $1")
+        let row = sqlx::query_as::<_, OperatorRow>("SELECT * FROM operators WHERE id = $1")
             .bind(id)
-            .fetch_optional(&self.pool)
+            .fetch_optional(&self.read_pool)
             .await?;
         Ok(row)
     }
@@ -189,7 +189,7 @@ impl Database {
     /// Rotate an operator's API key and return the new key.
     pub async fn rotate_operator_api_key(&self, volunteer_id: uuid::Uuid) -> Result<String> {
         let new_key: String = sqlx::query_scalar(
-            "UPDATE volunteers SET api_key = encode(gen_random_bytes(32), 'hex')
+            "UPDATE operators SET api_key = encode(gen_random_bytes(32), 'hex')
              WHERE id = $1
              RETURNING api_key",
         )
@@ -319,16 +319,16 @@ impl Database {
 
     // ── Trust & Credits ───────────────────────────────────────────
 
-    /// Get the trust record for a volunteer.
+    /// Get the trust record for an operator.
     pub async fn get_operator_trust(
         &self,
         volunteer_id: uuid::Uuid,
     ) -> Result<Option<OperatorTrustRow>> {
         let row = sqlx::query_as::<_, OperatorTrustRow>(
-            "SELECT * FROM volunteer_trust WHERE volunteer_id = $1",
+            "SELECT * FROM operator_trust WHERE volunteer_id = $1",
         )
         .bind(volunteer_id)
-        .fetch_optional(&self.pool)
+        .fetch_optional(&self.read_pool)
         .await?;
         Ok(row)
     }
@@ -338,7 +338,7 @@ impl Database {
     ///                      → 4 (core, 500+ valid).
     pub async fn record_valid_result(&self, volunteer_id: uuid::Uuid) -> Result<()> {
         sqlx::query(
-            "UPDATE volunteer_trust SET
+            "UPDATE operator_trust SET
                consecutive_valid = consecutive_valid + 1,
                total_valid = total_valid + 1,
                trust_level = CASE
@@ -358,7 +358,7 @@ impl Database {
     /// Record an invalid result: reset consecutive_valid, set trust to 0 (untrusted).
     pub async fn record_invalid_result(&self, volunteer_id: uuid::Uuid) -> Result<()> {
         sqlx::query(
-            "UPDATE volunteer_trust SET
+            "UPDATE operator_trust SET
                consecutive_valid = 0,
                total_invalid = total_invalid + 1,
                trust_level = 0
@@ -379,7 +379,7 @@ impl Database {
         reason: &str,
     ) -> Result<()> {
         sqlx::query(
-            "INSERT INTO credit_log (volunteer_id, block_id, credit, reason)
+            "INSERT INTO operator_credits (volunteer_id, block_id, credit, reason)
              VALUES ($1, $2, $3, $4)",
         )
         .bind(volunteer_id)
@@ -389,7 +389,7 @@ impl Database {
         .execute(&self.pool)
         .await?;
 
-        sqlx::query("UPDATE volunteers SET credit = credit + $2 WHERE id = $1")
+        sqlx::query("UPDATE operators SET credit = credit + $2 WHERE id = $1")
             .bind(volunteer_id)
             .bind(credit)
             .execute(&self.pool)
@@ -400,7 +400,7 @@ impl Database {
 
     /// Increment primes_found for a volunteer.
     pub async fn increment_operator_primes(&self, volunteer_id: uuid::Uuid) -> Result<()> {
-        sqlx::query("UPDATE volunteers SET primes_found = primes_found + 1 WHERE id = $1")
+        sqlx::query("UPDATE operators SET primes_found = primes_found + 1 WHERE id = $1")
             .bind(volunteer_id)
             .execute(&self.pool)
             .await?;
@@ -420,13 +420,13 @@ impl Database {
                v.credit,
                v.primes_found,
                COALESCE(vt.trust_level, 1) AS trust_level,
-               (SELECT COUNT(*) + 1 FROM volunteers v2 WHERE v2.credit > v.credit) AS rank
-             FROM volunteers v
-             LEFT JOIN volunteer_trust vt ON vt.volunteer_id = v.id
+               (SELECT COUNT(*) + 1 FROM operators v2 WHERE v2.credit > v.credit) AS rank
+             FROM operators v
+             LEFT JOIN operator_trust vt ON vt.volunteer_id = v.id
              WHERE v.id = $1",
         )
         .bind(volunteer_id)
-        .fetch_optional(&self.pool)
+        .fetch_optional(&self.read_pool)
         .await?;
         Ok(row)
     }
@@ -436,7 +436,7 @@ impl Database {
         let rows =
             sqlx::query_as::<_, LeaderboardRow>("SELECT * FROM volunteer_leaderboard LIMIT $1")
                 .bind(limit)
-                .fetch_all(&self.pool)
+                .fetch_all(&self.read_pool)
                 .await?;
         Ok(rows)
     }
@@ -479,7 +479,7 @@ impl Database {
              LIMIT $1",
         )
         .bind(limit)
-        .fetch_all(&self.pool)
+        .fetch_all(&self.read_pool)
         .await?;
         Ok(rows)
     }
@@ -542,7 +542,7 @@ pub struct OperatorStatsRow {
     pub rank: Option<i64>,
 }
 
-/// Operator node row (subset of volunteer_workers columns).
+/// Operator node row (subset of operator_nodes columns).
 #[derive(Serialize, sqlx::FromRow)]
 pub struct OperatorNodeRow {
     pub worker_id: String,

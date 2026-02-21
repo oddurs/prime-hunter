@@ -85,7 +85,7 @@ export default function LeaderboardPage() {
   }
 
   return (
-    <div className="p-4 md:p-6 max-w-6xl mx-auto">
+    <>
       <ViewHeader
         title="Leaderboard"
         subtitle="Top contributors to the darkreach volunteer computing network"
@@ -200,6 +200,6 @@ export default function LeaderboardPage() {
           )}
         </CardContent>
       </Card>
-    </div>
+    </>
   );
 }

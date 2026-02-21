@@ -1,0 +1,90 @@
+# Patroni configuration for darkreach high availability
+#
+# Patroni manages automatic failover between primary and replica PostgreSQL
+# instances. Uses etcd for distributed consensus (leader election).
+#
+# Architecture:
+#   etcd cluster (3 nodes) → Patroni (on each PG node) → PostgreSQL
+#
+# Failover behavior:
+#   1. Leader fails health check (3 consecutive misses)
+#   2. Patroni initiates leader election via etcd
+#   3. Most-up-to-date replica is promoted
+#   4. PgBouncer reconnects automatically
+#   5. Workers experience brief (~30s) write interruption
+
+scope: darkreach
+name: node1  # Override per node: node1, node2, etc.
+
+restapi:
+  listen: 0.0.0.0:8008
+  connect_address: ${HOSTNAME}:8008
+
+etcd3:
+  hosts:
+    - etcd1:2379
+    - etcd2:2379
+    - etcd3:2379
+
+bootstrap:
+  dcs:
+    ttl: 30
+    loop_wait: 10
+    retry_timeout: 10
+    maximum_lag_on_failover: 1048576  # 1 MB WAL lag threshold
+    postgresql:
+      use_pg_rewind: true
+      use_slots: true
+      parameters:
+        # Match deploy/postgresql.conf settings
+        shared_buffers: 8GB
+        work_mem: 64MB
+        wal_level: replica
+        max_wal_senders: 5
+        max_replication_slots: 5
+        wal_keep_size: 1GB
+        hot_standby: on
+        shared_preload_libraries: 'timescaledb,pg_stat_statements'
+        # SSD tuning
+        random_page_cost: 1.1
+        effective_io_concurrency: 200
+
+  initdb:
+    - encoding: UTF8
+    - data-checksums
+
+  pg_hba:
+    - local all darkreach scram-sha-256
+    - local all postgres peer
+    - host all darkreach 10.0.0.0/8 scram-sha-256
+    - host replication replicator 10.0.0.0/8 scram-sha-256
+
+  users:
+    darkreach:
+      password: "${DARKREACH_DB_PASSWORD}"
+      options:
+        - createrole
+        - createdb
+    replicator:
+      password: "${REPLICATOR_PASSWORD}"
+      options:
+        - replication
+
+postgresql:
+  listen: 0.0.0.0:5432
+  connect_address: ${HOSTNAME}:5432
+  data_dir: /var/lib/postgresql/16/darkreach
+  bin_dir: /usr/lib/postgresql/16/bin
+  pgpass: /tmp/pgpass
+  authentication:
+    replication:
+      username: replicator
+      password: "${REPLICATOR_PASSWORD}"
+    superuser:
+      username: postgres
+      password: "${POSTGRES_PASSWORD}"
+
+tags:
+  nofailover: false
+  noloadbalance: false
+  clonefrom: false

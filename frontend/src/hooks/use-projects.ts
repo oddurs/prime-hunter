@@ -3,7 +3,7 @@
 /**
  * @module use-projects
  *
- * React hooks for managing prime-hunting projects via Supabase.
+ * React hooks for managing prime-hunting projects via the REST API.
  *
  * A **project** is a high-level campaign to discover primes of a specific form,
  * broken into ordered **phases** (each mapping to a search job with its own
@@ -12,20 +12,20 @@
  * phase transitions, and errors.
  *
  * Hooks:
- * - `useProjects()` — list all projects with realtime updates
- * - `useProject(slug)` — single project detail with phases and events
+ * - `useProjects()` -- list all projects with polling (every 10 seconds)
+ * - `useProject(slug)` -- single project detail with phases and events
  *
  * Action functions:
- * - `activateProject(slug)` — start or resume a project
- * - `pauseProject(slug)` — pause a running project
- * - `cancelProject(slug)` — cancel a project permanently
+ * - `activateProject(slug)` -- start or resume a project
+ * - `pauseProject(slug)` -- pause a running project
+ * - `cancelProject(slug)` -- cancel a project permanently
  *
- * @see {@link src/search_manager.rs} — Rust-side project lifecycle
+ * @see {@link src/search_manager.rs} -- Rust-side project lifecycle
  */
 
 import { useEffect, useState, useCallback } from "react";
-import { supabase } from "@/lib/supabase";
-import { API_BASE } from "@/lib/format";
+
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || "";
 
 /** Summary of a prime-hunting project (maps to `projects` table row). */
 export interface ProjectSummary {
@@ -45,7 +45,7 @@ export interface ProjectSummary {
   completed_at: string | null;
 }
 
-/** A phase within a project — an ordered search step with its own parameters. */
+/** A phase within a project -- an ordered search step with its own parameters. */
 export interface ProjectPhase {
   id: number;
   name: string;
@@ -72,10 +72,9 @@ export interface ProjectEvent {
 }
 
 /**
- * Fetch all projects from the `projects` table with realtime updates.
+ * Fetch all projects from the REST API with polling (every 10 seconds).
  *
- * Returns projects ordered by creation date (newest first), limited to 200.
- * Subscribes to Supabase Realtime for INSERT/UPDATE/DELETE on the table.
+ * Returns projects ordered by creation date (newest first).
  */
 export function useProjects() {
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
@@ -83,17 +82,17 @@ export function useProjects() {
   const [error, setError] = useState<string | null>(null);
 
   const fetchProjects = useCallback(async () => {
-    const { data, error: queryError } = await supabase
-      .from("projects")
-      .select("*")
-      .order("created_at", { ascending: false })
-      .limit(200);
-
-    if (queryError) {
-      setError(queryError.message);
-    } else if (data) {
-      setProjects(data as ProjectSummary[]);
-      setError(null);
+    try {
+      const resp = await fetch(`${API_BASE}/api/projects`);
+      if (resp.ok) {
+        const body = await resp.json();
+        setProjects(body.projects ?? []);
+        setError(null);
+      } else {
+        setError(`Failed to fetch projects: ${resp.status}`);
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to fetch projects");
     }
     setLoading(false);
   }, []);
@@ -102,22 +101,10 @@ export function useProjects() {
     fetchProjects();
   }, [fetchProjects]);
 
-  // Realtime subscription for project changes
+  // Poll every 10 seconds
   useEffect(() => {
-    const channel = supabase
-      .channel("projects_changes")
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "projects" },
-        () => {
-          fetchProjects();
-        }
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
+    const interval = setInterval(fetchProjects, 10_000);
+    return () => clearInterval(interval);
   }, [fetchProjects]);
 
   return { projects, loading, error, refetch: fetchProjects };
@@ -127,10 +114,9 @@ export function useProjects() {
  * Fetch a single project by slug, along with its phases and events.
  *
  * Phases are ordered by `phase_order` (ascending). Events are ordered
- * by `created_at` (newest first), limited to 200.
+ * by `created_at` (newest first).
  *
- * Subscribes to Supabase Realtime for changes on all three tables
- * (filtered to the matching project).
+ * Polls every 10 seconds.
  */
 export function useProject(slug: string) {
   const [project, setProject] = useState<ProjectSummary | null>(null);
@@ -142,44 +128,32 @@ export function useProject(slug: string) {
   const fetchProject = useCallback(async () => {
     if (!slug) return;
 
-    // Fetch project by slug
-    const { data: projectData, error: projectError } = await supabase
-      .from("projects")
-      .select("*")
-      .eq("slug", slug)
-      .single();
+    try {
+      // Fetch project detail (includes phases)
+      const resp = await fetch(`${API_BASE}/api/projects/${encodeURIComponent(slug)}`);
+      if (!resp.ok) {
+        setError(`Failed to fetch project: ${resp.status}`);
+        setLoading(false);
+        return;
+      }
 
-    if (projectError) {
-      setError(projectError.message);
-      setLoading(false);
-      return;
-    }
+      const body = await resp.json();
+      setProject(body as ProjectSummary);
+      setPhases(body.phases ?? []);
+      setError(null);
 
-    const proj = projectData as ProjectSummary;
-    setProject(proj);
-    setError(null);
-
-    // Fetch phases for this project
-    const { data: phaseData } = await supabase
-      .from("project_phases")
-      .select("*")
-      .eq("project_id", proj.id)
-      .order("phase_order", { ascending: true });
-
-    if (phaseData) {
-      setPhases(phaseData as ProjectPhase[]);
-    }
-
-    // Fetch events for this project
-    const { data: eventData } = await supabase
-      .from("project_events")
-      .select("*")
-      .eq("project_id", proj.id)
-      .order("created_at", { ascending: false })
-      .limit(200);
-
-    if (eventData) {
-      setEvents(eventData as ProjectEvent[]);
+      // Fetch events separately
+      try {
+        const eventsResp = await fetch(`${API_BASE}/api/projects/${encodeURIComponent(slug)}/events`);
+        if (eventsResp.ok) {
+          const eventsBody = await eventsResp.json();
+          setEvents(eventsBody.events ?? []);
+        }
+      } catch {
+        /* ignore event fetch errors */
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to fetch project");
     }
 
     setLoading(false);
@@ -189,38 +163,11 @@ export function useProject(slug: string) {
     fetchProject();
   }, [fetchProject]);
 
-  // Realtime subscriptions for project, phases, and events
+  // Poll every 10 seconds
   useEffect(() => {
     if (!slug) return;
-
-    const channel = supabase
-      .channel(`project_detail_${slug}`)
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "projects" },
-        () => {
-          fetchProject();
-        }
-      )
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "project_phases" },
-        () => {
-          fetchProject();
-        }
-      )
-      .on(
-        "postgres_changes",
-        { event: "INSERT", schema: "public", table: "project_events" },
-        () => {
-          fetchProject();
-        }
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
+    const interval = setInterval(fetchProject, 10_000);
+    return () => clearInterval(interval);
   }, [fetchProject, slug]);
 
   return { project, phases, events, loading, error, refetch: fetchProject };
@@ -262,7 +209,7 @@ export async function pauseProject(slug: string): Promise<void> {
  * Cancel a project permanently via the Rust backend API.
  *
  * Sends `POST /api/projects/{slug}/cancel` to transition the project
- * to `cancelled`. This is irreversible — cancelled projects cannot be resumed.
+ * to `cancelled`. This is irreversible -- cancelled projects cannot be resumed.
  */
 export async function cancelProject(slug: string): Promise<void> {
   const resp = await fetch(`${API_BASE}/api/projects/${encodeURIComponent(slug)}/cancel`, {

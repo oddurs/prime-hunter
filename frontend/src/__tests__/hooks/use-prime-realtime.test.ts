@@ -2,82 +2,113 @@
  * @file Tests for usePrimeRealtime hook
  * @module __tests__/hooks/use-prime-realtime
  *
- * Validates the Supabase Realtime subscription hook for live prime discovery
- * notifications. This hook subscribes to INSERT events on the "primes" table
- * via Supabase's postgres_changes feature and exposes the most recently
- * discovered prime through the `newPrime` state.
+ * Validates the WebSocket-based real-time prime discovery notification hook.
+ * This hook reads `lastPrimeFound` from the WebSocket context and fires
+ * a callback when a new prime is discovered. It surfaces the latest event
+ * for toast notifications and live table updates.
  *
- * The hook is consumed by the PrimeNotifier component which displays toast
- * notifications when new primes are found during active searches.
+ * The hook consumes `useWs()` from the WebSocket context rather than
+ * subscribing to Supabase Realtime directly.
  *
  * @see {@link ../../hooks/use-prime-realtime} Source hook
  * @see {@link ../../components/prime-notifier} Toast notification component
+ * @see {@link ../../contexts/websocket-context} WebSocket context
  */
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { renderHook } from "@testing-library/react";
+import { defaultWsData } from "@/__mocks__/test-wrappers";
+import type { WsData } from "@/hooks/use-websocket";
 
-// Mock the Supabase Realtime channel API
-const mockOn = vi.fn();
-const mockSubscribe = vi.fn();
-const mockChannel = vi.fn();
-const mockRemoveChannel = vi.fn();
+// Mock the WebSocket context to control lastPrimeFound
+let mockWsData: WsData = { ...defaultWsData };
 
-vi.mock("@/lib/supabase", () => ({
-  supabase: {
-    channel: (...args: unknown[]) => mockChannel(...args),
-    removeChannel: (...args: unknown[]) => mockRemoveChannel(...args),
-  },
+vi.mock("@/contexts/websocket-context", () => ({
+  useWs: () => mockWsData,
 }));
 
 import { usePrimeRealtime } from "@/hooks/use-prime-realtime";
 
-// Tests the Realtime subscription lifecycle: subscribe -> receive -> cleanup.
-// Validates channel creation, event filtering, initial state, and unmount cleanup.
 describe("usePrimeRealtime", () => {
-  let channelMock: Record<string, unknown>;
-
   beforeEach(() => {
     vi.clearAllMocks();
-    channelMock = {
-      on: mockOn,
-      subscribe: mockSubscribe.mockReturnThis(),
-    };
-    mockOn.mockReturnValue(channelMock);
-    mockChannel.mockReturnValue(channelMock);
+    mockWsData = { ...defaultWsData, lastPrimeFound: null };
   });
 
-  /**
-   * Verifies that the hook creates a "primes-inserts" channel and subscribes
-   * to postgres_changes INSERT events on the public.primes table. Only INSERT
-   * events are subscribed (not UPDATE or DELETE) since we only care about
-   * newly discovered primes.
-   */
-  it("subscribes to primes-inserts channel on mount", () => {
-    renderHook(() => usePrimeRealtime());
-
-    expect(mockChannel).toHaveBeenCalledWith("primes-inserts");
-    expect(mockOn).toHaveBeenCalledWith(
-      "postgres_changes",
-      { event: "INSERT", schema: "public", table: "primes" },
-      expect.any(Function)
-    );
-    expect(mockSubscribe).toHaveBeenCalled();
+  afterEach(() => {
+    vi.restoreAllMocks();
   });
 
-  /** Verifies that newPrime is null before any INSERT event is received. */
+  /** Verifies that newPrime is null when no prime has been found yet. */
   it("initially returns null", () => {
     const { result } = renderHook(() => usePrimeRealtime());
     expect(result.current.newPrime).toBeNull();
   });
 
   /**
-   * Verifies that the Realtime channel is properly removed on unmount,
-   * passing the exact channel mock object to removeChannel(). This
-   * prevents memory leaks from orphaned subscriptions.
+   * Verifies that when lastPrimeFound is set in the WebSocket context,
+   * the hook surfaces it as a RealtimePrime object.
    */
-  it("removes channel on unmount", () => {
-    const { unmount } = renderHook(() => usePrimeRealtime());
-    unmount();
-    expect(mockRemoveChannel).toHaveBeenCalledWith(channelMock);
+  it("returns newPrime when lastPrimeFound is available", () => {
+    mockWsData = {
+      ...defaultWsData,
+      lastPrimeFound: {
+        form: "factorial",
+        expression: "5!+1",
+        digits: 3,
+        proof_method: "deterministic",
+        timestamp_ms: 1706000000000,
+      },
+    };
+
+    const { result } = renderHook(() => usePrimeRealtime());
+
+    expect(result.current.newPrime).not.toBeNull();
+    expect(result.current.newPrime!.form).toBe("factorial");
+    expect(result.current.newPrime!.expression).toBe("5!+1");
+    expect(result.current.newPrime!.digits).toBe(3);
+    expect(result.current.newPrime!.id).toBe(0);
+  });
+
+  /**
+   * Verifies that the onPrimeFound callback is fired when lastPrimeFound
+   * changes from null to a prime object.
+   */
+  it("calls onPrimeFound callback when a prime is found", () => {
+    const onPrimeFound = vi.fn();
+
+    mockWsData = {
+      ...defaultWsData,
+      lastPrimeFound: {
+        form: "kbn",
+        expression: "3*2^100+1",
+        digits: 31,
+        proof_method: "Proth",
+        timestamp_ms: 1706000000000,
+      },
+    };
+
+    renderHook(() => usePrimeRealtime(onPrimeFound));
+
+    expect(onPrimeFound).toHaveBeenCalledWith(
+      expect.objectContaining({
+        form: "kbn",
+        expression: "3*2^100+1",
+        digits: 31,
+      })
+    );
+  });
+
+  /**
+   * Verifies that the onPrimeFound callback is not fired when lastPrimeFound
+   * is null (no prime discovered yet).
+   */
+  it("does not call onPrimeFound when no prime is available", () => {
+    const onPrimeFound = vi.fn();
+
+    mockWsData = { ...defaultWsData, lastPrimeFound: null };
+
+    renderHook(() => usePrimeRealtime(onPrimeFound));
+
+    expect(onPrimeFound).not.toHaveBeenCalled();
   });
 });

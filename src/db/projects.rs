@@ -105,7 +105,7 @@ impl Database {
                  FROM projects WHERE status = $1 ORDER BY created_at DESC",
             )
             .bind(status)
-            .fetch_all(&self.pool)
+            .fetch_all(&self.read_pool)
             .await?
         } else {
             sqlx::query_as::<_, crate::project::ProjectRow>(
@@ -117,7 +117,7 @@ impl Database {
                         created_at, started_at, completed_at, updated_at
                  FROM projects ORDER BY created_at DESC",
             )
-            .fetch_all(&self.pool)
+            .fetch_all(&self.read_pool)
             .await?
         };
         Ok(rows)
@@ -138,7 +138,7 @@ impl Database {
              FROM projects WHERE slug = $1",
         )
         .bind(slug)
-        .fetch_optional(&self.pool)
+        .fetch_optional(&self.read_pool)
         .await?;
         Ok(row)
     }
@@ -156,7 +156,7 @@ impl Database {
              FROM project_phases WHERE project_id = $1 ORDER BY phase_order",
         )
         .bind(project_id)
-        .fetch_all(&self.pool)
+        .fetch_all(&self.read_pool)
         .await?;
         Ok(rows)
     }
@@ -330,7 +330,7 @@ impl Database {
         )
         .bind(project_id)
         .bind(limit)
-        .fetch_all(&self.pool)
+        .fetch_all(&self.read_pool)
         .await?;
         Ok(rows)
     }

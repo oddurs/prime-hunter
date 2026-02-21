@@ -1,0 +1,24 @@
+[Unit]
+Description=PostgreSQL for darkreach
+After=network.target
+Before=darkreach-coordinator.service
+
+[Service]
+Type=notify
+User=postgres
+Group=postgres
+Environment=PGDATA=/var/lib/postgresql/16/darkreach
+ExecStartPre=/usr/lib/postgresql/16/bin/pg_isready -q || true
+ExecStart=/usr/lib/postgresql/16/bin/postgres -D /var/lib/postgresql/16/darkreach
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=always
+RestartSec=5
+TimeoutStartSec=60
+TimeoutStopSec=120
+LimitNOFILE=65535
+
+# OOM killer should prefer killing workers over PostgreSQL
+OOMScoreAdjust=-500
+
+[Install]
+WantedBy=multi-user.target

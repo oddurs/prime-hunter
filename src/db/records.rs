@@ -73,7 +73,7 @@ impl Database {
                     source, source_url, our_best_id, our_best_digits, fetched_at, updated_at
              FROM records ORDER BY form, category",
         )
-        .fetch_all(&self.pool)
+        .fetch_all(&self.read_pool)
         .await?;
         Ok(rows)
     }

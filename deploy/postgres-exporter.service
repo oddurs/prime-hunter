@@ -1,0 +1,18 @@
+[Unit]
+Description=Prometheus PostgreSQL exporter for darkreach
+After=darkreach-postgresql.service
+
+[Service]
+Type=simple
+User=prometheus
+Group=prometheus
+Environment=DATA_SOURCE_NAME=postgresql://darkreach@localhost:5432/darkreach?sslmode=disable
+ExecStart=/usr/local/bin/postgres_exporter \
+    --web.listen-address=:9187 \
+    --auto-discover-databases \
+    --extend.query-path=/etc/darkreach/postgres_exporter_queries.yml
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

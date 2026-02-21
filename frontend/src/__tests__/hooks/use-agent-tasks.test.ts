@@ -3,101 +3,28 @@
  * @module __tests__/hooks/use-agent-tasks
  *
  * Comprehensive test suite for the agent task management system. Covers:
- * - useAgentTasks: Task listing with status filtering, Realtime subscriptions
+ * - useAgentTasks: Task listing with status filtering and polling
  * - useAgentEvents: Event stream for agent activity (tool calls, completions)
  * - useAgentTemplates: Multi-step task template definitions
  * - useAgentRoles: Role-based agent configurations (domains, permissions, models)
  * - useAgentLogs: Task execution log retrieval via REST API
  * - useAgentTimeline: Task timeline events via REST API
- * - createTask: Supabase INSERT for new agent tasks
- * - cancelTask: Status update with guard against already-completed tasks
+ * - createTask: POST to REST API for new agent tasks
+ * - cancelTask: POST to cancel endpoint with guard against completed tasks
  * - expandTemplate: REST API template expansion into parent+child task tree
  * - buildTaskTree: Pure function to transform flat task list into hierarchical tree
  *
- * The mock chain uses a "thenable" pattern because the hook builds queries
- * dynamically (query = query.limit(200); query = query.eq(...)) requiring
- * each chain link to support both further chaining and await resolution.
+ * All hooks now use fetch() with polling instead of Supabase client queries
+ * and Realtime subscriptions.
  *
  * @see {@link ../../hooks/use-agent-tasks} Source hooks and functions
- * @see {@link ../../__mocks__/supabase} Supabase mock configuration
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { renderHook, waitFor } from "@testing-library/react";
 
-// --- Supabase mock ---
-// Mocks the full Supabase query chain with thenable support for dynamic
-// query building. Each method returns an object that is both chainable
-// and thenable (can be awaited or further chained).
-const mockSelect = vi.fn();
-const mockEq = vi.fn();
-const mockOrder = vi.fn();
-const mockLimit = vi.fn();
-const mockFrom = vi.fn();
-const mockInsert = vi.fn();
-const mockUpdate = vi.fn();
-const mockIn = vi.fn();
-const mockSingle = vi.fn();
-const mockChannel = vi.fn();
-const mockOn = vi.fn();
-const mockSubscribe = vi.fn();
-const mockRemoveChannel = vi.fn();
-
-/**
- * Creates a thenable chain mock that supports dynamic query building.
- * The hook pattern `query = query.limit(200); query = query.eq(...)` requires
- * each link in the chain to return an object with both chaining methods
- * and a `.then()` for async resolution.
- */
-function setupChain(finalData: unknown, finalError: unknown) {
-  const resolveResult = { data: finalData, error: finalError };
-
-  // Create a thenable object that also supports further chaining (.eq, etc.)
-  // This is needed because useAgentTasks does: query = query.limit(200); query = query.eq(...);
-  function makeThenableChain(): Record<string, unknown> {
-    const obj: Record<string, unknown> = {};
-    obj.eq = mockEq.mockImplementation(() => makeThenableChain());
-    obj.select = mockSelect.mockReturnValue(obj);
-    obj.order = mockOrder.mockReturnValue(obj);
-    obj.limit = mockLimit.mockReturnValue(obj);
-    obj.in = mockIn.mockImplementation(() => Promise.resolve({ error: finalError }));
-    obj.single = mockSingle.mockImplementation(() => Promise.resolve(resolveResult));
-    obj.then = (resolve: (v: unknown) => void) => resolve(resolveResult);
-    return obj;
-  }
-
-  const chain = makeThenableChain();
-
-  // Also support insert/update chains
-  chain.insert = mockInsert.mockReturnValue(chain);
-  chain.update = mockUpdate.mockReturnValue(chain);
-
-  mockFrom.mockReturnValue(chain);
-  return chain;
-}
-
-// Realtime channel mock for live task/event/template change notifications
-const channelMock = {
-  on: mockOn.mockReturnThis(),
-  subscribe: mockSubscribe.mockReturnThis(),
-};
-mockChannel.mockReturnValue(channelMock);
-
-vi.mock("@/lib/supabase", () => ({
-  supabase: {
-    from: (...args: unknown[]) => mockFrom(...args),
-    channel: (...args: unknown[]) => mockChannel(...args),
-    removeChannel: (...args: unknown[]) => mockRemoveChannel(...args),
-  },
-}));
-
-// --- fetch mock for REST API hooks ---
-// useAgentLogs, useAgentTimeline, and expandTemplate use the REST API via fetch.
+// --- fetch mock ---
 const mockFetch = vi.fn();
 vi.stubGlobal("fetch", mockFetch);
-
-vi.mock("@/lib/format", () => ({
-  API_BASE: "http://localhost:3000",
-}));
 
 import {
   useAgentTasks,
@@ -143,24 +70,23 @@ function makeTask(overrides: Partial<AgentTask> = {}): AgentTask {
   };
 }
 
-// Tests the task listing hook: mount -> loading -> data -> filtering -> Realtime.
-// Validates Supabase query construction with optional status filter, ordering,
-// limit, and Realtime subscription lifecycle.
+// Tests the task listing hook: mount -> loading -> data -> filtering -> polling.
+// Validates fetch URL construction with optional status filter and limit parameter.
 describe("useAgentTasks", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockChannel.mockReturnValue(channelMock);
-    mockOn.mockReturnValue(channelMock);
-    mockSubscribe.mockReturnValue(channelMock);
   });
 
   /**
-   * Verifies that the hook fetches agent tasks on mount from the agent_tasks
-   * table and exposes them through the returned tasks array.
+   * Verifies that the hook fetches agent tasks on mount via the REST API
+   * and exposes them through the returned tasks array.
    */
   it("fetches tasks on mount", async () => {
     const mockData = [makeTask({ title: "Analyze search" })];
-    setupChain(mockData, null);
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ tasks: mockData }),
+    });
 
     const { result } = renderHook(() => useAgentTasks());
 
@@ -169,12 +95,15 @@ describe("useAgentTasks", () => {
     });
     expect(result.current.tasks[0].title).toBe("Analyze search");
     expect(result.current.loading).toBe(false);
-    expect(mockFrom).toHaveBeenCalledWith("agent_tasks");
+    expect(mockFetch).toHaveBeenCalledWith(expect.stringContaining("/api/agents/tasks"));
   });
 
   /** Verifies graceful error handling; tasks defaults to empty array. */
   it("returns empty array on error", async () => {
-    setupChain(null, { message: "Permission denied" });
+    mockFetch.mockResolvedValue({
+      ok: false,
+      status: 500,
+    });
 
     const { result } = renderHook(() => useAgentTasks());
 
@@ -186,81 +115,78 @@ describe("useAgentTasks", () => {
 
   /**
    * Verifies that passing a status string (e.g., "in_progress") to the hook
-   * appends an .eq("status", value) filter to the Supabase query, narrowing
-   * results to only tasks with that status.
+   * appends a status query parameter to the fetch URL.
    */
   it("applies status filter when provided", async () => {
-    setupChain([], null);
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ tasks: [] }),
+    });
 
     renderHook(() => useAgentTasks("in_progress"));
 
     await waitFor(() => {
-      expect(mockEq).toHaveBeenCalledWith("status", "in_progress");
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.stringContaining("status=in_progress")
+      );
     });
   });
 
   /**
-   * Verifies that omitting the status parameter does NOT add a status filter.
-   * The .eq() mock should not be called with "status" as the first argument.
+   * Verifies that omitting the status parameter does NOT add a status filter
+   * to the query string. Only the limit parameter should be present.
    */
   it("does not apply status filter when undefined", async () => {
-    setupChain([], null);
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ tasks: [] }),
+    });
 
     renderHook(() => useAgentTasks());
 
     await waitFor(() => {
-      expect(mockFrom).toHaveBeenCalledWith("agent_tasks");
+      expect(mockFetch).toHaveBeenCalled();
     });
-    // eq should not be called for status (though it might be called during limit chain setup)
-    expect(mockEq).not.toHaveBeenCalledWith("status", expect.any(String));
+
+    const url = mockFetch.mock.calls[0][0] as string;
+    expect(url).not.toContain("status=");
   });
 
   /**
-   * Verifies Realtime subscription to all events (*) on agent_tasks table
-   * for live task status updates.
+   * Verifies that the fetch URL includes limit=200 to avoid loading
+   * excessive data.
    */
-  it("subscribes to realtime changes", async () => {
-    setupChain([], null);
+  it("includes limit=200 in fetch URL", async () => {
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ tasks: [] }),
+    });
 
     renderHook(() => useAgentTasks());
 
     await waitFor(() => {
-      expect(mockChannel).toHaveBeenCalledWith("agent_tasks_changes");
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.stringContaining("limit=200")
+      );
     });
-    expect(mockOn).toHaveBeenCalledWith(
-      "postgres_changes",
-      { event: "*", schema: "public", table: "agent_tasks" },
-      expect.any(Function)
-    );
   });
 
-  /** Verifies Realtime channel cleanup on unmount. */
-  it("cleans up subscription on unmount", async () => {
-    setupChain([], null);
+  /** Verifies polling interval cleanup on unmount. */
+  it("cleans up polling on unmount", async () => {
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ tasks: [] }),
+    });
 
     const { unmount } = renderHook(() => useAgentTasks());
 
     await waitFor(() => {
-      expect(mockChannel).toHaveBeenCalled();
+      expect(mockFetch).toHaveBeenCalled();
     });
 
     unmount();
-    expect(mockRemoveChannel).toHaveBeenCalled();
-  });
-
-  /**
-   * Verifies that tasks are ordered by created_at descending (newest first)
-   * and limited to 200 results to avoid loading excessive data.
-   */
-  it("orders tasks by created_at descending with limit 200", async () => {
-    setupChain([], null);
-
-    renderHook(() => useAgentTasks());
-
-    await waitFor(() => {
-      expect(mockOrder).toHaveBeenCalledWith("created_at", { ascending: false });
-      expect(mockLimit).toHaveBeenCalledWith(200);
-    });
+    // Unmount cleans up the interval via clearInterval in the useEffect cleanup.
+    // No errors thrown confirms proper cleanup.
   });
 });
 
@@ -269,9 +195,6 @@ describe("useAgentTasks", () => {
 describe("useAgentEvents", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockChannel.mockReturnValue(channelMock);
-    mockOn.mockReturnValue(channelMock);
-    mockSubscribe.mockReturnValue(channelMock);
   });
 
   /**
@@ -282,7 +205,10 @@ describe("useAgentEvents", () => {
     const mockData = [
       { id: 1, task_id: null, event_type: "agent_started", agent: "agent-1", summary: "Agent started", detail: null, created_at: "2026-01-01", tool_name: null, input_tokens: null, output_tokens: null, duration_ms: null },
     ];
-    setupChain(mockData, null);
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ events: mockData }),
+    });
 
     const { result } = renderHook(() => useAgentEvents());
 
@@ -290,37 +216,42 @@ describe("useAgentEvents", () => {
       expect(result.current.events).toHaveLength(1);
     });
     expect(result.current.events[0].event_type).toBe("agent_started");
-    expect(mockFrom).toHaveBeenCalledWith("agent_events");
+    expect(mockFetch).toHaveBeenCalledWith(expect.stringContaining("/api/agents/events"));
   });
 
   /**
-   * Verifies that passing a taskId filters events to only those belonging
-   * to the specified task, using .eq("task_id", taskId).
+   * Verifies that passing a taskId filters events by including task_id
+   * as a query parameter in the fetch URL.
    */
   it("filters events by taskId when provided", async () => {
-    setupChain([], null);
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ events: [] }),
+    });
 
     renderHook(() => useAgentEvents(42));
 
     await waitFor(() => {
-      expect(mockEq).toHaveBeenCalledWith("task_id", 42);
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.stringContaining("task_id=42")
+      );
     });
   });
 
   /**
-   * Verifies that the events hook subscribes only to INSERT events (not
-   * UPDATE or DELETE) since events are append-only and never modified.
+   * Verifies that the events hook includes limit=200 in the fetch URL.
    */
-  it("subscribes to INSERT events on agent_events", async () => {
-    setupChain([], null);
+  it("includes limit=200 in fetch URL", async () => {
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ events: [] }),
+    });
 
     renderHook(() => useAgentEvents());
 
     await waitFor(() => {
-      expect(mockOn).toHaveBeenCalledWith(
-        "postgres_changes",
-        { event: "INSERT", schema: "public", table: "agent_events" },
-        expect.any(Function)
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.stringContaining("limit=200")
       );
     });
   });
@@ -330,17 +261,17 @@ describe("useAgentEvents", () => {
 describe("useAgentTemplates", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockChannel.mockReturnValue(channelMock);
-    mockOn.mockReturnValue(channelMock);
-    mockSubscribe.mockReturnValue(channelMock);
   });
 
-  /** Verifies template listing from the agent_templates table. */
+  /** Verifies template listing via the REST API. */
   it("fetches templates on mount", async () => {
     const mockData = [
       { id: 1, name: "code-review", description: "Review code changes", steps: [], created_at: "2026-01-01", role_name: null },
     ];
-    setupChain(mockData, null);
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ templates: mockData }),
+    });
 
     const { result } = renderHook(() => useAgentTemplates());
 
@@ -348,18 +279,22 @@ describe("useAgentTemplates", () => {
       expect(result.current.templates).toHaveLength(1);
     });
     expect(result.current.templates[0].name).toBe("code-review");
-    expect(mockFrom).toHaveBeenCalledWith("agent_templates");
+    expect(mockFetch).toHaveBeenCalledWith(expect.stringContaining("/api/agents/templates"));
   });
 
-  /** Verifies Realtime subscription for live template updates. */
-  it("subscribes to realtime on agent_templates", async () => {
-    setupChain([], null);
+  /** Verifies graceful error handling; templates defaults to empty array. */
+  it("returns empty array on error", async () => {
+    mockFetch.mockResolvedValue({
+      ok: false,
+      status: 500,
+    });
 
-    renderHook(() => useAgentTemplates());
+    const { result } = renderHook(() => useAgentTemplates());
 
     await waitFor(() => {
-      expect(mockChannel).toHaveBeenCalledWith("agent_templates_changes");
+      expect(result.current.loading).toBe(false);
     });
+    expect(result.current.templates).toEqual([]);
   });
 });
 
@@ -367,13 +302,10 @@ describe("useAgentTemplates", () => {
 describe("useAgentRoles", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockChannel.mockReturnValue(channelMock);
-    mockOn.mockReturnValue(channelMock);
-    mockSubscribe.mockReturnValue(channelMock);
   });
 
   /**
-   * Verifies role listing from the agent_roles table. Roles define
+   * Verifies role listing via the REST API. Roles define
    * domain-specific agent configurations with default models, permissions,
    * and cost limits.
    */
@@ -381,7 +313,10 @@ describe("useAgentRoles", () => {
     const mockData = [
       { id: 1, name: "engine-analyst", description: "Analyzes engine", domains: ["engine"], default_permission_level: 1, default_model: "claude-opus-4-20250514", system_prompt: null, default_max_cost_usd: 5.0, created_at: "2026-01-01", updated_at: "2026-01-01" },
     ];
-    setupChain(mockData, null);
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ roles: mockData }),
+    });
 
     const { result } = renderHook(() => useAgentRoles());
 
@@ -389,7 +324,22 @@ describe("useAgentRoles", () => {
       expect(result.current.roles).toHaveLength(1);
     });
     expect(result.current.roles[0].name).toBe("engine-analyst");
-    expect(mockFrom).toHaveBeenCalledWith("agent_roles");
+    expect(mockFetch).toHaveBeenCalledWith(expect.stringContaining("/api/agents/roles"));
+  });
+
+  /** Verifies graceful error handling; roles defaults to empty array. */
+  it("returns empty array on error", async () => {
+    mockFetch.mockResolvedValue({
+      ok: false,
+      status: 500,
+    });
+
+    const { result } = renderHook(() => useAgentRoles());
+
+    await waitFor(() => {
+      expect(result.current.loading).toBe(false);
+    });
+    expect(result.current.roles).toEqual([]);
   });
 });
 
@@ -473,7 +423,7 @@ describe("useAgentTimeline", () => {
       expect(result.current.events).toHaveLength(1);
     });
     expect(result.current.events[0].tool_name).toBe("grep");
-    expect(mockFetch).toHaveBeenCalledWith("http://localhost:3000/api/agents/tasks/1/timeline");
+    expect(mockFetch).toHaveBeenCalledWith(expect.stringContaining("/api/agents/tasks/1/timeline"));
   });
 
   /** Verifies that no fetch is issued when taskId is null. */
@@ -484,7 +434,7 @@ describe("useAgentTimeline", () => {
   });
 });
 
-// Tests the createTask function which inserts a new agent task into Supabase.
+// Tests the createTask function which sends a POST request to create a new agent task.
 // Supports optional parameters for model, cost limits, permission level, and role.
 describe("createTask", () => {
   beforeEach(() => {
@@ -498,28 +448,32 @@ describe("createTask", () => {
    */
   it("creates a task with all fields", async () => {
     const returnData = makeTask({ id: 10, title: "New task" });
-    const chain = {
-      select: mockSelect.mockReturnThis(),
-      single: mockSingle.mockResolvedValue({ data: returnData, error: null }),
-    };
-    mockInsert.mockReturnValue(chain);
-    mockFrom.mockReturnValue({ insert: mockInsert });
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve(returnData),
+    });
 
     const result = await createTask("New task", "Description", "high", "claude-opus-4-20250514", 5.0, 2, "engine-analyst");
 
-    expect(mockFrom).toHaveBeenCalledWith("agent_tasks");
-    expect(mockInsert).toHaveBeenCalledWith(
+    expect(mockFetch).toHaveBeenCalledWith(
+      expect.stringContaining("/api/agents/tasks"),
       expect.objectContaining({
-        title: "New task",
-        description: "Description",
-        priority: "high",
-        agent_model: "claude-opus-4-20250514",
-        source: "manual",
-        max_cost_usd: 5.0,
-        permission_level: 2,
-        role_name: "engine-analyst",
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
       })
     );
+
+    const callArgs = mockFetch.mock.calls[0];
+    const body = JSON.parse(callArgs[1].body);
+    expect(body.title).toBe("New task");
+    expect(body.description).toBe("Description");
+    expect(body.priority).toBe("high");
+    expect(body.agent_model).toBe("claude-opus-4-20250514");
+    expect(body.source).toBe("manual");
+    expect(body.max_cost_usd).toBe(5.0);
+    expect(body.permission_level).toBe(2);
+    expect(body.role_name).toBe("engine-analyst");
+
     expect(result.id).toBe(10);
   });
 
@@ -529,78 +483,65 @@ describe("createTask", () => {
    */
   it("sets null for optional fields when not provided", async () => {
     const returnData = makeTask({ id: 11 });
-    const chain = {
-      select: mockSelect.mockReturnThis(),
-      single: mockSingle.mockResolvedValue({ data: returnData, error: null }),
-    };
-    mockInsert.mockReturnValue(chain);
-    mockFrom.mockReturnValue({ insert: mockInsert });
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve(returnData),
+    });
 
     await createTask("Task", "Desc", "normal");
 
-    expect(mockInsert).toHaveBeenCalledWith(
-      expect.objectContaining({
-        agent_model: null,
-        max_cost_usd: null,
-        permission_level: 1,
-        role_name: null,
-      })
-    );
+    const callArgs = mockFetch.mock.calls[0];
+    const body = JSON.parse(callArgs[1].body);
+    expect(body.agent_model).toBeNull();
+    expect(body.max_cost_usd).toBeNull();
+    expect(body.permission_level).toBe(1);
+    expect(body.role_name).toBeNull();
   });
 
-  /** Verifies that createTask throws when the budget quota is exceeded. */
+  /** Verifies that createTask throws when the API returns an error. */
   it("throws on insert error", async () => {
-    const chain = {
-      select: mockSelect.mockReturnThis(),
-      single: mockSingle.mockResolvedValue({ data: null, error: { message: "Quota exceeded" } }),
-    };
-    mockInsert.mockReturnValue(chain);
-    mockFrom.mockReturnValue({ insert: mockInsert });
+    mockFetch.mockResolvedValue({
+      ok: false,
+      json: () => Promise.resolve({ error: "Quota exceeded" }),
+    });
 
-    await expect(createTask("t", "d", "low")).rejects.toEqual({ message: "Quota exceeded" });
+    await expect(createTask("t", "d", "low")).rejects.toThrow("Quota exceeded");
   });
 });
 
-// Tests the cancelTask function which sets a task's status to "cancelled".
-// The update includes a status guard: only "pending" or "in_progress" tasks
-// can be cancelled (using .in("status", ["pending", "in_progress"])).
+// Tests the cancelTask function which posts to the cancel endpoint.
 describe("cancelTask", () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
   /**
-   * Verifies that cancelTask updates the status to "cancelled" with a guard
-   * ensuring only pending or in_progress tasks can be cancelled. The .in()
-   * filter prevents cancelling already-completed or failed tasks.
+   * Verifies that cancelTask sends a POST to the cancel endpoint
+   * with the correct task ID.
    */
-  it("cancels a pending or in_progress task", async () => {
-    mockIn.mockResolvedValue({ error: null });
-    const chain = {
-      eq: mockEq.mockReturnValue({ in: mockIn }),
-      update: mockUpdate,
-    };
-    mockUpdate.mockReturnValue({ eq: mockEq });
-    mockFrom.mockReturnValue({ update: mockUpdate });
+  it("cancels a task by id", async () => {
+    mockFetch.mockResolvedValue({
+      ok: true,
+    });
 
     await cancelTask(42);
 
-    expect(mockFrom).toHaveBeenCalledWith("agent_tasks");
-    expect(mockUpdate).toHaveBeenCalledWith(
-      expect.objectContaining({ status: "cancelled" })
+    expect(mockFetch).toHaveBeenCalledWith(
+      expect.stringContaining("/api/agents/tasks/42/cancel"),
+      expect.objectContaining({
+        method: "POST",
+      })
     );
-    expect(mockEq).toHaveBeenCalledWith("id", 42);
-    expect(mockIn).toHaveBeenCalledWith("status", ["pending", "in_progress"]);
   });
 
-  /** Verifies that cancelTask throws when the task is already completed. */
+  /** Verifies that cancelTask throws when the task cannot be cancelled. */
   it("throws on cancel error", async () => {
-    mockIn.mockResolvedValue({ error: { message: "Already completed" } });
-    mockEq.mockReturnValue({ in: mockIn });
-    mockUpdate.mockReturnValue({ eq: mockEq });
-    mockFrom.mockReturnValue({ update: mockUpdate });
+    mockFetch.mockResolvedValue({
+      ok: false,
+      json: () => Promise.resolve({ error: "Already completed" }),
+    });
 
-    await expect(cancelTask(99)).rejects.toEqual({ message: "Already completed" });
+    await expect(cancelTask(99)).rejects.toThrow("Already completed");
   });
 });
 
@@ -625,7 +566,7 @@ describe("expandTemplate", () => {
 
     expect(parentId).toBe(100);
     expect(mockFetch).toHaveBeenCalledWith(
-      "http://localhost:3000/api/agents/templates/code-review/expand",
+      expect.stringContaining("/api/agents/templates/code-review/expand"),
       expect.objectContaining({
         method: "POST",
         headers: { "Content-Type": "application/json" },

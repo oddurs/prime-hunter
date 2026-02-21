@@ -40,6 +40,7 @@
 //! and report primes to either an HTTP coordinator or PostgreSQL directly.
 
 pub mod agent;
+pub mod ai_engine;
 pub mod carol_kynea;
 pub mod certificate;
 pub mod checkpoint;

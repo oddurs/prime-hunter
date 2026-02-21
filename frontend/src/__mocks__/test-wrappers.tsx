@@ -43,6 +43,7 @@ export const defaultWsData: WsData = {
   runningAgents: [],
   projects: [],
   records: [],
+  lastPrimeFound: null,
   connected: true,
   sendMessage: () => {},
 };

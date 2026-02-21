@@ -1,0 +1,19 @@
+[Unit]
+Description=Patroni HA manager for darkreach PostgreSQL
+After=network.target etcd.service
+Wants=etcd.service
+
+[Service]
+Type=simple
+User=postgres
+Group=postgres
+EnvironmentFile=/etc/darkreach/patroni.env
+ExecStart=/usr/local/bin/patroni /etc/darkreach/patroni.yml
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=always
+RestartSec=5
+TimeoutStartSec=120
+KillMode=process
+
+[Install]
+WantedBy=multi-user.target

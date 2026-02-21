@@ -1,0 +1,165 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "description": "PostgreSQL database metrics for darkreach coordinator",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "links": [],
+  "panels": [
+    {
+      "title": "Connection Pool",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "targets": [
+        {
+          "expr": "darkreach_db_pool_active",
+          "legendFormat": "Write Pool Active"
+        },
+        {
+          "expr": "darkreach_db_pool_idle",
+          "legendFormat": "Write Pool Idle"
+        },
+        {
+          "expr": "darkreach_db_pool_max",
+          "legendFormat": "Write Pool Max"
+        },
+        {
+          "expr": "darkreach_db_read_pool_active",
+          "legendFormat": "Read Pool Active"
+        },
+        {
+          "expr": "darkreach_db_read_pool_idle",
+          "legendFormat": "Read Pool Idle"
+        }
+      ]
+    },
+    {
+      "title": "Query Latency (p95)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, rate(darkreach_db_query_duration_seconds_bucket[5m]))",
+          "legendFormat": "{{query}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        }
+      }
+    },
+    {
+      "title": "Replication Lag",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 8 },
+      "targets": [
+        {
+          "expr": "pg_replication_lag",
+          "legendFormat": "Lag (seconds)"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": {
+            "steps": [
+              { "value": 0, "color": "green" },
+              { "value": 1, "color": "yellow" },
+              { "value": 5, "color": "red" }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "title": "Transactions/sec",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 12 },
+      "targets": [
+        {
+          "expr": "rate(pg_stat_database_xact_commit{datname=\"darkreach\"}[5m])",
+          "legendFormat": "Commits/s"
+        },
+        {
+          "expr": "rate(pg_stat_database_xact_rollback{datname=\"darkreach\"}[5m])",
+          "legendFormat": "Rollbacks/s"
+        }
+      ]
+    },
+    {
+      "title": "Table Sizes (Top 10)",
+      "type": "bargauge",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 12 },
+      "targets": [
+        {
+          "expr": "topk(10, pg_total_relation_size_bytes{datname=\"darkreach\"})",
+          "legendFormat": "{{relname}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes"
+        }
+      }
+    },
+    {
+      "title": "Heartbeat RTT",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 20 },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.50, rate(darkreach_heartbeat_rtt_seconds_bucket[5m]))",
+          "legendFormat": "p50"
+        },
+        {
+          "expr": "histogram_quantile(0.95, rate(darkreach_heartbeat_rtt_seconds_bucket[5m]))",
+          "legendFormat": "p95"
+        },
+        {
+          "expr": "histogram_quantile(0.99, rate(darkreach_heartbeat_rtt_seconds_bucket[5m]))",
+          "legendFormat": "p99"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        }
+      }
+    },
+    {
+      "title": "Cache Hit Ratio",
+      "type": "gauge",
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 8 },
+      "targets": [
+        {
+          "expr": "pg_stat_database_blks_hit{datname=\"darkreach\"} / (pg_stat_database_blks_hit{datname=\"darkreach\"} + pg_stat_database_blks_read{datname=\"darkreach\"})",
+          "legendFormat": "Hit Ratio"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "thresholds": {
+            "steps": [
+              { "value": 0, "color": "red" },
+              { "value": 0.9, "color": "yellow" },
+              { "value": 0.99, "color": "green" }
+            ]
+          }
+        }
+      }
+    }
+  ],
+  "schemaVersion": 39,
+  "tags": ["darkreach", "database", "postgresql"],
+  "templating": { "list": [] },
+  "time": { "from": "now-6h", "to": "now" },
+  "title": "Darkreach Database",
+  "uid": "darkreach-database",
+  "version": 1
+}

@@ -101,7 +101,7 @@ impl Database {
              LIMIT $1",
         )
         .bind(limit)
-        .fetch_all(&self.pool)
+        .fetch_all(&self.read_pool)
         .await?;
         Ok(rows)
     }
@@ -116,7 +116,7 @@ impl Database {
              FROM strategy_config
              LIMIT 1",
         )
-        .fetch_one(&self.pool)
+        .fetch_one(&self.read_pool)
         .await?;
         Ok(row)
     }
@@ -173,7 +173,7 @@ impl Database {
              FROM form_yield_rates
              ORDER BY yield_rate DESC",
         )
-        .fetch_all(&self.pool)
+        .fetch_all(&self.read_pool)
         .await?;
         Ok(rows)
     }
@@ -185,7 +185,7 @@ impl Database {
              WHERE search_type = $1 AND status IN ('completed', 'running')",
         )
         .bind(form)
-        .fetch_one(&self.pool)
+        .fetch_one(&self.read_pool)
         .await?;
         Ok(max_range.unwrap_or(0))
     }
@@ -220,7 +220,7 @@ impl Database {
                AND sd.action_taken = 'executed'
                AND sd.created_at >= date_trunc('month', NOW())",
         )
-        .fetch_one(&self.pool)
+        .fetch_one(&self.read_pool)
         .await?;
         Ok(spend.unwrap_or(0.0))
     }

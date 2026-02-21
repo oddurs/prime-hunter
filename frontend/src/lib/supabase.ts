@@ -1,13 +1,17 @@
 /**
  * @module supabase
  *
- * Singleton Supabase client for the frontend. All hooks and contexts
- * import `supabase` from here rather than creating their own clients.
+ * Singleton Supabase client — **auth-only** after Phase 6 migration.
+ *
+ * All data queries (primes, stats, schedules, projects, records, etc.)
+ * have been migrated to REST endpoints served by the Rust backend.
+ * This client is retained solely for Supabase Auth (login, session,
+ * token refresh). See `contexts/auth-context.tsx` for usage.
  *
  * Uses `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY`
  * environment variables, with hardcoded fallbacks for the production
  * Supabase project. The anon key is safe to expose — Row Level Security
- * (RLS) policies on the `primes` table enforce read-only public access.
+ * (RLS) policies enforce read-only public access.
  */
 
 import { createClient } from "@supabase/supabase-js";

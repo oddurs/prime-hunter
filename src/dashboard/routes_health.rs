@@ -16,6 +16,7 @@ use super::AppState;
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
+use redis::AsyncCommands;
 use std::sync::Arc;
 
 /// Liveness probe: returns 200 if the process is running.
@@ -28,18 +29,52 @@ pub async fn handler_healthz() -> impl IntoResponse {
 
 /// Readiness probe: returns 200 if the coordinator can serve requests.
 ///
-/// Checks database connectivity with `SELECT 1` and a 2-second timeout.
-/// Returns 503 Service Unavailable if the database is unreachable, which
-/// tells K8s to stop routing traffic until the probe passes again.
+/// Checks database connectivity (primary + read replica + Redis) with a
+/// 2-second timeout. Returns 503 Service Unavailable if any critical
+/// component is unreachable.
 pub async fn handler_readyz(State(state): State<Arc<AppState>>) -> impl IntoResponse {
-    let check =
-        tokio::time::timeout(std::time::Duration::from_secs(2), state.db.health_check()).await;
+    let timeout = std::time::Duration::from_secs(2);
 
-    match check {
-        Ok(Ok(())) => (StatusCode::OK, "ok"),
-        Ok(Err(_)) => (StatusCode::SERVICE_UNAVAILABLE, "database unreachable"),
-        Err(_) => (StatusCode::SERVICE_UNAVAILABLE, "database timeout"),
+    // Check primary pool
+    let primary_check = tokio::time::timeout(timeout, state.db.health_check()).await;
+    match primary_check {
+        Ok(Ok(())) => {}
+        Ok(Err(_)) => return (StatusCode::SERVICE_UNAVAILABLE, "primary database unreachable"),
+        Err(_) => return (StatusCode::SERVICE_UNAVAILABLE, "primary database timeout"),
     }
+
+    // Check read replica pool (may be same as primary if no replica configured)
+    let read_check = tokio::time::timeout(timeout, async {
+        sqlx::query_scalar::<_, i32>("SELECT 1")
+            .fetch_one(state.db.read_pool())
+            .await
+    })
+    .await;
+    match read_check {
+        Ok(Ok(_)) => {}
+        Ok(Err(_)) => return (StatusCode::SERVICE_UNAVAILABLE, "read replica unreachable"),
+        Err(_) => return (StatusCode::SERVICE_UNAVAILABLE, "read replica timeout"),
+    }
+
+    // Check Redis (non-critical — degrade gracefully)
+    if let Some(redis) = state.db.redis() {
+        let mut conn = redis.clone();
+        let redis_check = tokio::time::timeout(timeout, async {
+            redis::cmd("PING")
+                .query_async::<String>(&mut conn)
+                .await
+        })
+        .await;
+        match redis_check {
+            Ok(Ok(_)) => {}
+            _ => {
+                // Redis is optional — warn but don't fail readiness
+                tracing::warn!("readyz: Redis health check failed (degraded mode)");
+            }
+        }
+    }
+
+    (StatusCode::OK, "ok")
 }
 
 /// Prometheus metrics endpoint: returns all metrics in text exposition format.

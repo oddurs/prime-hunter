@@ -12,7 +12,7 @@ docs/
 ├── landscape.md                  # Distributed compute landscape (BOINC, GIMPS, PrimeGrid)
 ├── references.md                 # OEIS, PrimePages, GIMPS, PrimeGrid, software links
 │
-└── roadmaps/                     # Strategic roadmaps (14 files)
+└── roadmaps/                     # Strategic roadmaps (15 files)
     ├── [Core Domain Roadmaps]
     ├── engine.md                 # Algorithm improvements: sieving, tests, new forms (18 KB)
     ├── server.md                 # Backend: pipeline, checkpoints, coordination (7 KB)
@@ -20,7 +20,8 @@ docs/
     ├── ops.md                    # Deployment: optimization, GPU, PGO, automation (9 KB)
     ├── research.md               # Discovery strategy, publication, references (17 KB)
     │
-    ├── [Infrastructure Roadmaps]
+    ├── [Intelligence Roadmaps]
+    ├── ai-engine.md              # Autonomous AI: strategy, allocation, research, learning (20 KB)
     ├── agents.md                 # AI agent infrastructure (20 KB)
     ├── fleet.md                  # Cluster coordination, distributed workers (15 KB)
     ├── projects.md               # Project lifecycle, cost tracking (17 KB)

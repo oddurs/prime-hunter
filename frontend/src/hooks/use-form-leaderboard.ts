@@ -3,8 +3,8 @@
 /**
  * @module use-form-leaderboard
  *
- * React hook that fetches per-form aggregate statistics from the
- * `get_form_leaderboard` Supabase RPC. Returns an array of form entries
+ * React hook that fetches per-form aggregate statistics from the REST API
+ * `/api/stats/leaderboard` endpoint. Returns an array of form entries
  * sorted by prime count descending, each with: count, largest digit count,
  * largest expression, latest discovery time, and verified percentage.
  *
@@ -12,7 +12,8 @@
  */
 
 import { useEffect, useState, useCallback } from "react";
-import { supabase } from "@/lib/supabase";
+
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || "";
 
 export interface FormLeaderboardEntry {
   form: string;
@@ -27,18 +28,23 @@ export interface FormLeaderboardEntry {
 export function useFormLeaderboard() {
   const [entries, setEntries] = useState<FormLeaderboardEntry[]>([]);
 
-  const fetch = useCallback(async () => {
-    const { data, error } = await supabase.rpc("get_form_leaderboard");
-    if (!error && data) {
-      setEntries(data as FormLeaderboardEntry[]);
+  const fetchLeaderboard = useCallback(async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/stats/leaderboard`);
+      if (res.ok) {
+        const data = await res.json();
+        setEntries(data as FormLeaderboardEntry[]);
+      }
+    } catch {
+      // Network error — keep previous state
     }
   }, []);
 
   useEffect(() => {
-    fetch();
-    const interval = setInterval(fetch, 10000);
+    fetchLeaderboard();
+    const interval = setInterval(fetchLeaderboard, 10000);
     return () => clearInterval(interval);
-  }, [fetch]);
+  }, [fetchLeaderboard]);
 
-  return { entries, refetch: fetch };
+  return { entries, refetch: fetchLeaderboard };
 }

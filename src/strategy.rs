@@ -166,7 +166,7 @@ fn min_cores_for_form(form: &str) -> u32 {
 // ── Survey ──────────────────────────────────────────────────────
 
 /// Gather a snapshot of the current fleet and search state.
-async fn survey(db: &Database) -> Result<Survey> {
+pub async fn survey(db: &Database) -> Result<Survey> {
     let records = db.get_records().await.unwrap_or_default();
     let workers = db.get_all_workers().await.unwrap_or_default();
     let active_jobs = db.get_search_jobs().await.unwrap_or_default();
@@ -197,7 +197,7 @@ async fn survey(db: &Database) -> Result<Survey> {
 // ── Score ────────────────────────────────────────────────────────
 
 /// Score all 12 forms against the current survey data.
-fn score_forms(
+pub fn score_forms(
     survey: &Survey,
     config: &crate::db::StrategyConfigRow,
 ) -> Vec<FormScore> {
@@ -306,7 +306,7 @@ fn score_forms(
 }
 
 /// Simplified secs_per_candidate for scoring (no PFGW, baseline digits).
-fn secs_per_candidate_estimate(form: &str, digits: u64) -> f64 {
+pub fn secs_per_candidate_estimate(form: &str, digits: u64) -> f64 {
     let d = (digits as f64) / 1000.0;
     match form {
         "factorial" | "primorial" => 0.5 * d.powf(2.5),
@@ -323,7 +323,7 @@ fn secs_per_candidate_estimate(form: &str, digits: u64) -> f64 {
 // ── Decide ──────────────────────────────────────────────────────
 
 /// Generate decisions based on survey data and form scores.
-fn decide(
+pub fn decide(
     survey: &Survey,
     scores: &[FormScore],
     config: &crate::db::StrategyConfigRow,
@@ -503,7 +503,7 @@ fn decide(
 // ── Execute ─────────────────────────────────────────────────────
 
 /// Execute a single strategy decision: log it and perform the action.
-async fn execute_decision(
+pub async fn execute_decision(
     db: &Database,
     decision: &StrategyDecision,
 ) -> Result<()> {
@@ -571,7 +571,7 @@ async fn execute_decision(
 }
 
 /// Build a ProjectConfig for automatic project creation.
-fn build_auto_project_config(
+pub fn build_auto_project_config(
     form: &str,
     continue_from: i64,
     budget_usd: f64,

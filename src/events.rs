@@ -197,6 +197,9 @@ impl EventBus {
                     ),
                     elapsed,
                 );
+                // Broadcast individual prime_found event for real-time subscriptions.
+                // Replaces Supabase Realtime INSERT subscription on the primes table.
+                self.broadcast_prime_found(form, expression, *digits, proof_method);
                 self.pending_primes.lock().unwrap().push(PendingPrime {
                     form: form.clone(),
                     expression: expression.clone(),
@@ -387,6 +390,26 @@ impl EventBus {
             elapsed_secs: elapsed,
             timestamp_ms,
         });
+    }
+
+    /// Broadcast an individual `prime_found` event via WebSocket.
+    /// Replaces Supabase Realtime `postgres_changes` INSERT subscription
+    /// on the `primes` table. The frontend's `use-prime-realtime` hook
+    /// listens for messages with `type: "prime_found"`.
+    fn broadcast_prime_found(&self, form: &str, expression: &str, digits: u64, proof_method: &str) {
+        if let Some(sender) = self.ws_sender.lock().unwrap().as_ref() {
+            let json = serde_json::json!({
+                "type": "prime_found",
+                "prime": {
+                    "form": form,
+                    "expression": expression,
+                    "digits": digits,
+                    "proof_method": proof_method,
+                    "timestamp_ms": now_ms(),
+                },
+            });
+            let _ = sender.send(json.to_string());
+        }
     }
 
     fn broadcast_notification(&self, notification: Notification) {
@@ -795,12 +818,13 @@ mod tests {
         assert_eq!(events.len(), 1);
     }
 
-    /// PrimeFound events must NOT be broadcast via WebSocket until flush()
-    /// is called. This is the batching contract: primes accumulate in
-    /// pending_primes and are squashed by form on flush, producing a single
-    /// grouped notification per form rather than individual messages.
+    /// PrimeFound events send two WebSocket messages:
+    /// 1. An immediate `prime_found` event (for real-time subscriptions,
+    ///    replacing Supabase Realtime INSERT).
+    /// 2. A batched `notification` on flush() (squashed by form for the
+    ///    notification toast system).
     #[test]
-    fn ws_prime_not_broadcast_until_flush() {
+    fn ws_prime_broadcasts_immediate_and_batched() {
         let bus = make_bus();
         let (tx, _rx) = tokio::sync::broadcast::channel::<String>(16);
         bus.set_ws_sender(tx);
@@ -808,16 +832,25 @@ mod tests {
 
         bus.emit(prime_event("factorial", "5!+1"));
 
-        // Prime events are batched, not immediately broadcast
+        // Immediate prime_found event is broadcast right away
         let msg = receiver.try_recv();
-        assert!(msg.is_err(), "Prime should not be broadcast before flush");
+        assert!(msg.is_ok(), "prime_found should be broadcast immediately");
+        let json_str = msg.unwrap();
+        assert!(json_str.contains("\"type\":\"prime_found\""));
+        assert!(json_str.contains("factorial"));
+
+        // No batched notification yet (that requires flush)
+        let msg2 = receiver.try_recv();
+        assert!(msg2.is_err(), "Batched notification should not appear before flush");
 
         bus.flush();
 
-        let msg = receiver.try_recv();
-        assert!(msg.is_ok(), "Prime should be broadcast after flush");
-        let json_str = msg.unwrap();
-        assert!(json_str.contains("factorial"));
+        // After flush, the batched notification is broadcast
+        let msg3 = receiver.try_recv();
+        assert!(msg3.is_ok(), "Batched notification should be broadcast after flush");
+        let json_str3 = msg3.unwrap();
+        assert!(json_str3.contains("\"type\":\"notification\""));
+        assert!(json_str3.contains("factorial"));
     }
 
     // ── Event Kind Filtering ──────────────────────────────────────

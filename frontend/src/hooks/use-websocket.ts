@@ -201,6 +201,15 @@ export interface RecordSummary {
   our_best_digits: number;
 }
 
+/** A prime discovered in real time, pushed via WebSocket `prime_found` message. */
+export interface WsPrimeFound {
+  form: string;
+  expression: string;
+  digits: number;
+  proof_method: string;
+  timestamp_ms: number;
+}
+
 /** Coordination-only WebSocket data. Prime data comes from Supabase. */
 export interface WsData {
   status: Status | null;
@@ -215,6 +224,7 @@ export interface WsData {
   runningAgents: AgentInfo[];
   projects: ProjectSummary[];
   records: RecordSummary[];
+  lastPrimeFound: WsPrimeFound | null;
   connected: boolean;
   sendMessage: (msg: object) => void;
 }
@@ -232,6 +242,7 @@ export function useWebSocket(): WsData {
   const [runningAgents, setRunningAgents] = useState<AgentInfo[]>([]);
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
   const [records, setRecords] = useState<RecordSummary[]>([]);
+  const [lastPrimeFound, setLastPrimeFound] = useState<WsPrimeFound | null>(null);
   const [connected, setConnected] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
@@ -290,6 +301,8 @@ export function useWebSocket(): WsData {
             const next = [notif, ...prev.filter((n) => n.id !== notif.id)];
             return next.slice(0, 50);
           });
+        } else if (data.type === "prime_found") {
+          setLastPrimeFound(data.prime as WsPrimeFound);
         }
       } catch {
         // ignore malformed messages
@@ -328,6 +341,7 @@ export function useWebSocket(): WsData {
     runningAgents,
     projects,
     records,
+    lastPrimeFound,
     connected,
     sendMessage,
   };

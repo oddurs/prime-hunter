@@ -34,6 +34,10 @@ Migrations are numbered sequentially in `supabase/migrations/`. Apply in order.
 | 023 | `volunteer_worker_release_tracking.sql` | `volunteer_workers` (alter) | Release version tracking |
 | 024 | `metric_rollups_daily.sql` | `metric_rollups_daily`, RPCs | Daily metric aggregation |
 | 025 | `operator_rename.sql` | Renames | Rename volunteer tables → operator tables + backward-compat views |
+| 026 | `user_profiles.sql` | `user_profiles` | User profile management |
+| 027 | `strategy_engine.sql` | Strategy tables | Strategy engine for search optimization |
+| 028 | `network_scaling.sql` | Network tables | Network scaling infrastructure |
+| 029 | `security_hardening.sql` | — | RLS on 22 tables, SECURITY INVOKER views, function search_path, tighten write policies |
 
 ## Schema Overview
 
@@ -146,6 +150,28 @@ cost_calibrations — Per-form cost model coefficients
 | `operators`, `operator_*` | `db/operators.rs` | `routes_operator` |
 | `worker_release*` | `db/releases.rs` | `routes_releases` |
 | `cost_calibrations` | `db/calibrations.rs` | `routes_projects` |
+
+## Infrastructure Evolution
+
+**Current state:** Hosted Supabase (managed PostgreSQL 15). All migrations are portable standard PostgreSQL — no Supabase-specific extensions or syntax.
+
+**Planned migration path:** See [docs/roadmaps/database.md](../docs/roadmaps/database.md) for the full database infrastructure roadmap.
+
+**Key phases:**
+1. **Optimize Supabase** — configurable connection pool, materialized views, time-based partitioning
+2. **Redis for hot-path data** — move worker heartbeats out of PostgreSQL
+3. **Self-hosted PostgreSQL + TimescaleDB** — full control over config, hypertables for time-series
+4. **Read replicas** — separate dashboard reads from write path
+5. **High availability** — automatic failover, PgBouncer
+6. **Frontend independence** — migrate frontend from Supabase JS to REST API
+
+**Compatibility notes:**
+- All migrations use standard SQL and will apply to any PostgreSQL 15+ instance
+- TimescaleDB hypertables (Phase 3) require the `timescaledb` extension — these would be added as new migrations, not modifications to existing ones
+- The `supabase_realtime` publication (used for live notifications) will be replaced by WebSocket push from the Axum server in Phase 6
+- RLS policies are standard PostgreSQL and work on any self-hosted instance
+
+---
 
 ## Agent Coding Guide
 

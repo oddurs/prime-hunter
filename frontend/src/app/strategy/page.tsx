@@ -95,7 +95,7 @@ function StrategyPageInner() {
   );
 
   return (
-    <div className="container mx-auto max-w-6xl px-4 py-6">
+    <>
       <ViewHeader
         title="Strategy Engine"
         subtitle="Autonomous search form selection and project creation"
@@ -307,7 +307,7 @@ function StrategyPageInner() {
           {config && <ConfigPanel config={config} onUpdate={refetchConfig} />}
         </TabsContent>
       </Tabs>
-    </div>
+    </>
   );
 }
 

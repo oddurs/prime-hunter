@@ -2,8 +2,8 @@
  * @file Tests for useTimeline hook
  * @module __tests__/hooks/use-timeline
  *
- * Validates the discovery timeline hook which calls the Supabase RPC function
- * `get_discovery_timeline` to aggregate prime discovery counts over time
+ * Validates the discovery timeline hook which calls the REST API endpoint
+ * `/api/stats/timeline` to aggregate prime discovery counts over time
  * periods (day, hour, week). Used by the DiscoveryTimeline chart component
  * to visualize the rate of prime discoveries.
  *
@@ -13,18 +13,13 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { renderHook, waitFor } from "@testing-library/react";
 
-// Mock the Supabase RPC method for timeline data
-const mockRpc = vi.fn();
-
-vi.mock("@/lib/supabase", () => ({
-  supabase: {
-    rpc: (...args: unknown[]) => mockRpc(...args),
-  },
-}));
+// Mock global fetch for REST API calls
+const mockFetch = vi.fn();
+vi.stubGlobal("fetch", mockFetch);
 
 import { useTimeline } from "@/hooks/use-timeline";
 
-// Tests the timeline data fetching lifecycle: mount -> RPC call -> data/error.
+// Tests the timeline data fetching lifecycle: mount -> fetch call -> data/error.
 // Validates bucket_type parameter handling and error response behavior.
 describe("useTimeline", () => {
   beforeEach(() => {
@@ -32,7 +27,7 @@ describe("useTimeline", () => {
   });
 
   /**
-   * Verifies that the hook calls the get_discovery_timeline RPC on mount
+   * Verifies that the hook calls the /api/stats/timeline endpoint on mount
    * with the default bucket_type of "day". The mock returns two daily
    * buckets with factorial prime counts.
    */
@@ -41,42 +36,51 @@ describe("useTimeline", () => {
       { bucket: "2026-01-01", form: "factorial", count: 5 },
       { bucket: "2026-01-02", form: "factorial", count: 3 },
     ];
-    mockRpc.mockResolvedValue({ data: mockData, error: null });
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve(mockData),
+    });
 
     const { result } = renderHook(() => useTimeline());
 
     await waitFor(() => {
       expect(result.current.timeline).toHaveLength(2);
     });
-    expect(mockRpc).toHaveBeenCalledWith("get_discovery_timeline", {
-      bucket_type: "day",
-    });
+    expect(mockFetch).toHaveBeenCalledWith(
+      expect.stringContaining("/api/stats/timeline?bucket_type=day")
+    );
   });
 
   /**
-   * Verifies that a custom bucket_type ("hour") is correctly passed to the
-   * RPC, allowing more granular timeline views during active searches.
+   * Verifies that a custom bucket_type ("hour") is correctly passed as a
+   * query parameter, allowing more granular timeline views during active searches.
    */
   it("passes custom bucket type", async () => {
-    mockRpc.mockResolvedValue({ data: [], error: null });
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve([]),
+    });
 
     renderHook(() => useTimeline("hour"));
 
     await waitFor(() => {
-      expect(mockRpc).toHaveBeenCalledWith("get_discovery_timeline", {
-        bucket_type: "hour",
-      });
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.stringContaining("/api/stats/timeline?bucket_type=hour")
+      );
     });
   });
 
   /** Verifies graceful error handling; timeline defaults to empty array. */
   it("returns empty array on error", async () => {
-    mockRpc.mockResolvedValue({ data: null, error: { message: "fail" } });
+    mockFetch.mockResolvedValue({
+      ok: false,
+      status: 500,
+    });
 
     const { result } = renderHook(() => useTimeline());
 
     await waitFor(() => {
-      expect(mockRpc).toHaveBeenCalled();
+      expect(mockFetch).toHaveBeenCalled();
     });
     expect(result.current.timeline).toEqual([]);
   });

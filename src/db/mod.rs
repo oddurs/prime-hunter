@@ -33,6 +33,7 @@
 //! via `tokio::runtime::Handle::block_on`. This is safe because Rayon threads
 //! are not Tokio tasks — they won't deadlock the executor.
 
+pub mod ai_engine;
 mod agents;
 mod calibrations;
 mod jobs;
@@ -54,6 +55,7 @@ pub mod volunteers {
 mod user_profiles;
 mod workers;
 pub use user_profiles::UserProfile;
+pub use ai_engine::{AiEngineDecisionRow, AiEngineStateRow};
 pub use strategy::{FormYieldRateRow, StrategyConfigRow, StrategyDecisionRow};
 pub use trust::{NodeReliability, VerificationBlock, VerificationOutcome, WorkBlockWithCheckpoint};
 pub use observability::{
@@ -219,7 +221,7 @@ pub struct JobBlockSummary {
 
 // ── Agent types ─────────────────────────────────────────────────
 
-#[derive(Serialize, sqlx::FromRow)]
+#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
 pub struct AgentTaskRow {
     pub id: i64,
     pub title: String,
@@ -395,7 +397,7 @@ pub struct FleetSummary {
 /// Cost calibration coefficients for a prime form.
 ///
 /// The power-law model: `secs_per_candidate = coeff_a * (digits / 1000) ^ coeff_b`
-#[derive(Serialize, sqlx::FromRow)]
+#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
 pub struct CostCalibrationRow {
     pub form: String,
     pub coeff_a: f64,
@@ -410,6 +412,9 @@ pub struct CostCalibrationRow {
 #[derive(Clone)]
 pub struct Database {
     pool: PgPool,
+    read_pool: PgPool,
+    max_connections: u32,
+    redis: Option<redis::aio::ConnectionManager>,
 }
 
 impl Database {
@@ -433,16 +438,78 @@ impl Database {
         if let Some(ref pw) = password {
             opts = opts.password(pw);
         }
+        let max_conn: u32 = std::env::var("DB_MAX_CONNECTIONS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(5);
         let pool = PgPoolOptions::new()
-            .max_connections(2)
+            .max_connections(max_conn)
             .connect_with(opts)
             .await?;
-        Ok(Database { pool })
+
+        // Read replica pool: when REPLICA_DATABASE_URL is set, read-only queries
+        // are routed to the replica to offload the primary. When not set, both
+        // pools point to the same primary (no behavior change).
+        let read_pool = match std::env::var("REPLICA_DATABASE_URL") {
+            Ok(replica_url) => {
+                let rurl = url::Url::parse(&replica_url)?;
+                let rusername = urlencoding::decode(rurl.username())?.into_owned();
+                let rpassword = rurl
+                    .password()
+                    .map(|p| urlencoding::decode(p).map(|s| s.into_owned()))
+                    .transpose()?;
+                let mut ropts = PgConnectOptions::new()
+                    .host(rurl.host_str().unwrap_or("localhost"))
+                    .port(rurl.port().unwrap_or(5432))
+                    .database(rurl.path().trim_start_matches('/'))
+                    .username(&rusername)
+                    .statement_cache_capacity(0);
+                if let Some(ref pw) = rpassword {
+                    ropts = ropts.password(pw);
+                }
+                PgPoolOptions::new()
+                    .max_connections(max_conn)
+                    .connect_with(ropts)
+                    .await?
+            }
+            Err(_) => pool.clone(),
+        };
+
+        // Optional Redis connection for hot-path data (heartbeats, fleet state).
+        // When REDIS_URL is not set, all operations fall back to PostgreSQL.
+        let redis = match std::env::var("REDIS_URL") {
+            Ok(url) => {
+                let client = redis::Client::open(url)?;
+                let manager = redis::aio::ConnectionManager::new(client).await?;
+                Some(manager)
+            }
+            Err(_) => None,
+        };
+
+        Ok(Database { pool, read_pool, max_connections: max_conn, redis })
     }
 
     /// Get a reference to the underlying connection pool.
     pub fn pool(&self) -> &PgPool {
         &self.pool
+    }
+
+    /// Get the configured maximum number of database connections.
+    pub fn max_connections(&self) -> u32 {
+        self.max_connections
+    }
+
+    /// Get a reference to the read replica pool.
+    ///
+    /// When `REPLICA_DATABASE_URL` is set, this pool connects to the streaming
+    /// replica for read-only queries. Otherwise, it's a clone of the primary pool.
+    pub fn read_pool(&self) -> &PgPool {
+        &self.read_pool
+    }
+
+    /// Get a reference to the Redis connection manager, if configured.
+    pub fn redis(&self) -> Option<&redis::aio::ConnectionManager> {
+        self.redis.as_ref()
     }
 
     /// Health check: execute `SELECT 1` to verify database connectivity.

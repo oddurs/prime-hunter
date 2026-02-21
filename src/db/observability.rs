@@ -164,7 +164,16 @@ impl Database {
         Ok(())
     }
 
+    /// Returns true if TimescaleDB continuous aggregates handle rollups.
+    /// When true, manual rollup and prune methods become no-ops.
+    fn timescaledb_enabled() -> bool {
+        std::env::var("TIMESCALEDB").map(|v| v == "true" || v == "1").unwrap_or(false)
+    }
+
     pub async fn rollup_metrics_hour(&self, hour_start: DateTime<Utc>) -> Result<()> {
+        if Self::timescaledb_enabled() {
+            return Ok(());
+        }
         let hour_end = hour_start + chrono::Duration::hours(1);
         sqlx::query(
             "INSERT INTO metric_rollups_hourly (bucket_start, scope, metric, labels, count, sum, min, max)\n             SELECT date_trunc('hour', ts) AS bucket_start, scope, metric, labels,\n                    COUNT(*)::BIGINT, SUM(value)::DOUBLE PRECISION, MIN(value)::DOUBLE PRECISION, MAX(value)::DOUBLE PRECISION\n             FROM metric_samples\n             WHERE ts >= $1 AND ts < $2\n             GROUP BY bucket_start, scope, metric, labels\n             ON CONFLICT (bucket_start, scope, metric, labels)\n             DO UPDATE SET count = EXCLUDED.count, sum = EXCLUDED.sum, min = EXCLUDED.min, max = EXCLUDED.max",
@@ -177,6 +186,9 @@ impl Database {
     }
 
     pub async fn rollup_metrics_day(&self, day_start: DateTime<Utc>) -> Result<()> {
+        if Self::timescaledb_enabled() {
+            return Ok(());
+        }
         let day_end = day_start + chrono::Duration::days(1);
         sqlx::query(
             "INSERT INTO metric_rollups_daily (bucket_start, scope, metric, labels, count, sum, min, max)\n             SELECT date_trunc('day', ts) AS bucket_start, scope, metric, labels,\n                    COUNT(*)::BIGINT, SUM(value)::DOUBLE PRECISION, MIN(value)::DOUBLE PRECISION, MAX(value)::DOUBLE PRECISION\n             FROM metric_samples\n             WHERE ts >= $1 AND ts < $2\n             GROUP BY bucket_start, scope, metric, labels\n             ON CONFLICT (bucket_start, scope, metric, labels)\n             DO UPDATE SET count = EXCLUDED.count, sum = EXCLUDED.sum, min = EXCLUDED.min, max = EXCLUDED.max",
@@ -189,6 +201,9 @@ impl Database {
     }
 
     pub async fn prune_metric_samples(&self, days: i64) -> Result<u64> {
+        if Self::timescaledb_enabled() {
+            return Ok(0);
+        }
         let result =
             sqlx::query("DELETE FROM metric_samples WHERE ts < NOW() - ($1 || ' days')::interval")
                 .bind(days.to_string())
@@ -198,6 +213,9 @@ impl Database {
     }
 
     pub async fn prune_metric_rollups(&self, days: i64) -> Result<u64> {
+        if Self::timescaledb_enabled() {
+            return Ok(0);
+        }
         let result = sqlx::query(
             "DELETE FROM metric_rollups_hourly WHERE bucket_start < NOW() - ($1 || ' days')::interval",
         )
@@ -208,6 +226,9 @@ impl Database {
     }
 
     pub async fn prune_metric_rollups_daily(&self, days: i64) -> Result<u64> {
+        if Self::timescaledb_enabled() {
+            return Ok(0);
+        }
         let result = sqlx::query(
             "DELETE FROM metric_rollups_daily WHERE bucket_start < NOW() - ($1 || ' days')::interval",
         )
@@ -218,6 +239,9 @@ impl Database {
     }
 
     pub async fn prune_system_logs(&self, days: i64) -> Result<u64> {
+        if Self::timescaledb_enabled() {
+            return Ok(0);
+        }
         let result =
             sqlx::query("DELETE FROM system_logs WHERE ts < NOW() - ($1 || ' days')::interval")
                 .bind(days.to_string())
@@ -246,7 +270,7 @@ impl Database {
         .bind(component)
         .bind(worker_id)
         .bind(limit)
-        .fetch_all(&self.pool)
+        .fetch_all(&self.read_pool)
         .await?;
         Ok(rows)
     }
@@ -273,7 +297,7 @@ impl Database {
             .bind(worker_id)
             .bind(label_key)
             .bind(label_value)
-            .fetch_all(&self.pool)
+            .fetch_all(&self.read_pool)
             .await?;
             return Ok(rows
                 .into_iter()
@@ -291,7 +315,7 @@ impl Database {
             .bind(worker_id)
             .bind(label_key)
             .bind(label_value)
-            .fetch_all(&self.pool)
+            .fetch_all(&self.read_pool)
             .await?;
             return Ok(rows
                 .into_iter()
@@ -308,7 +332,7 @@ impl Database {
         .bind(worker_id)
         .bind(label_key)
         .bind(label_value)
-        .fetch_all(&self.pool)
+        .fetch_all(&self.read_pool)
         .await?;
         Ok(rows
             .into_iter()
@@ -330,7 +354,7 @@ impl Database {
         .bind(to)
         .bind(metric)
         .bind(scope)
-        .fetch_one(&self.pool)
+        .fetch_one(&self.read_pool)
         .await?;
         Ok(value)
     }
@@ -349,7 +373,7 @@ impl Database {
         .bind(to)
         .bind(metric)
         .bind(scope)
-        .fetch_one(&self.pool)
+        .fetch_one(&self.read_pool)
         .await?;
         Ok(value)
     }
@@ -368,7 +392,7 @@ impl Database {
         .bind(to)
         .bind(metric)
         .bind(scope)
-        .fetch_one(&self.pool)
+        .fetch_one(&self.read_pool)
         .await?;
         let last = sqlx::query_scalar::<_, Option<f64>>(
             "SELECT value FROM metric_samples WHERE ts BETWEEN $1 AND $2 AND metric = $3 AND ($4::text IS NULL OR scope = $4) ORDER BY ts DESC LIMIT 1",
@@ -377,7 +401,7 @@ impl Database {
         .bind(to)
         .bind(metric)
         .bind(scope)
-        .fetch_one(&self.pool)
+        .fetch_one(&self.read_pool)
         .await?;
         Ok(match (first, last) {
             (Some(a), Some(b)) => Some(b - a),
@@ -395,7 +419,7 @@ impl Database {
         )
         .bind(from)
         .bind(to)
-        .fetch_all(&self.pool)
+        .fetch_all(&self.read_pool)
         .await?;
         Ok(rows)
     }
@@ -460,7 +484,7 @@ impl Database {
         )
         .bind(window_minutes.to_string())
         .bind(limit)
-        .fetch_all(&self.pool)
+        .fetch_all(&self.read_pool)
         .await?;
         let mut mapped: Vec<WorkerRateRow> = rows
             .into_iter()
@@ -482,6 +506,20 @@ impl Database {
             mapped.truncate(limit as usize);
         }
         Ok(mapped)
+    }
+
+    /// Refresh all materialized views used by dashboard RPCs.
+    ///
+    /// Uses `CONCURRENTLY` to avoid locking reads during refresh.
+    /// Called from the hourly housekeeping loop in the dashboard.
+    pub async fn refresh_materialized_views(&self) -> Result<()> {
+        sqlx::query("REFRESH MATERIALIZED VIEW CONCURRENTLY mv_dashboard_stats")
+            .execute(&self.pool)
+            .await?;
+        sqlx::query("REFRESH MATERIALIZED VIEW CONCURRENTLY mv_form_leaderboard")
+            .execute(&self.pool)
+            .await?;
+        Ok(())
     }
 }
 

@@ -5,96 +5,56 @@
  * Tests the consolidated agent hooks exported from use-agents.ts, which
  * provides a unified API for agent task listing, role management, and
  * task tree construction. This is the primary hook consumed by the
- * agents page component, combining data from agent_tasks and agent_roles
- * Supabase tables with Realtime subscriptions.
+ * agents page component, combining data from REST API endpoints
+ * with polling for live updates.
  *
- * The mock chain handles two query patterns:
- * - With limit: from().select().order().limit() -> resolves with data
- * - Without limit: from().select().order() -> resolves via thenable
- *
- * @see {@link ../../hooks/use-agents} Source hook
- * @see {@link ../../__mocks__/supabase} Supabase mock configuration
+ * @see {@link ../../hooks/use-agents} Source hook (barrel re-export)
+ * @see {@link ../../hooks/use-agent-tasks} Underlying implementation
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { renderHook, waitFor } from "@testing-library/react";
 
-// Mock supabase before importing the hook
-const mockSelect = vi.fn();
-const mockEq = vi.fn();
-const mockOrder = vi.fn();
-const mockLimit = vi.fn();
-const mockFrom = vi.fn();
-const mockChannel = vi.fn();
-const mockOn = vi.fn();
-const mockSubscribe = vi.fn();
-const mockRemoveChannel = vi.fn();
-const mockInsert = vi.fn();
-const mockUpdate = vi.fn();
-const mockIn = vi.fn();
-const mockSingle = vi.fn();
-
-/**
- * Configures the mock query chain supporting both limited and unlimited queries.
- * Limited queries (tasks): chain ends with .limit() resolving directly.
- * Unlimited queries (roles): chain ends with .order() which is thenable.
- */
-function setupChain(finalData: unknown, finalError: unknown) {
-  const chain = {
-    select: mockSelect.mockReturnThis(),
-    eq: mockEq.mockReturnThis(),
-    order: mockOrder.mockReturnThis(),
-    limit: mockLimit.mockResolvedValue({
-      data: finalData,
-      error: finalError,
-    }),
-    insert: mockInsert.mockReturnThis(),
-    update: mockUpdate.mockReturnThis(),
-    in: mockIn.mockReturnThis(),
-    single: mockSingle.mockResolvedValue({
-      data: finalData,
-      error: finalError,
-    }),
-  };
-  // For queries without limit (like templates and roles), order resolves directly
-  mockOrder.mockReturnValue({
-    ...chain,
-    then: vi.fn((resolve: (v: unknown) => void) =>
-      resolve({ data: finalData, error: finalError })
-    ),
-  });
-  mockFrom.mockReturnValue(chain);
-  return chain;
-}
-
-// Realtime channel mock for live task and role updates
-const channelMock = {
-  on: mockOn.mockReturnThis(),
-  subscribe: mockSubscribe.mockReturnThis(),
-};
-mockChannel.mockReturnValue(channelMock);
-
-vi.mock("@/lib/supabase", () => ({
-  supabase: {
-    from: (...args: unknown[]) => mockFrom(...args),
-    channel: (...args: unknown[]) => mockChannel(...args),
-    removeChannel: (...args: unknown[]) => mockRemoveChannel(...args),
-  },
-}));
-
-vi.mock("@/lib/format", () => ({
-  API_BASE: "http://localhost:3000",
-}));
+// --- fetch mock ---
+const mockFetch = vi.fn();
+vi.stubGlobal("fetch", mockFetch);
 
 import { useAgentTasks, useAgentRoles, buildTaskTree } from "@/hooks/use-agents";
 import type { AgentTask } from "@/hooks/use-agents";
 
-// Tests the consolidated agent task listing hook with Realtime subscription.
+/**
+ * Factory function for creating test AgentTask objects with sensible defaults.
+ * All optional fields default to null/0, status defaults to "pending".
+ */
+function makeTask(overrides: Partial<AgentTask> = {}): AgentTask {
+  return {
+    id: 1,
+    title: "Test task",
+    description: "Test description",
+    status: "pending",
+    priority: "medium",
+    agent_model: null,
+    assigned_agent: null,
+    source: "manual",
+    result: null,
+    tokens_used: 0,
+    cost_usd: 0,
+    created_at: "2026-01-01T00:00:00Z",
+    started_at: null,
+    completed_at: null,
+    parent_task_id: null,
+    max_cost_usd: null,
+    permission_level: 1,
+    template_name: null,
+    on_child_failure: "continue",
+    role_name: null,
+    ...overrides,
+  };
+}
+
+// Tests the consolidated agent task listing hook with polling.
 describe("useAgentTasks", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockChannel.mockReturnValue(channelMock);
-    mockOn.mockReturnValue(channelMock);
-    mockSubscribe.mockReturnValue(channelMock);
   });
 
   /**
@@ -127,7 +87,10 @@ describe("useAgentTasks", () => {
         role_name: null,
       },
     ];
-    setupChain(mockData, null);
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ tasks: mockData }),
+    });
 
     const { result } = renderHook(() => useAgentTasks());
 
@@ -136,12 +99,15 @@ describe("useAgentTasks", () => {
     });
     expect(result.current.tasks[0].title).toBe("Analyze factorial search");
     expect(result.current.loading).toBe(false);
-    expect(mockFrom).toHaveBeenCalledWith("agent_tasks");
+    expect(mockFetch).toHaveBeenCalledWith(expect.stringContaining("/api/agents/tasks"));
   });
 
   /** Verifies graceful error handling; tasks defaults to empty array. */
   it("returns empty on error", async () => {
-    setupChain(null, { message: "Permission denied" });
+    mockFetch.mockResolvedValue({
+      ok: false,
+      status: 500,
+    });
 
     const { result } = renderHook(() => useAgentTasks());
 
@@ -152,22 +118,22 @@ describe("useAgentTasks", () => {
   });
 
   /**
-   * Verifies Realtime subscription to all events on agent_tasks table
-   * for live task status updates.
+   * Verifies that the fetch URL includes limit=200 to control
+   * the amount of data loaded.
    */
-  it("subscribes to realtime changes", async () => {
-    setupChain([], null);
+  it("includes limit=200 in fetch URL", async () => {
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ tasks: [] }),
+    });
 
     renderHook(() => useAgentTasks());
 
     await waitFor(() => {
-      expect(mockChannel).toHaveBeenCalledWith("agent_tasks_changes");
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.stringContaining("limit=200")
+      );
     });
-    expect(mockOn).toHaveBeenCalledWith(
-      "postgres_changes",
-      { event: "*", schema: "public", table: "agent_tasks" },
-      expect.any(Function)
-    );
   });
 });
 
@@ -175,13 +141,10 @@ describe("useAgentTasks", () => {
 describe("useAgentRoles", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockChannel.mockReturnValue(channelMock);
-    mockOn.mockReturnValue(channelMock);
-    mockSubscribe.mockReturnValue(channelMock);
   });
 
   /**
-   * Verifies role listing from the agent_roles table. Each role defines
+   * Verifies role listing via the REST API. Each role defines
    * domain restrictions, default model, permission level, and cost limits.
    */
   it("fetches roles on mount", async () => {
@@ -199,7 +162,10 @@ describe("useAgentRoles", () => {
         updated_at: "2026-01-01T00:00:00Z",
       },
     ];
-    setupChain(mockData, null);
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ roles: mockData }),
+    });
 
     const { result } = renderHook(() => useAgentRoles());
 
@@ -208,12 +174,15 @@ describe("useAgentRoles", () => {
     });
     expect(result.current.roles[0].name).toBe("engine-analyst");
     expect(result.current.loading).toBe(false);
-    expect(mockFrom).toHaveBeenCalledWith("agent_roles");
+    expect(mockFetch).toHaveBeenCalledWith(expect.stringContaining("/api/agents/roles"));
   });
 
-  /** Verifies graceful error handling when the roles table is missing. */
+  /** Verifies graceful error handling when the roles endpoint fails. */
   it("returns empty on error", async () => {
-    setupChain(null, { message: "Table missing" });
+    mockFetch.mockResolvedValue({
+      ok: false,
+      status: 500,
+    });
 
     const { result } = renderHook(() => useAgentRoles());
 
@@ -270,33 +239,3 @@ describe("buildTaskTree", () => {
     expect(tree[0].children[1].id).toBe(5);
   });
 });
-
-/**
- * Factory function for creating test AgentTask objects with sensible defaults.
- * All optional fields default to null/0, status defaults to "pending".
- */
-function makeTask(overrides: Partial<AgentTask> = {}): AgentTask {
-  return {
-    id: 1,
-    title: "Test task",
-    description: "Test description",
-    status: "pending",
-    priority: "medium",
-    agent_model: null,
-    assigned_agent: null,
-    source: "manual",
-    result: null,
-    tokens_used: 0,
-    cost_usd: 0,
-    created_at: "2026-01-01T00:00:00Z",
-    started_at: null,
-    completed_at: null,
-    parent_task_id: null,
-    max_cost_usd: null,
-    permission_level: 1,
-    template_name: null,
-    on_child_failure: "continue",
-    role_name: null,
-    ...overrides,
-  };
-}

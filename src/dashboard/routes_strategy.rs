@@ -162,17 +162,53 @@ pub(super) async fn handler_strategy_override(
     }
 }
 
-/// POST /api/strategy/tick — Force an immediate strategy tick.
+/// POST /api/strategy/tick — Force an immediate AI engine tick.
 pub(super) async fn handler_strategy_tick(
     _auth: RequireAdmin,
     State(state): State<Arc<AppState>>,
 ) -> impl IntoResponse {
-    match strategy::force_tick(&state.db).await {
-        Ok(result) => Json(serde_json::json!({
-            "decisions": result.decisions,
-            "scores": result.scores,
+    let mut engine = state.ai_engine.lock().await;
+    match engine.tick(&state.db).await {
+        Ok(outcome) => Json(serde_json::json!({
+            "tick_id": outcome.tick_id,
+            "decisions": outcome.decisions,
+            "scores": outcome.analysis.scores,
+            "drift": outcome.analysis.drift,
+            "duration_ms": outcome.duration_ms,
         }))
         .into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": e.to_string()})),
+        )
+            .into_response(),
+    }
+}
+
+/// GET /api/strategy/ai-engine — AI engine state (weights, cost model, tick count).
+pub(super) async fn handler_ai_engine_status(
+    _auth: RequireAdmin,
+    State(state): State<Arc<AppState>>,
+) -> impl IntoResponse {
+    let engine = state.ai_engine.lock().await;
+    Json(serde_json::json!({
+        "enabled": engine.config.enabled,
+        "tick_count": engine.tick_count,
+        "scoring_weights": engine.scoring_weights,
+        "cost_model_version": engine.cost_model.version,
+        "cost_model_fitted_forms": engine.cost_model.fitted.keys().collect::<Vec<_>>(),
+        "config": engine.config,
+    }))
+    .into_response()
+}
+
+/// GET /api/strategy/ai-decisions — Recent AI engine decisions.
+pub(super) async fn handler_ai_engine_decisions(
+    _auth: RequireAdmin,
+    State(state): State<Arc<AppState>>,
+) -> impl IntoResponse {
+    match state.db.get_ai_engine_decisions(100).await {
+        Ok(decisions) => Json(serde_json::json!(decisions)).into_response(),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({"error": e.to_string()})),

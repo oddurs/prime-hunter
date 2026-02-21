@@ -3,84 +3,36 @@
  * @module __tests__/hooks/use-records
  *
  * Validates the world records data hook which fetches known world records
- * for each prime form from the "records" table. Records track the current
+ * for each prime form from the REST API. Records track the current
  * world-record holders (e.g., PrimeGrid for factorial primes) along with
  * our best results for comparison. Used by the record-comparison component
  * to show how close darkreach is to each world record.
  *
- * The mock chain uses a double .order() pattern (by form, then by digits)
- * similar to use-agent-memory, where the first order returns the chain
- * and the second resolves with data.
+ * The hook uses `fetch()` to call:
+ * - GET /api/records (list all world records)
+ * - POST /api/records/refresh (trigger backend refresh from external sources)
+ *
+ * Polling is done via setInterval (every 30 seconds) instead of Supabase Realtime.
  *
  * @see {@link ../../hooks/use-records} Source hook
  * @see {@link ../../components/record-comparison} Record comparison component
  * @see {@link ../../app/leaderboard/page} Leaderboard page
  */
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { renderHook, waitFor } from "@testing-library/react";
 
-// Mock supabase with double-order chain pattern
-const mockSelect = vi.fn();
-const mockOrder = vi.fn();
-const mockFrom = vi.fn();
-const mockChannel = vi.fn();
-const mockOn = vi.fn();
-const mockSubscribe = vi.fn();
-const mockRemoveChannel = vi.fn();
+import { useRecords, refreshRecords } from "@/hooks/use-records";
 
-/**
- * Configures the mock chain with double .order() support.
- * Both order calls return a thenable for resolution.
- */
-function setupChain(finalData: unknown, finalError: unknown) {
-  const chain = {
-    select: mockSelect.mockReturnThis(),
-    order: mockOrder.mockReturnValue({
-      order: mockOrder,
-      then: vi.fn((resolve: (v: unknown) => void) =>
-        resolve({ data: finalData, error: finalError })
-      ),
-    }),
-  };
-  // The second .order() call returns a thenable
-  mockOrder.mockReturnValue({
-    order: mockOrder,
-    then: vi.fn((resolve: (v: unknown) => void) =>
-      resolve({ data: finalData, error: finalError })
-    ),
-  });
-  mockFrom.mockReturnValue(chain);
-  return chain;
-}
-
-// Realtime channel mock for live record updates
-const channelMock = {
-  on: mockOn.mockReturnThis(),
-  subscribe: mockSubscribe.mockReturnThis(),
-};
-mockChannel.mockReturnValue(channelMock);
-
-vi.mock("@/lib/supabase", () => ({
-  supabase: {
-    from: (...args: unknown[]) => mockFrom(...args),
-    channel: (...args: unknown[]) => mockChannel(...args),
-    removeChannel: (...args: unknown[]) => mockRemoveChannel(...args),
-  },
-}));
-
-vi.mock("@/lib/format", () => ({
-  API_BASE: "http://localhost:3000",
-}));
-
-import { useRecords } from "@/hooks/use-records";
-
-// Tests the world records data lifecycle: mount -> loading -> data/error -> Realtime.
 describe("useRecords", () => {
+  let mockFetch: ReturnType<typeof vi.fn>;
+
   beforeEach(() => {
-    vi.clearAllMocks();
-    mockChannel.mockReturnValue(channelMock);
-    mockOn.mockReturnValue(channelMock);
-    mockSubscribe.mockReturnValue(channelMock);
+    mockFetch = vi.fn();
+    vi.stubGlobal("fetch", mockFetch);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
   });
 
   /**
@@ -106,7 +58,10 @@ describe("useRecords", () => {
         updated_at: "2026-01-15T00:00:00Z",
       },
     ];
-    setupChain(mockData, null);
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve(mockData),
+    });
 
     const { result } = renderHook(() => useRecords());
 
@@ -116,7 +71,9 @@ describe("useRecords", () => {
     expect(result.current.records[0].expression).toBe("208003! - 1");
     expect(result.current.loading).toBe(false);
     expect(result.current.error).toBeNull();
-    expect(mockFrom).toHaveBeenCalledWith("records");
+    expect(mockFetch).toHaveBeenCalledWith(
+      expect.stringContaining("/api/records")
+    );
   });
 
   /**
@@ -124,7 +81,10 @@ describe("useRecords", () => {
    * and the error message is exposed via result.current.error.
    */
   it("returns empty on error", async () => {
-    setupChain(null, { message: "Table not found" });
+    mockFetch.mockResolvedValue({
+      ok: false,
+      status: 500,
+    });
 
     const { result } = renderHook(() => useRecords());
 
@@ -132,12 +92,15 @@ describe("useRecords", () => {
       expect(result.current.loading).toBe(false);
     });
     expect(result.current.records).toEqual([]);
-    expect(result.current.error).toBe("Table not found");
+    expect(result.current.error).toContain("Failed to fetch records");
   });
 
   /** Verifies that a manual refetch function is exposed. */
   it("provides a refetch function", async () => {
-    setupChain([], null);
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve([]),
+    });
 
     const { result } = renderHook(() => useRecords());
 
@@ -148,22 +111,65 @@ describe("useRecords", () => {
   });
 
   /**
-   * Verifies Realtime subscription to all events on the records table
-   * for live updates when world records are refreshed or our best improves.
+   * Verifies that records are polled every 30 seconds via setInterval
+   * (replaces the old Supabase Realtime subscription).
    */
-  it("subscribes to realtime changes", async () => {
-    setupChain([], null);
+  it("polls for records every 30 seconds", async () => {
+    vi.useFakeTimers();
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve([]),
+    });
 
     renderHook(() => useRecords());
 
-    await waitFor(() => {
-      expect(mockChannel).toHaveBeenCalledWith("records_changes");
-    });
-    expect(mockOn).toHaveBeenCalledWith(
-      "postgres_changes",
-      { event: "*", schema: "public", table: "records" },
-      expect.any(Function)
+    // Flush the initial useEffect + fetch
+    await vi.advanceTimersByTimeAsync(0);
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+
+    // Advance timer by 30 seconds to trigger polling
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+
+    // Advance another 30 seconds
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(mockFetch).toHaveBeenCalledTimes(3);
+
+    vi.useRealTimers();
+  });
+});
+
+describe("refreshRecords", () => {
+  let mockFetch: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    mockFetch = vi.fn();
+    vi.stubGlobal("fetch", mockFetch);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  /** Verifies that refreshRecords sends a POST to the refresh endpoint. */
+  it("sends POST to /api/records/refresh", async () => {
+    mockFetch.mockResolvedValue({ ok: true });
+
+    await refreshRecords();
+
+    expect(mockFetch).toHaveBeenCalledWith(
+      expect.stringContaining("/api/records/refresh"),
+      expect.objectContaining({ method: "POST" })
     );
-    expect(mockSubscribe).toHaveBeenCalled();
+  });
+
+  /** Verifies that refreshRecords throws on failure. */
+  it("throws on error response", async () => {
+    mockFetch.mockResolvedValue({
+      ok: false,
+      json: () => Promise.resolve({ error: "Refresh failed" }),
+    });
+
+    await expect(refreshRecords()).rejects.toThrow("Refresh failed");
   });
 });

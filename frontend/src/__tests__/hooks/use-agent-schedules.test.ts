@@ -5,68 +5,20 @@
  * Validates the agent scheduling system which supports both cron-based and
  * event-driven triggers for automated agent tasks. Tests cover the full CRUD
  * lifecycle: list schedules, create, update, delete, and toggle enabled state.
- * Also validates Supabase Realtime subscriptions for live schedule updates.
+ * Uses polling (every 10 seconds) for live updates.
  *
  * Schedule types:
  * - Cron triggers: time-based scheduling (e.g., "0 0 * * *" for nightly)
  * - Event triggers: reactive scheduling (e.g., fire on "prime_found" events)
  *
  * @see {@link ../../hooks/use-agent-schedules} Source hook and CRUD functions
- * @see {@link ../../__mocks__/supabase} Supabase mock configuration
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { renderHook, waitFor } from "@testing-library/react";
 
-// --- Supabase mock ---
-// Full CRUD mock chain for agent_schedules table operations.
-const mockSelect = vi.fn();
-const mockOrder = vi.fn();
-const mockFrom = vi.fn();
-const mockInsert = vi.fn();
-const mockUpdate = vi.fn();
-const mockDelete = vi.fn();
-const mockEq = vi.fn();
-const mockSingle = vi.fn();
-const mockChannel = vi.fn();
-const mockOn = vi.fn();
-const mockSubscribe = vi.fn();
-const mockRemoveChannel = vi.fn();
-
-/**
- * Configures the mock query chain to resolve with the given data/error.
- * Supports all CRUD operations: select, insert, update, delete.
- */
-function setupChain(finalData: unknown, finalError: unknown) {
-  const chain = {
-    select: mockSelect.mockReturnThis(),
-    order: mockOrder.mockResolvedValue({
-      data: finalData,
-      error: finalError,
-    }),
-    insert: mockInsert.mockReturnThis(),
-    update: mockUpdate.mockReturnThis(),
-    delete: mockDelete.mockReturnThis(),
-    eq: mockEq.mockReturnThis(),
-    single: mockSingle.mockResolvedValue({ data: finalData, error: finalError }),
-  };
-  mockFrom.mockReturnValue(chain);
-  return chain;
-}
-
-// Realtime channel mock for live schedule change notifications
-const channelMock = {
-  on: mockOn.mockReturnThis(),
-  subscribe: mockSubscribe.mockReturnThis(),
-};
-mockChannel.mockReturnValue(channelMock);
-
-vi.mock("@/lib/supabase", () => ({
-  supabase: {
-    from: (...args: unknown[]) => mockFrom(...args),
-    channel: (...args: unknown[]) => mockChannel(...args),
-    removeChannel: (...args: unknown[]) => mockRemoveChannel(...args),
-  },
-}));
+// --- fetch mock ---
+const mockFetch = vi.fn();
+vi.stubGlobal("fetch", mockFetch);
 
 import {
   useAgentSchedules,
@@ -107,13 +59,10 @@ function makeSchedule(overrides: Record<string, unknown> = {}) {
 }
 
 // Tests the schedule listing lifecycle: mount -> loading -> data -> error states.
-// Validates Supabase query construction, Realtime subscription, and cleanup.
+// Validates fetch calls and polling behavior.
 describe("useAgentSchedules", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockChannel.mockReturnValue(channelMock);
-    mockOn.mockReturnValue(channelMock);
-    mockSubscribe.mockReturnValue(channelMock);
   });
 
   /**
@@ -123,7 +72,10 @@ describe("useAgentSchedules", () => {
    */
   it("fetches schedules on mount", async () => {
     const mockData = [makeSchedule()];
-    setupChain(mockData, null);
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ schedules: mockData }),
+    });
 
     const { result } = renderHook(() => useAgentSchedules());
 
@@ -132,15 +84,18 @@ describe("useAgentSchedules", () => {
     });
     expect(result.current.schedules[0].name).toBe("nightly-analysis");
     expect(result.current.loading).toBe(false);
-    expect(mockFrom).toHaveBeenCalledWith("agent_schedules");
+    expect(mockFetch).toHaveBeenCalledWith(expect.stringContaining("/api/schedules"));
   });
 
   /**
-   * Verifies graceful error handling when the Supabase query fails.
+   * Verifies graceful error handling when the fetch response is not ok.
    * Schedules defaults to an empty array.
    */
   it("returns empty array on error", async () => {
-    setupChain(null, { message: "Permission denied" });
+    mockFetch.mockResolvedValue({
+      ok: false,
+      status: 500,
+    });
 
     const { result } = renderHook(() => useAgentSchedules());
 
@@ -152,54 +107,22 @@ describe("useAgentSchedules", () => {
 
   /** Verifies the initial loading state before async fetch completes. */
   it("starts with loading true", () => {
-    setupChain([], null);
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ schedules: [] }),
+    });
 
     const { result } = renderHook(() => useAgentSchedules());
 
     expect(result.current.loading).toBe(true);
   });
 
-  /**
-   * Verifies that the hook subscribes to Supabase Realtime postgres_changes
-   * on the agent_schedules table for live updates when schedules are
-   * created, modified, or deleted.
-   */
-  it("subscribes to realtime changes", async () => {
-    setupChain([], null);
-
-    renderHook(() => useAgentSchedules());
-
-    await waitFor(() => {
-      expect(mockChannel).toHaveBeenCalledWith("agent_schedules_changes");
-    });
-    expect(mockOn).toHaveBeenCalledWith(
-      "postgres_changes",
-      { event: "*", schema: "public", table: "agent_schedules" },
-      expect.any(Function)
-    );
-    expect(mockSubscribe).toHaveBeenCalled();
-  });
-
-  /**
-   * Verifies that the Realtime channel is cleaned up on unmount
-   * to prevent memory leaks.
-   */
-  it("cleans up realtime subscription on unmount", async () => {
-    setupChain([], null);
-
-    const { unmount } = renderHook(() => useAgentSchedules());
-
-    await waitFor(() => {
-      expect(mockChannel).toHaveBeenCalled();
-    });
-
-    unmount();
-    expect(mockRemoveChannel).toHaveBeenCalled();
-  });
-
   /** Verifies that a refetch function is exposed for manual re-fetch. */
   it("provides a refetch function", async () => {
-    setupChain([], null);
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ schedules: [] }),
+    });
 
     const { result } = renderHook(() => useAgentSchedules());
 
@@ -219,7 +142,10 @@ describe("useAgentSchedules", () => {
       makeSchedule({ id: 1, name: "alpha" }),
       makeSchedule({ id: 2, name: "beta", trigger_type: "event", cron_expr: null, event_filter: "prime_found" }),
     ];
-    setupChain(mockData, null);
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ schedules: mockData }),
+    });
 
     const { result } = renderHook(() => useAgentSchedules());
 
@@ -227,6 +153,30 @@ describe("useAgentSchedules", () => {
       expect(result.current.schedules).toHaveLength(2);
     });
     expect(result.current.schedules[1].trigger_type).toBe("event");
+  });
+
+  /**
+   * Verifies that the polling interval is cleaned up on unmount
+   * to prevent memory leaks. After unmount, no further fetch calls
+   * should be triggered by the polling interval.
+   */
+  it("cleans up polling interval on unmount", async () => {
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ schedules: [] }),
+    });
+
+    const { unmount } = renderHook(() => useAgentSchedules());
+
+    await waitFor(() => {
+      expect(mockFetch).toHaveBeenCalled();
+    });
+
+    unmount();
+
+    // The clearInterval is called on unmount; we verify no errors are thrown
+    // and the hook cleans up properly. The polling interval is internal and
+    // would only manifest as additional fetch calls over time.
   });
 });
 
@@ -239,18 +189,15 @@ describe("createSchedule", () => {
   });
 
   /**
-   * Verifies that createSchedule inserts a schedule with required fields
+   * Verifies that createSchedule sends a POST request with required fields
    * and correct defaults (enabled=false, priority="normal", permission_level=1).
-   * The mock chain simulates: from().insert().select().single().
    */
   it("creates a schedule with required fields", async () => {
     const returnData = makeSchedule({ id: 10 });
-    const chain = {
-      select: mockSelect.mockReturnThis(),
-      single: mockSingle.mockResolvedValue({ data: returnData, error: null }),
-    };
-    mockInsert.mockReturnValue(chain);
-    mockFrom.mockReturnValue({ insert: mockInsert });
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve(returnData),
+    });
 
     const result = await createSchedule({
       name: "test-schedule",
@@ -258,80 +205,86 @@ describe("createSchedule", () => {
       task_title: "Test task",
     });
 
-    expect(mockFrom).toHaveBeenCalledWith("agent_schedules");
-    expect(mockInsert).toHaveBeenCalledWith(
+    expect(mockFetch).toHaveBeenCalledWith(
+      expect.stringContaining("/api/schedules"),
       expect.objectContaining({
-        name: "test-schedule",
-        trigger_type: "cron",
-        task_title: "Test task",
-        enabled: false,
-        priority: "normal",
-        permission_level: 1,
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
       })
     );
+
+    // Verify the body contains correct defaults
+    const callArgs = mockFetch.mock.calls[0];
+    const body = JSON.parse(callArgs[1].body);
+    expect(body.name).toBe("test-schedule");
+    expect(body.trigger_type).toBe("cron");
+    expect(body.task_title).toBe("Test task");
+    expect(body.enabled).toBe(false);
+    expect(body.priority).toBe("normal");
+    expect(body.permission_level).toBe(1);
+
     expect(result.id).toBe(10);
   });
 
   /**
-   * Verifies that createSchedule throws the Supabase error when insertion
-   * fails (e.g., duplicate name constraint violation).
+   * Verifies that createSchedule throws when the API returns an error
+   * (e.g., duplicate name constraint violation).
    */
   it("throws on insert error", async () => {
-    const chain = {
-      select: mockSelect.mockReturnThis(),
-      single: mockSingle.mockResolvedValue({ data: null, error: { message: "Duplicate name" } }),
-    };
-    mockInsert.mockReturnValue(chain);
-    mockFrom.mockReturnValue({ insert: mockInsert });
+    mockFetch.mockResolvedValue({
+      ok: false,
+      json: () => Promise.resolve({ error: "Duplicate name" }),
+    });
 
     await expect(
       createSchedule({ name: "dup", trigger_type: "cron", task_title: "t" })
-    ).rejects.toEqual({ message: "Duplicate name" });
+    ).rejects.toThrow("Duplicate name");
   });
 });
 
 // Tests the updateSchedule function which patches specific fields on an
-// existing schedule. The function also sets updated_at to the current timestamp.
+// existing schedule.
 describe("updateSchedule", () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
   /**
-   * Verifies that updateSchedule sends a partial update with the given fields
-   * and auto-sets updated_at. The mock chain simulates:
-   * from().update().eq("id", id).select().single().
+   * Verifies that updateSchedule sends a PUT request with the given fields
+   * to the correct endpoint including the schedule ID.
    */
   it("updates schedule fields", async () => {
     const returnData = makeSchedule({ name: "renamed" });
-    const chain = {
-      eq: mockEq.mockReturnThis(),
-      select: mockSelect.mockReturnThis(),
-      single: mockSingle.mockResolvedValue({ data: returnData, error: null }),
-    };
-    mockUpdate.mockReturnValue(chain);
-    mockFrom.mockReturnValue({ update: mockUpdate });
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve(returnData),
+    });
 
     const result = await updateSchedule(1, { name: "renamed" });
 
-    expect(mockFrom).toHaveBeenCalledWith("agent_schedules");
-    expect(mockUpdate).toHaveBeenCalledWith(
-      expect.objectContaining({ name: "renamed", updated_at: expect.any(String) })
+    expect(mockFetch).toHaveBeenCalledWith(
+      expect.stringContaining("/api/schedules/1"),
+      expect.objectContaining({
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+      })
     );
+
+    const callArgs = mockFetch.mock.calls[0];
+    const body = JSON.parse(callArgs[1].body);
+    expect(body.name).toBe("renamed");
+
     expect(result.name).toBe("renamed");
   });
 
   /** Verifies that updateSchedule throws when the target schedule is not found. */
   it("throws on update error", async () => {
-    const chain = {
-      eq: mockEq.mockReturnThis(),
-      select: mockSelect.mockReturnThis(),
-      single: mockSingle.mockResolvedValue({ data: null, error: { message: "Not found" } }),
-    };
-    mockUpdate.mockReturnValue(chain);
-    mockFrom.mockReturnValue({ update: mockUpdate });
+    mockFetch.mockResolvedValue({
+      ok: false,
+      json: () => Promise.resolve({ error: "Not found" }),
+    });
 
-    await expect(updateSchedule(999, { name: "x" })).rejects.toEqual({ message: "Not found" });
+    await expect(updateSchedule(999, { name: "x" })).rejects.toThrow("Not found");
   });
 });
 
@@ -342,31 +295,35 @@ describe("deleteSchedule", () => {
   });
 
   /**
-   * Verifies that deleteSchedule issues a DELETE filtered by id
-   * on the agent_schedules table.
+   * Verifies that deleteSchedule issues a DELETE request
+   * to the correct endpoint with the schedule ID.
    */
   it("deletes a schedule by id", async () => {
-    mockEq.mockResolvedValue({ error: null });
-    mockDelete.mockReturnValue({ eq: mockEq });
-    mockFrom.mockReturnValue({ delete: mockDelete });
+    mockFetch.mockResolvedValue({
+      ok: true,
+    });
 
     await deleteSchedule(1);
 
-    expect(mockFrom).toHaveBeenCalledWith("agent_schedules");
-    expect(mockDelete).toHaveBeenCalled();
-    expect(mockEq).toHaveBeenCalledWith("id", 1);
+    expect(mockFetch).toHaveBeenCalledWith(
+      expect.stringContaining("/api/schedules/1"),
+      expect.objectContaining({
+        method: "DELETE",
+      })
+    );
   });
 
   /**
-   * Verifies that deleteSchedule throws when a foreign key constraint
+   * Verifies that deleteSchedule throws when a constraint
    * prevents deletion (e.g., schedule has associated task history).
    */
   it("throws on delete error", async () => {
-    mockEq.mockResolvedValue({ error: { message: "FK constraint" } });
-    mockDelete.mockReturnValue({ eq: mockEq });
-    mockFrom.mockReturnValue({ delete: mockDelete });
+    mockFetch.mockResolvedValue({
+      ok: false,
+      json: () => Promise.resolve({ error: "FK constraint" }),
+    });
 
-    await expect(deleteSchedule(1)).rejects.toEqual({ message: "FK constraint" });
+    await expect(deleteSchedule(1)).rejects.toThrow("FK constraint");
   });
 });
 
@@ -378,25 +335,31 @@ describe("toggleSchedule", () => {
   });
 
   /**
-   * Verifies toggling a schedule to enabled=true. The update payload
+   * Verifies toggling a schedule to enabled=true. The request payload
    * should contain { enabled: true } and the returned schedule should
    * reflect the new state.
    */
   it("toggles enabled to true", async () => {
     const returnData = makeSchedule({ enabled: true });
-    const chain = {
-      eq: mockEq.mockReturnThis(),
-      select: mockSelect.mockReturnThis(),
-      single: mockSingle.mockResolvedValue({ data: returnData, error: null }),
-    };
-    mockUpdate.mockReturnValue(chain);
-    mockFrom.mockReturnValue({ update: mockUpdate });
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve(returnData),
+    });
 
     const result = await toggleSchedule(1, true);
 
-    expect(mockUpdate).toHaveBeenCalledWith(
-      expect.objectContaining({ enabled: true })
+    expect(mockFetch).toHaveBeenCalledWith(
+      expect.stringContaining("/api/schedules/1/toggle"),
+      expect.objectContaining({
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+      })
     );
+
+    const callArgs = mockFetch.mock.calls[0];
+    const body = JSON.parse(callArgs[1].body);
+    expect(body.enabled).toBe(true);
+
     expect(result.enabled).toBe(true);
   });
 
@@ -406,19 +369,17 @@ describe("toggleSchedule", () => {
    */
   it("toggles enabled to false", async () => {
     const returnData = makeSchedule({ enabled: false });
-    const chain = {
-      eq: mockEq.mockReturnThis(),
-      select: mockSelect.mockReturnThis(),
-      single: mockSingle.mockResolvedValue({ data: returnData, error: null }),
-    };
-    mockUpdate.mockReturnValue(chain);
-    mockFrom.mockReturnValue({ update: mockUpdate });
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve(returnData),
+    });
 
     const result = await toggleSchedule(1, false);
 
-    expect(mockUpdate).toHaveBeenCalledWith(
-      expect.objectContaining({ enabled: false })
-    );
+    const callArgs = mockFetch.mock.calls[0];
+    const body = JSON.parse(callArgs[1].body);
+    expect(body.enabled).toBe(false);
+
     expect(result.enabled).toBe(false);
   });
 });

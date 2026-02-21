@@ -1,36 +1,21 @@
 /**
- * @file Tests for the AppHeader navigation component
+ * @file Tests for the AppSidebar and TopBar navigation components
  * @module __tests__/components/app-header
  *
- * Validates the top-level navigation header that appears on every page of the
+ * Validates the sidebar navigation and top bar that appear on every page of the
  * darkreach dashboard. Tests cover navigation link rendering, WebSocket
  * connection indicator (green/red dot), theme toggle button, running search
  * count badge, and role-based navigation filtering (admin vs operator).
- * The header adapts its visible links based on the user's role from
- * Supabase Auth.
  *
- * @see {@link ../../components/app-header} Source component
- * @see {@link ../../hooks/use-websocket} WsData type (connection status)
- * @see {@link ../../contexts/auth-context} Role-based access control
+ * @see {@link ../../components/app-sidebar} Sidebar component
+ * @see {@link ../../components/top-bar} Top bar component
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
-import { AppHeader } from "@/components/app-header";
+import { AppSidebar } from "@/components/app-sidebar";
+import { TopBar } from "@/components/top-bar";
 import type { WsData } from "@/hooks/use-websocket";
 import { defaultWsData } from "@/__mocks__/test-wrappers";
-
-// Track theme toggle calls
-const mockToggleTheme = vi.fn();
-let mockTheme = "dark";
-
-vi.mock("@/hooks/use-theme", () => ({
-  useTheme: () => ({
-    theme: mockTheme,
-    toggleTheme: mockToggleTheme,
-    setTheme: vi.fn(),
-  }),
-}));
 
 let mockWsData: WsData = { ...defaultWsData };
 
@@ -60,35 +45,108 @@ vi.mock("next/navigation", () => ({
 
 // Mock next/link to render a regular <a>
 vi.mock("next/link", () => ({
-  default: ({ children, href, ...props }: { children: React.ReactNode; href: string; [key: string]: unknown }) => (
-    <a href={href} {...props}>{children}</a>
+  default: ({
+    children,
+    href,
+    ...props
+  }: {
+    children: React.ReactNode;
+    href: string;
+    [key: string]: unknown;
+  }) => (
+    <a href={href} {...props}>
+      {children}
+    </a>
   ),
+}));
+
+// Mock sidebar components to simple divs so we can test content without SidebarProvider
+vi.mock("@/components/ui/sidebar", () => ({
+  Sidebar: ({ children }: { children: React.ReactNode }) => (
+    <div data-testid="sidebar">{children}</div>
+  ),
+  SidebarContent: ({ children }: { children: React.ReactNode }) => (
+    <div>{children}</div>
+  ),
+  SidebarFooter: ({ children }: { children: React.ReactNode }) => (
+    <div>{children}</div>
+  ),
+  SidebarGroup: ({ children }: { children: React.ReactNode }) => (
+    <div>{children}</div>
+  ),
+  SidebarGroupContent: ({ children }: { children: React.ReactNode }) => (
+    <div>{children}</div>
+  ),
+  SidebarGroupLabel: ({ children }: { children: React.ReactNode }) => (
+    <div>{children}</div>
+  ),
+  SidebarHeader: ({ children }: { children: React.ReactNode }) => (
+    <div>{children}</div>
+  ),
+  SidebarMenu: ({ children }: { children: React.ReactNode }) => (
+    <ul>{children}</ul>
+  ),
+  SidebarMenuBadge: ({ children }: { children: React.ReactNode }) => (
+    <span data-testid="sidebar-badge">{children}</span>
+  ),
+  SidebarMenuButton: ({
+    children,
+    ...props
+  }: {
+    children: React.ReactNode;
+    asChild?: boolean;
+    [key: string]: unknown;
+  }) => <div {...props}>{children}</div>,
+  SidebarMenuItem: ({ children }: { children: React.ReactNode }) => (
+    <li>{children}</li>
+  ),
+  SidebarRail: () => <div />,
+  SidebarSeparator: () => <hr />,
+  SidebarTrigger: (props: Record<string, unknown>) => (
+    <button {...props}>Toggle</button>
+  ),
+  SidebarInset: ({ children }: { children: React.ReactNode }) => (
+    <div>{children}</div>
+  ),
+  SidebarProvider: ({ children }: { children: React.ReactNode }) => (
+    <div>{children}</div>
+  ),
+  useSidebar: () => ({ state: "expanded", isMobile: false }),
 }));
 
 // Mock Sheet components to simple divs
 vi.mock("@/components/ui/sheet", () => ({
-  Sheet: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
-  SheetContent: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
-  SheetHeader: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
-  SheetTitle: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
-  SheetClose: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+  Sheet: ({ children }: { children: React.ReactNode }) => (
+    <div>{children}</div>
+  ),
+  SheetContent: ({ children }: { children: React.ReactNode }) => (
+    <div>{children}</div>
+  ),
+  SheetHeader: ({ children }: { children: React.ReactNode }) => (
+    <div>{children}</div>
+  ),
+  SheetTitle: ({ children }: { children: React.ReactNode }) => (
+    <div>{children}</div>
+  ),
+  SheetDescription: ({ children }: { children: React.ReactNode }) => (
+    <div>{children}</div>
+  ),
+  SheetClose: ({ children }: { children: React.ReactNode }) => (
+    <div>{children}</div>
+  ),
 }));
 
-// Tests the AppHeader component: navigation links, WebSocket connection indicator,
-// theme toggle, search count badge, and role-based nav filtering (admin vs operator).
-describe("AppHeader", () => {
+describe("AppSidebar", () => {
   beforeEach(() => {
     mockPathname = "/";
-    mockTheme = "dark";
     mockRole = "admin";
     mockWsData = { ...defaultWsData };
     vi.clearAllMocks();
   });
 
-  /** Verifies that all primary navigation links render (both desktop and mobile navs). */
+  /** Verifies that all primary navigation links render in the sidebar. */
   it("renders nav links", () => {
-    render(<AppHeader />);
-    // Both desktop and mobile navs render, so use getAllByText
+    render(<AppSidebar />);
     expect(screen.getAllByText("Dashboard").length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText("Searches").length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText("Agents").length).toBeGreaterThanOrEqual(1);
@@ -96,43 +154,38 @@ describe("AppHeader", () => {
     expect(screen.getAllByText("Docs").length).toBeGreaterThanOrEqual(1);
   });
 
-  /** Verifies the green dot indicator when the WebSocket is connected. */
-  it("shows connection indicator", () => {
-    mockWsData = { ...defaultWsData, connected: true };
-    const { container } = render(<AppHeader />);
-    const dot = container.querySelector("[title='Connected']");
-    expect(dot).toBeInTheDocument();
-  });
-
-  /** Verifies the red dot indicator when the WebSocket is disconnected. */
-  it("shows disconnected indicator", () => {
-    mockWsData = { ...defaultWsData, connected: false };
-    const { container } = render(<AppHeader />);
-    const dot = container.querySelector("[title='Disconnected']");
-    expect(dot).toBeInTheDocument();
-  });
-
-  /** Verifies that clicking the theme toggle button invokes the toggleTheme callback. */
-  it("calls toggleTheme on button click", async () => {
-    const user = userEvent.setup();
-    render(<AppHeader />);
-
-    const themeBtn = screen.getByLabelText("Switch to light mode");
-    await user.click(themeBtn);
-    expect(mockToggleTheme).toHaveBeenCalled();
-  });
-
-  /** Verifies the numeric badge on the Searches tab showing count of running searches. */
+  /** Verifies the numeric badge on the Searches item showing count of running searches. */
   it("shows running search count badge", () => {
     mockWsData = {
       ...defaultWsData,
       searches: [
-        { id: 1, search_type: "kbn", params: { search_type: "kbn" }, status: "running", started_at: "", stopped_at: null, pid: null, worker_id: "", tested: 0, found: 0 },
-        { id: 2, search_type: "kbn", params: { search_type: "kbn" }, status: "completed", started_at: "", stopped_at: null, pid: null, worker_id: "", tested: 0, found: 0 },
+        {
+          id: 1,
+          search_type: "kbn",
+          params: { search_type: "kbn" },
+          status: "running",
+          started_at: "",
+          stopped_at: null,
+          pid: null,
+          worker_id: "",
+          tested: 0,
+          found: 0,
+        },
+        {
+          id: 2,
+          search_type: "kbn",
+          params: { search_type: "kbn" },
+          status: "completed",
+          started_at: "",
+          stopped_at: null,
+          pid: null,
+          worker_id: "",
+          tested: 0,
+          found: 0,
+        },
       ],
     };
-    render(<AppHeader />);
-    // Should show "1" badge on Searches tab
+    render(<AppSidebar />);
     const badges = screen.getAllByText("1");
     expect(badges.length).toBeGreaterThan(0);
   });
@@ -144,7 +197,7 @@ describe("AppHeader", () => {
    */
   it("shows limited nav for operator role", () => {
     mockRole = "operator";
-    render(<AppHeader />);
+    render(<AppSidebar />);
     expect(screen.getAllByText("Dashboard").length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText("Browse").length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText("Leaderboard").length).toBeGreaterThanOrEqual(1);
@@ -156,4 +209,30 @@ describe("AppHeader", () => {
     expect(screen.queryByText("Logs")).toBeNull();
     expect(screen.queryByText("Releases")).toBeNull();
   });
+});
+
+describe("TopBar", () => {
+  beforeEach(() => {
+    mockPathname = "/";
+    mockRole = "admin";
+    mockWsData = { ...defaultWsData };
+    vi.clearAllMocks();
+  });
+
+  /** Verifies the green dot indicator when the WebSocket is connected. */
+  it("shows connection indicator", () => {
+    mockWsData = { ...defaultWsData, connected: true };
+    const { container } = render(<TopBar />);
+    const dot = container.querySelector("[title='Connected']");
+    expect(dot).toBeInTheDocument();
+  });
+
+  /** Verifies the red dot indicator when the WebSocket is disconnected. */
+  it("shows disconnected indicator", () => {
+    mockWsData = { ...defaultWsData, connected: false };
+    const { container } = render(<TopBar />);
+    const dot = container.querySelector("[title='Disconnected']");
+    expect(dot).toBeInTheDocument();
+  });
+
 });

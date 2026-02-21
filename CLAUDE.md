@@ -15,8 +15,9 @@
 | **Frontend** | `frontend/` | `frontend/CLAUDE.md` | `docs/roadmaps/frontend.md` |
 | **Ops** | `deploy/` | `deploy/CLAUDE.md` | `docs/roadmaps/ops.md` |
 | **Research** | `docs/` | `docs/CLAUDE.md` | `docs/roadmaps/research.md` |
-| **Database** | `supabase/` | `supabase/CLAUDE.md` | — |
+| **Database** | `supabase/`, `src/db/` | `supabase/CLAUDE.md` | `docs/roadmaps/database.md` |
 | **Tests** | `tests/` + `benches/` | `tests/CLAUDE.md` | `docs/roadmaps/testing.md` |
+| **AI Engine** | `src/ai_engine.rs`, `src/strategy.rs`, `src/agent.rs` | `src/CLAUDE.md` | `docs/roadmaps/ai-engine.md` |
 | **Agents** | `src/agent.rs` + frontend | `src/CLAUDE.md` | `docs/roadmaps/agents.md` |
 | **Projects** | `src/project/` + frontend | `src/CLAUDE.md` | `docs/roadmaps/projects.md` |
 | **Network** | `src/fleet.rs`, `src/pg_worker.rs` | `src/CLAUDE.md` | `docs/roadmaps/network.md` |
@@ -78,10 +79,21 @@ cd frontend && npm install && npm run build
 - `src/prst.rs` — PRST subprocess for k·b^n±1 forms
 - `src/flint.rs` — FLINT integration (feature-gated)
 
+### AI Engine (`src/ai_engine.rs`)
+- Unified OODA decision loop: Observe → Orient → Decide → Act → Learn
+- Replaces independent `strategy_tick()` + `orchestrate_tick()` with single `AiEngine::tick()`
+- `WorldSnapshot`: single consistent view assembled via parallel DB queries (~50ms)
+- 7-component scoring model: record_gap, yield_rate, cost_efficiency, opportunity_density, fleet_fit, momentum, competition
+- `CostModel`: data-fitted power-law coefficients via OLS on log-log work block data, falls back to hardcoded defaults
+- `ScoringWeights`: learned via online gradient descent, persisted in `ai_engine_state`
+- Drift detection: compares consecutive snapshots for worker changes, discoveries, stalls, budget velocity
+- Safety checks: budget gates, concurrency limits, stall penalties
+- Decision audit trail: `ai_engine_decisions` table with reasoning, confidence, outcome tracking
+
 ### Server (modular directories)
 - `src/main.rs` + `src/cli.rs` — CLI routing with clap (12 search + dashboard/verify/deploy/work/project)
 - `src/dashboard/` — Axum web server (15 route modules + WebSocket), REST API, fleet coordination
-- `src/db/` — PostgreSQL via sqlx (14 submodules: primes, jobs, workers, agents, projects, records, etc.)
+- `src/db/` — PostgreSQL via sqlx (15 submodules: primes, jobs, workers, agents, projects, records, ai_engine, etc.)
 - `src/project/` — Campaign management (config, cost, orchestration, records, types)
 - `src/checkpoint.rs` — JSON checkpoint save/load (all 12 form variants), atomic writes
 - `src/search_manager.rs` — Search job lifecycle, block generation, work distribution

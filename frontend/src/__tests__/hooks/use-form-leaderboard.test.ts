@@ -4,23 +4,18 @@
  *
  * Validates the form leaderboard hook which ranks prime number forms
  * (factorial, kbn, palindromic, etc.) by count, largest digits, and
- * verification percentage. Calls the Supabase RPC function
- * `get_form_leaderboard` and auto-refreshes via a 10-second polling interval.
+ * verification percentage. Calls the REST API endpoint
+ * `/api/stats/leaderboard` and auto-refreshes via a 10-second polling interval.
  *
  * @see {@link ../../hooks/use-form-leaderboard} Source hook
  * @see {@link ../../components/form-leaderboard} Leaderboard table component
  */
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import { renderHook, waitFor } from "@testing-library/react";
 
-// Mock the Supabase RPC method for leaderboard data
-const mockRpc = vi.fn();
-
-vi.mock("@/lib/supabase", () => ({
-  supabase: {
-    rpc: (...args: unknown[]) => mockRpc(...args),
-  },
-}));
+// Mock global fetch for REST API calls
+const mockFetch = vi.fn();
+vi.stubGlobal("fetch", mockFetch);
 
 import { useFormLeaderboard } from "@/hooks/use-form-leaderboard";
 
@@ -32,12 +27,12 @@ describe("useFormLeaderboard", () => {
 
   /**
    * Verifies that the hook fetches leaderboard data on mount via the
-   * get_form_leaderboard RPC. The mock returns two form entries:
+   * /api/stats/leaderboard REST endpoint. The mock returns two form entries:
    * factorial (150 primes, largest 45678 digits, 93% verified) and
    * kbn (80 primes, largest 12345 digits, 94% verified).
    *
    * Assertions: entries array populated, forms in expected order,
-   * correct RPC function called.
+   * correct endpoint called.
    */
   it("fetches leaderboard data on mount", async () => {
     const mockData = [
@@ -60,7 +55,10 @@ describe("useFormLeaderboard", () => {
         verified_pct: 94,
       },
     ];
-    mockRpc.mockResolvedValue({ data: mockData, error: null });
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve(mockData),
+    });
 
     const { result } = renderHook(() => useFormLeaderboard());
 
@@ -69,29 +67,37 @@ describe("useFormLeaderboard", () => {
     });
     expect(result.current.entries[0].form).toBe("factorial");
     expect(result.current.entries[1].form).toBe("kbn");
-    expect(mockRpc).toHaveBeenCalledWith("get_form_leaderboard");
+    expect(mockFetch).toHaveBeenCalledWith(
+      expect.stringContaining("/api/stats/leaderboard")
+    );
   });
 
   /** Verifies graceful error handling; entries defaults to empty array. */
   it("returns empty on error", async () => {
-    mockRpc.mockResolvedValue({ data: null, error: { message: "RPC failed" } });
+    mockFetch.mockResolvedValue({
+      ok: false,
+      status: 500,
+    });
 
     const { result } = renderHook(() => useFormLeaderboard());
 
     await waitFor(() => {
-      expect(mockRpc).toHaveBeenCalled();
+      expect(mockFetch).toHaveBeenCalled();
     });
     expect(result.current.entries).toEqual([]);
   });
 
   /** Verifies that a manual refetch function is exposed. */
   it("provides a refetch function", async () => {
-    mockRpc.mockResolvedValue({ data: [], error: null });
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve([]),
+    });
 
     const { result } = renderHook(() => useFormLeaderboard());
 
     await waitFor(() => {
-      expect(mockRpc).toHaveBeenCalled();
+      expect(mockFetch).toHaveBeenCalled();
     });
     expect(typeof result.current.refetch).toBe("function");
   });
@@ -103,12 +109,15 @@ describe("useFormLeaderboard", () => {
    */
   it("sets up a polling interval", async () => {
     const setIntervalSpy = vi.spyOn(global, "setInterval");
-    mockRpc.mockResolvedValue({ data: [], error: null });
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve([]),
+    });
 
     const { unmount } = renderHook(() => useFormLeaderboard());
 
     await waitFor(() => {
-      expect(mockRpc).toHaveBeenCalled();
+      expect(mockFetch).toHaveBeenCalled();
     });
 
     // Verify setInterval was called with 10s interval
@@ -124,12 +133,15 @@ describe("useFormLeaderboard", () => {
    */
   it("clears interval on unmount", async () => {
     const clearIntervalSpy = vi.spyOn(global, "clearInterval");
-    mockRpc.mockResolvedValue({ data: [], error: null });
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve([]),
+    });
 
     const { unmount } = renderHook(() => useFormLeaderboard());
 
     await waitFor(() => {
-      expect(mockRpc).toHaveBeenCalled();
+      expect(mockFetch).toHaveBeenCalled();
     });
 
     unmount();

@@ -33,7 +33,7 @@ impl Database {
             )
             .bind(status)
             .bind(limit)
-            .fetch_all(&self.pool)
+            .fetch_all(&self.read_pool)
             .await?
         } else {
             sqlx::query_as::<_, AgentTaskRow>(
@@ -46,7 +46,7 @@ impl Database {
                  ORDER BY created_at DESC LIMIT $1",
             )
             .bind(limit)
-            .fetch_all(&self.pool)
+            .fetch_all(&self.read_pool)
             .await?
         };
         Ok(rows)
@@ -63,7 +63,7 @@ impl Database {
              FROM agent_tasks WHERE id = $1",
         )
         .bind(id)
-        .fetch_optional(&self.pool)
+        .fetch_optional(&self.read_pool)
         .await?;
         Ok(row)
     }
@@ -166,7 +166,7 @@ impl Database {
             )
             .bind(tid)
             .bind(limit)
-            .fetch_all(&self.pool)
+            .fetch_all(&self.read_pool)
             .await?
         } else {
             sqlx::query_as::<_, AgentEventRow>(
@@ -176,7 +176,7 @@ impl Database {
                  ORDER BY created_at DESC LIMIT $1",
             )
             .bind(limit)
-            .fetch_all(&self.pool)
+            .fetch_all(&self.read_pool)
             .await?
         };
         Ok(rows)
@@ -278,7 +278,7 @@ impl Database {
             .bind(s)
             .bind(limit)
             .bind(offset)
-            .fetch_all(&self.pool)
+            .fetch_all(&self.read_pool)
             .await?
         } else {
             sqlx::query_as::<_, AgentLogRow>(
@@ -289,7 +289,7 @@ impl Database {
             .bind(task_id)
             .bind(limit)
             .bind(offset)
-            .fetch_all(&self.pool)
+            .fetch_all(&self.read_pool)
             .await?
         };
         Ok(rows)
@@ -299,7 +299,7 @@ impl Database {
     pub async fn get_agent_log_count(&self, task_id: i64) -> Result<i64> {
         let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM agent_logs WHERE task_id = $1")
             .bind(task_id)
-            .fetch_one(&self.pool)
+            .fetch_one(&self.read_pool)
             .await?;
         Ok(count.0)
     }
@@ -315,7 +315,7 @@ impl Database {
              ORDER BY created_at ASC",
         )
         .bind(task_id)
-        .fetch_all(&self.pool)
+        .fetch_all(&self.read_pool)
         .await?;
         Ok(rows)
     }
@@ -334,7 +334,7 @@ impl Database {
              ORDER BY 1",
         )
         .bind(days.to_string())
-        .fetch_all(&self.pool)
+        .fetch_all(&self.read_pool)
         .await?;
         Ok(rows)
     }
@@ -353,7 +353,7 @@ impl Database {
              GROUP BY template_name
              ORDER BY total_cost DESC",
         )
-        .fetch_all(&self.pool)
+        .fetch_all(&self.read_pool)
         .await?;
         Ok(rows)
     }
@@ -376,7 +376,7 @@ impl Database {
              ORDER BY t.tokens_used DESC",
         )
         .bind(threshold)
-        .fetch_all(&self.pool)
+        .fetch_all(&self.read_pool)
         .await?;
         Ok(rows)
     }
@@ -388,7 +388,7 @@ impl Database {
                     tokens_used, period_start, updated_at
              FROM agent_budgets ORDER BY id",
         )
-        .fetch_all(&self.pool)
+        .fetch_all(&self.read_pool)
         .await?;
         Ok(rows)
     }
@@ -508,7 +508,7 @@ impl Database {
                    WHEN 'monthly' THEN INTERVAL '1 month'
                    END > NOW()",
         )
-        .fetch_optional(&self.pool)
+        .fetch_optional(&self.read_pool)
         .await?;
         // If no rows match or no period is over budget, allow spending
         Ok(!over_budget.unwrap_or(false))
@@ -567,7 +567,7 @@ impl Database {
             "SELECT id, name, description, steps, created_at, role_name
              FROM agent_templates ORDER BY name",
         )
-        .fetch_all(&self.pool)
+        .fetch_all(&self.read_pool)
         .await?;
         Ok(rows)
     }
@@ -579,7 +579,7 @@ impl Database {
              FROM agent_templates WHERE name = $1",
         )
         .bind(name)
-        .fetch_optional(&self.pool)
+        .fetch_optional(&self.read_pool)
         .await?;
         Ok(row)
     }
@@ -760,7 +760,7 @@ impl Database {
              ORDER BY id",
         )
         .bind(parent_id)
-        .fetch_all(&self.pool)
+        .fetch_all(&self.read_pool)
         .await?;
         Ok(rows)
     }
@@ -770,7 +770,7 @@ impl Database {
         let rows: Vec<(i64,)> =
             sqlx::query_as("SELECT depends_on FROM agent_task_deps WHERE task_id = $1")
                 .bind(task_id)
-                .fetch_all(&self.pool)
+                .fetch_all(&self.read_pool)
                 .await?;
         Ok(rows.into_iter().map(|(id,)| id).collect())
     }
@@ -805,7 +805,7 @@ impl Database {
         )
         .bind(parent_id)
         .bind(exclude_id)
-        .fetch_all(&self.pool)
+        .fetch_all(&self.read_pool)
         .await?;
         Ok(rows)
     }
@@ -828,7 +828,7 @@ impl Database {
         )
         .bind(title)
         .bind(exclude_id)
-        .fetch_all(&self.pool)
+        .fetch_all(&self.read_pool)
         .await?;
         Ok(rows)
     }

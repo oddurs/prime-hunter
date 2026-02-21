@@ -86,7 +86,7 @@ impl Database {
                     total_tested, total_found
              FROM search_jobs ORDER BY id DESC",
         )
-        .fetch_all(&self.pool)
+        .fetch_all(&self.read_pool)
         .await?;
         Ok(rows)
     }
@@ -113,7 +113,7 @@ impl Database {
         )
         .bind(hours.to_string())
         .bind(limit)
-        .fetch_all(&self.pool)
+        .fetch_all(&self.read_pool)
         .await?;
         Ok(rows)
     }
@@ -128,7 +128,7 @@ impl Database {
              FROM search_jobs WHERE id = $1",
         )
         .bind(job_id)
-        .fetch_optional(&self.pool)
+        .fetch_optional(&self.read_pool)
         .await?;
         Ok(row)
     }
@@ -243,7 +243,7 @@ impl Database {
              FROM work_blocks WHERE search_job_id = $1",
         )
         .bind(job_id)
-        .fetch_one(&self.pool)
+        .fetch_one(&self.read_pool)
         .await?;
         Ok(row)
     }
@@ -263,7 +263,7 @@ impl Database {
                 COALESCE(SUM(found) FILTER (WHERE status = 'completed'), 0)::BIGINT AS total_found
              FROM work_blocks",
         )
-        .fetch_one(&self.pool)
+        .fetch_one(&self.read_pool)
         .await?;
         Ok(row)
     }
@@ -275,7 +275,7 @@ impl Database {
     pub async fn get_job_core_hours(&self, job_id: i64) -> Result<f64> {
         let hours: f64 = sqlx::query_scalar("SELECT get_job_core_hours($1)")
             .bind(job_id)
-            .fetch_one(&self.pool)
+            .fetch_one(&self.read_pool)
             .await?;
         Ok(hours)
     }
@@ -293,7 +293,7 @@ impl Database {
              FROM work_blocks WHERE id = $1",
         )
         .bind(block_id)
-        .fetch_optional(&self.pool)
+        .fetch_optional(&self.read_pool)
         .await?;
         Ok(row)
     }

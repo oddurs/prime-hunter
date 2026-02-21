@@ -20,9 +20,11 @@ mod routes_status;
 mod routes_strategy;
 mod routes_verify;
 mod routes_operator;
+mod routes_primes;
+mod routes_schedules;
 mod websocket;
 
-use crate::{agent, db, events, fleet, metrics, project, prom_metrics, strategy, verify};
+use crate::{agent, ai_engine, db, events, fleet, metrics, project, prom_metrics, verify};
 use tracing::{info, warn, Instrument};
 use anyhow::Result;
 use axum::extract::Request;
@@ -58,40 +60,59 @@ pub struct AppState {
     pub event_bus: events::EventBus,
     pub agents: Mutex<agent::AgentManager>,
     pub prom_metrics: prom_metrics::Metrics,
+    pub ai_engine: tokio::sync::Mutex<ai_engine::AiEngine>,
 }
 
 impl AppState {
     pub(super) async fn get_workers_from_pg(&self) -> Vec<fleet::WorkerState> {
-        match self.db.get_all_workers().await {
-            Ok(rows) => rows
-                .into_iter()
-                .map(|r| {
-                    let now = chrono::Utc::now();
-                    let heartbeat_age = (now - r.last_heartbeat).num_seconds().max(0) as u64;
-                    let uptime = (now - r.registered_at).num_seconds().max(0) as u64;
-                    fleet::WorkerState {
-                        worker_id: r.worker_id,
-                        hostname: r.hostname,
-                        cores: r.cores as usize,
-                        search_type: r.search_type,
-                        search_params: r.search_params,
-                        tested: r.tested as u64,
-                        found: r.found as u64,
-                        current: r.current,
-                        checkpoint: r.checkpoint,
-                        metrics: r.metrics.and_then(|v| serde_json::from_value(v).ok()),
-                        uptime_secs: uptime,
-                        last_heartbeat_secs_ago: heartbeat_age,
-                        last_heartbeat: std::time::Instant::now(),
-                        registered_at: std::time::Instant::now(),
+        // Prefer Redis for real-time worker state (sub-ms reads, automatic TTL expiry).
+        // Falls back to PostgreSQL when Redis is not configured.
+        let rows = if self.db.redis().is_some() {
+            match self.db.redis_get_all_workers().await {
+                Ok(rows) => rows,
+                Err(e) => {
+                    warn!(error = %e, "redis worker read failed, falling back to PG");
+                    match self.db.get_all_workers().await {
+                        Ok(rows) => rows,
+                        Err(e2) => {
+                            warn!(error = %e2, "failed to read workers from PG");
+                            return Vec::new();
+                        }
                     }
-                })
-                .collect(),
-            Err(e) => {
-                warn!(error = %e, "failed to read workers from PG");
-                Vec::new()
+                }
             }
-        }
+        } else {
+            match self.db.get_all_workers().await {
+                Ok(rows) => rows,
+                Err(e) => {
+                    warn!(error = %e, "failed to read workers from PG");
+                    return Vec::new();
+                }
+            }
+        };
+        rows.into_iter()
+            .map(|r| {
+                let now = chrono::Utc::now();
+                let heartbeat_age = (now - r.last_heartbeat).num_seconds().max(0) as u64;
+                let uptime = (now - r.registered_at).num_seconds().max(0) as u64;
+                fleet::WorkerState {
+                    worker_id: r.worker_id,
+                    hostname: r.hostname,
+                    cores: r.cores as usize,
+                    search_type: r.search_type,
+                    search_params: r.search_params,
+                    tested: r.tested as u64,
+                    found: r.found as u64,
+                    current: r.current,
+                    checkpoint: r.checkpoint,
+                    metrics: r.metrics.and_then(|v| serde_json::from_value(v).ok()),
+                    uptime_secs: uptime,
+                    last_heartbeat_secs_ago: heartbeat_age,
+                    last_heartbeat: std::time::Instant::now(),
+                    registered_at: std::time::Instant::now(),
+                }
+            })
+            .collect()
     }
 
     pub fn with_db(
@@ -108,6 +129,7 @@ impl AppState {
             event_bus: events::EventBus::new(),
             agents: Mutex::new(agent::AgentManager::new()),
             prom_metrics: prom_metrics::Metrics::new(),
+            ai_engine: tokio::sync::Mutex::new(ai_engine::AiEngine::new()),
         })
     }
 }
@@ -406,6 +428,51 @@ pub fn build_router(state: Arc<AppState>, static_dir: Option<&Path>) -> Router {
             "/api/strategy/tick",
             post(routes_strategy::handler_strategy_tick),
         )
+        .route(
+            "/api/strategy/ai-engine",
+            get(routes_strategy::handler_ai_engine_status),
+        )
+        .route(
+            "/api/strategy/ai-decisions",
+            get(routes_strategy::handler_ai_engine_decisions),
+        )
+        // Prime data API (Phase 6: replaces Supabase RPC/table queries)
+        .route("/api/stats", get(routes_primes::handler_api_stats))
+        .route(
+            "/api/stats/timeline",
+            get(routes_primes::handler_api_timeline),
+        )
+        .route(
+            "/api/stats/distribution",
+            get(routes_primes::handler_api_distribution),
+        )
+        .route(
+            "/api/stats/leaderboard",
+            get(routes_primes::handler_api_leaderboard),
+        )
+        .route(
+            "/api/primes",
+            get(routes_primes::handler_api_primes_list),
+        )
+        .route(
+            "/api/primes/{id}",
+            get(routes_primes::handler_api_prime_get),
+        )
+        // Schedule CRUD API (Phase 6: replaces Supabase table access)
+        .route(
+            "/api/schedules",
+            get(routes_schedules::handler_api_schedules_list)
+                .post(routes_schedules::handler_api_schedules_create),
+        )
+        .route(
+            "/api/schedules/{id}",
+            axum::routing::put(routes_schedules::handler_api_schedules_update)
+                .delete(routes_schedules::handler_api_schedules_delete),
+        )
+        .route(
+            "/api/schedules/{id}/toggle",
+            axum::routing::put(routes_schedules::handler_api_schedules_toggle),
+        )
         .route("/api/records", get(routes_projects::handler_api_records))
         .route(
             "/api/records/refresh",
@@ -532,7 +599,6 @@ pub async fn run(
         let mut last_metrics_sample = std::time::Instant::now() - Duration::from_secs(60);
         let mut last_worker_sample = std::time::Instant::now() - Duration::from_secs(120);
         let mut last_housekeeping = std::time::Instant::now() - Duration::from_secs(3600);
-        let mut last_strategy_tick = std::time::Instant::now() - Duration::from_secs(300);
         let mut last_reliability_refresh = std::time::Instant::now() - Duration::from_secs(300);
         let mut last_event_id: u64 = 0;
         let mut last_tick = std::time::Instant::now();
@@ -670,20 +736,29 @@ pub async fn run(
             }
 
             let fleet_workers = prune_state.get_workers_from_pg().await;
-            if let Err(e) = project::orchestrate_tick(&prune_state.db).await {
-                warn!(error = %e, "project orchestration tick failed");
-            }
-            // Strategy engine tick (default every 300s / 5 minutes)
-            if last_strategy_tick.elapsed() >= Duration::from_secs(300) {
-                last_strategy_tick = std::time::Instant::now();
-                match strategy::strategy_tick(&prune_state.db).await {
-                    Ok(result) => {
-                        let count = result.decisions.len();
-                        if count > 0 {
-                            info!(count, "strategy decisions applied");
+            // Unified AI engine tick: replaces orchestrate_tick + strategy_tick
+            // The AI engine runs its own OODA loop (observe → orient → decide → act → learn)
+            // and internally calls orchestrate_tick for phase advancement.
+            {
+                let mut engine = prune_state.ai_engine.lock().await;
+                match engine.tick(&prune_state.db).await {
+                    Ok(outcome) => {
+                        let decision_count = outcome.decisions.len();
+                        if decision_count > 0
+                            && !matches!(
+                                outcome.decisions.first(),
+                                Some(ai_engine::Decision::NoAction { .. })
+                            )
+                        {
+                            info!(
+                                tick_id = outcome.tick_id,
+                                decisions = decision_count,
+                                duration_ms = outcome.duration_ms,
+                                "ai_engine tick complete"
+                            );
                         }
                     }
-                    Err(e) => warn!(error = %e, "strategy tick failed"),
+                    Err(e) => warn!(error = %e, "ai_engine tick failed"),
                 }
             }
             prune_state.event_bus.flush();
@@ -749,7 +824,13 @@ pub async fn run(
             let pool_idle = prune_state.db.pool().num_idle();
             prune_state.prom_metrics.db_pool_active.set((pool_size as i64) - (pool_idle as i64));
             prune_state.prom_metrics.db_pool_idle.set(pool_idle as i64);
-            prune_state.prom_metrics.db_pool_max.set(2); // matches PgPoolOptions::max_connections(2)
+            prune_state.prom_metrics.db_pool_max.set(prune_state.db.max_connections() as i64);
+
+            // Read replica pool stats
+            let read_pool_size = prune_state.db.read_pool().size();
+            let read_pool_idle = prune_state.db.read_pool().num_idle();
+            prune_state.prom_metrics.db_read_pool_active.set((read_pool_size as i64) - (read_pool_idle as i64));
+            prune_state.prom_metrics.db_read_pool_idle.set(read_pool_idle as i64);
 
             if let Ok(jobs) = prune_state.db.get_search_jobs().await {
                 let active = jobs.iter().filter(|j| j.status == "running").count();
@@ -1179,6 +1260,9 @@ pub async fn run(
                 }
                 if let Err(e) = prune_state.db.prune_system_logs(log_retention_days).await {
                     warn!(error = %e, "failed to prune system logs");
+                }
+                if let Err(e) = prune_state.db.refresh_materialized_views().await {
+                    warn!(error = %e, "failed to refresh materialized views");
                 }
             }
         }

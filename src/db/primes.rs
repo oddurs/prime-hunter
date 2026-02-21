@@ -165,7 +165,7 @@ impl Database {
         query = query.bind(limit);
         query = query.bind(offset);
 
-        let records = query.fetch_all(&self.pool).await?;
+        let records = query.fetch_all(&self.read_pool).await?;
         Ok(records)
     }
 
@@ -214,7 +214,7 @@ impl Database {
             query = query.bind(max_d);
         }
 
-        let count = query.fetch_one(&self.pool).await?;
+        let count = query.fetch_one(&self.read_pool).await?;
         Ok(count)
     }
 
@@ -225,7 +225,7 @@ impl Database {
              FROM primes WHERE NOT verified ORDER BY id LIMIT $1",
         )
         .bind(limit)
-        .fetch_all(&self.pool)
+        .fetch_all(&self.read_pool)
         .await?;
         Ok(rows)
     }
@@ -266,7 +266,7 @@ impl Database {
         } else {
             query = query.bind(limit);
         }
-        let rows = query.fetch_all(&self.pool).await?;
+        let rows = query.fetch_all(&self.read_pool).await?;
         Ok(rows)
     }
 
@@ -277,7 +277,7 @@ impl Database {
              FROM primes WHERE id = $1",
         )
         .bind(id)
-        .fetch_optional(&self.pool)
+        .fetch_optional(&self.read_pool)
         .await?;
         Ok(row)
     }
@@ -316,7 +316,7 @@ impl Database {
              FROM primes WHERE form = $1 ORDER BY digits DESC LIMIT 1",
         )
         .bind(form)
-        .fetch_optional(&self.pool)
+        .fetch_optional(&self.read_pool)
         .await?;
         Ok(row)
     }
@@ -332,7 +332,7 @@ impl Database {
         )
         .bind(from)
         .bind(to)
-        .fetch_one(&self.pool)
+        .fetch_one(&self.read_pool)
         .await?;
         Ok(count)
     }
@@ -348,7 +348,7 @@ impl Database {
         )
         .bind(from)
         .bind(to)
-        .fetch_all(&self.pool)
+        .fetch_all(&self.read_pool)
         .await?;
         Ok(rows)
     }

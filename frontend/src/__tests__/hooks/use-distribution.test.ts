@@ -2,8 +2,8 @@
  * @file Tests for useDistribution hook
  * @module __tests__/hooks/use-distribution
  *
- * Validates the digit distribution histogram hook which calls the Supabase
- * RPC function `get_digit_distribution` to aggregate prime counts by digit
+ * Validates the digit distribution histogram hook which calls the REST API
+ * endpoint `/api/stats/distribution` to aggregate prime counts by digit
  * count buckets and form type. Used to render the digit distribution chart
  * on the dashboard, showing how many primes exist in each digit range.
  *
@@ -13,18 +13,13 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { renderHook, waitFor } from "@testing-library/react";
 
-// Mock the Supabase RPC method used by the distribution hook
-const mockRpc = vi.fn();
-
-vi.mock("@/lib/supabase", () => ({
-  supabase: {
-    rpc: (...args: unknown[]) => mockRpc(...args),
-  },
-}));
+// Mock global fetch for REST API calls
+const mockFetch = vi.fn();
+vi.stubGlobal("fetch", mockFetch);
 
 import { useDistribution } from "@/hooks/use-distribution";
 
-// Tests the distribution data fetching lifecycle: mount -> RPC call -> data/error.
+// Tests the distribution data fetching lifecycle: mount -> fetch call -> data/error.
 // Validates bucket size parameter handling and empty/error response behavior.
 describe("useDistribution", () => {
   beforeEach(() => {
@@ -32,7 +27,7 @@ describe("useDistribution", () => {
   });
 
   /**
-   * Verifies that the hook calls the get_digit_distribution RPC on mount
+   * Verifies that the hook calls the /api/stats/distribution endpoint on mount
    * with the default bucket size of 10 digits. The mock returns two buckets:
    * 0-9 digits (10 factorial primes) and 10-19 digits (5 factorial primes).
    */
@@ -41,54 +36,66 @@ describe("useDistribution", () => {
       { bucket_start: 0, form: "factorial", count: 10 },
       { bucket_start: 10, form: "factorial", count: 5 },
     ];
-    mockRpc.mockResolvedValue({ data: mockData, error: null });
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve(mockData),
+    });
 
     const { result } = renderHook(() => useDistribution());
 
     await waitFor(() => {
       expect(result.current.distribution).toHaveLength(2);
     });
-    expect(mockRpc).toHaveBeenCalledWith("get_digit_distribution", {
-      bucket_size_param: 10,
-    });
+    expect(mockFetch).toHaveBeenCalledWith(
+      expect.stringContaining("/api/stats/distribution?bucket_size=10")
+    );
   });
 
   /**
-   * Verifies that a custom bucket size (50) is correctly passed to the
-   * RPC function, allowing the chart to show wider digit ranges.
+   * Verifies that a custom bucket size (50) is correctly passed as a
+   * query parameter, allowing the chart to show wider digit ranges.
    */
   it("passes custom bucket size", async () => {
-    mockRpc.mockResolvedValue({ data: [], error: null });
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve([]),
+    });
 
     renderHook(() => useDistribution(50));
 
     await waitFor(() => {
-      expect(mockRpc).toHaveBeenCalledWith("get_digit_distribution", {
-        bucket_size_param: 50,
-      });
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.stringContaining("/api/stats/distribution?bucket_size=50")
+      );
     });
   });
 
-  /** Verifies that an empty RPC response results in an empty distribution array. */
+  /** Verifies that an empty response results in an empty distribution array. */
   it("handles empty response", async () => {
-    mockRpc.mockResolvedValue({ data: [], error: null });
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve([]),
+    });
 
     const { result } = renderHook(() => useDistribution());
 
     await waitFor(() => {
-      expect(mockRpc).toHaveBeenCalled();
+      expect(mockFetch).toHaveBeenCalled();
     });
     expect(result.current.distribution).toEqual([]);
   });
 
   /** Verifies graceful error handling; distribution defaults to empty array. */
   it("returns empty on error", async () => {
-    mockRpc.mockResolvedValue({ data: null, error: { message: "fail" } });
+    mockFetch.mockResolvedValue({
+      ok: false,
+      status: 500,
+    });
 
     const { result } = renderHook(() => useDistribution());
 
     await waitFor(() => {
-      expect(mockRpc).toHaveBeenCalled();
+      expect(mockFetch).toHaveBeenCalled();
     });
     expect(result.current.distribution).toEqual([]);
   });

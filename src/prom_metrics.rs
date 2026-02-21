@@ -104,6 +104,18 @@ pub struct Metrics {
     pub ws_connections_active: Gauge,
     /// Total WebSocket messages sent to clients.
     pub ws_messages_sent: Counter,
+    /// Active (in-use) read replica database connections.
+    pub db_read_pool_active: Gauge,
+    /// Idle read replica database connections.
+    pub db_read_pool_idle: Gauge,
+    /// AI engine tick duration in seconds.
+    pub ai_engine_tick_duration: Histogram,
+    /// AI engine total tick count.
+    pub ai_engine_tick_count: Counter,
+    /// AI engine decisions made (by type).
+    pub ai_engine_decisions: Family<FormLabel, Counter>,
+    /// AI engine cost model version.
+    pub ai_engine_cost_model_version: Gauge,
 }
 
 impl Metrics {
@@ -253,6 +265,50 @@ impl Metrics {
             ws_messages_sent.clone(),
         );
 
+        let db_read_pool_active = Gauge::default();
+        registry.register(
+            "darkreach_db_read_pool_active",
+            "Active (in-use) read replica database connections",
+            db_read_pool_active.clone(),
+        );
+
+        let db_read_pool_idle = Gauge::default();
+        registry.register(
+            "darkreach_db_read_pool_idle",
+            "Idle read replica database connections",
+            db_read_pool_idle.clone(),
+        );
+
+        // AI engine tick duration: 10ms to 30s
+        let ai_engine_tick_duration =
+            Histogram::new([0.01, 0.05, 0.1, 0.25, 0.5, 1.0, 2.0, 5.0, 10.0, 30.0]);
+        registry.register(
+            "darkreach_ai_engine_tick_duration_seconds",
+            "AI engine tick duration in seconds",
+            ai_engine_tick_duration.clone(),
+        );
+
+        let ai_engine_tick_count = Counter::default();
+        registry.register(
+            "darkreach_ai_engine_tick_count",
+            "Total AI engine ticks executed",
+            ai_engine_tick_count.clone(),
+        );
+
+        let ai_engine_decisions = Family::<FormLabel, Counter>::default();
+        registry.register(
+            "darkreach_ai_engine_decisions",
+            "AI engine decisions by type",
+            ai_engine_decisions.clone(),
+        );
+
+        let ai_engine_cost_model_version = Gauge::default();
+        registry.register(
+            "darkreach_ai_engine_cost_model_version",
+            "Current AI engine cost model version",
+            ai_engine_cost_model_version.clone(),
+        );
+
         Self {
             registry,
             primes_found,
@@ -272,6 +328,12 @@ impl Metrics {
             db_pool_max,
             ws_connections_active,
             ws_messages_sent,
+            db_read_pool_active,
+            db_read_pool_idle,
+            ai_engine_tick_duration,
+            ai_engine_tick_count,
+            ai_engine_decisions,
+            ai_engine_cost_model_version,
         }
     }
 
@@ -296,6 +358,12 @@ impl Metrics {
             MetricCatalogEntry { name: "darkreach_db_pool_max", metric_type: "gauge", unit: "connections", description: "Maximum configured database connections", labels: &[] },
             MetricCatalogEntry { name: "darkreach_ws_connections_active", metric_type: "gauge", unit: "connections", description: "Active WebSocket connections", labels: &[] },
             MetricCatalogEntry { name: "darkreach_ws_messages_sent_total", metric_type: "counter", unit: "messages", description: "Total WebSocket messages sent", labels: &[] },
+            MetricCatalogEntry { name: "darkreach_db_read_pool_active", metric_type: "gauge", unit: "connections", description: "Active read replica database connections", labels: &[] },
+            MetricCatalogEntry { name: "darkreach_db_read_pool_idle", metric_type: "gauge", unit: "connections", description: "Idle read replica database connections", labels: &[] },
+            MetricCatalogEntry { name: "darkreach_ai_engine_tick_duration_seconds", metric_type: "histogram", unit: "seconds", description: "AI engine tick duration", labels: &[] },
+            MetricCatalogEntry { name: "darkreach_ai_engine_tick_count", metric_type: "counter", unit: "ticks", description: "Total AI engine ticks", labels: &[] },
+            MetricCatalogEntry { name: "darkreach_ai_engine_decisions", metric_type: "counter", unit: "decisions", description: "AI engine decisions by type", labels: &["form"] },
+            MetricCatalogEntry { name: "darkreach_ai_engine_cost_model_version", metric_type: "gauge", unit: "version", description: "Cost model version", labels: &[] },
         ]
     }
 
@@ -609,11 +677,11 @@ mod tests {
         assert!(output.contains("darkreach_ws_messages_sent"));
     }
 
-    /// Metric catalog returns all 17 registered metrics.
+    /// Metric catalog returns all 23 registered metrics.
     #[test]
     fn catalog_contains_all_metrics() {
         let catalog = Metrics::catalog();
-        assert_eq!(catalog.len(), 17);
+        assert_eq!(catalog.len(), 23);
         let names: Vec<&str> = catalog.iter().map(|e| e.name).collect();
         assert!(names.contains(&"darkreach_primes_found_total"));
         assert!(names.contains(&"darkreach_http_request_duration_seconds"));

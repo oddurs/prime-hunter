@@ -128,7 +128,7 @@ function ProjectList() {
   );
 
   return (
-    <div className="container mx-auto max-w-6xl px-4 py-6">
+    <>
       <ViewHeader
         title="Projects"
         subtitle="Campaign-style prime discovery management"
@@ -258,7 +258,7 @@ function ProjectList() {
           </Button>
         </div>
       )}
-    </div>
+    </>
   );
 }
 
@@ -358,22 +358,22 @@ function ProjectDetail({ slug }: { slug: string }) {
 
   if (loading) {
     return (
-      <div className="container mx-auto max-w-6xl px-4 py-6">
+      <>
         <div className="flex items-center justify-center py-12">
           <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
         </div>
-      </div>
+      </>
     );
   }
 
   if (!data) {
     return (
-      <div className="container mx-auto max-w-6xl px-4 py-6">
+      <>
         <p className="text-muted-foreground">Project not found</p>
         <Link href="/projects" className="text-sm underline mt-2">
           Back to projects
         </Link>
-      </div>
+      </>
     );
   }
 
@@ -381,7 +381,7 @@ function ProjectDetail({ slug }: { slug: string }) {
   const maxCostUsd = project.budget?.max_cost_usd ?? null;
 
   return (
-    <div className="container mx-auto max-w-6xl px-4 py-6">
+    <>
       <ViewHeader
         title={project.name}
         subtitle={project.description || `${project.objective} / ${project.form}`}
@@ -624,7 +624,7 @@ function ProjectDetail({ slug }: { slug: string }) {
           </Card>
         </div>
       </div>
-    </div>
+    </>
   );
 }
 

@@ -71,7 +71,7 @@ impl Database {
              LIMIT $1",
         )
         .bind(limit)
-        .fetch_all(&self.pool)
+        .fetch_all(&self.read_pool)
         .await?;
         Ok(rows)
     }
@@ -82,7 +82,7 @@ impl Database {
              FROM worker_release_channels
              ORDER BY channel",
         )
-        .fetch_all(&self.pool)
+        .fetch_all(&self.read_pool)
         .await?;
         Ok(rows)
     }
@@ -98,7 +98,7 @@ impl Database {
              WHERE c.channel = $1",
         )
         .bind(channel)
-        .fetch_optional(&self.pool)
+        .fetch_optional(&self.read_pool)
         .await?;
         Ok(row)
     }
@@ -113,7 +113,7 @@ impl Database {
              WHERE version = $1",
         )
         .bind(version)
-        .fetch_optional(&self.pool)
+        .fetch_optional(&self.read_pool)
         .await?;
         Ok(row)
     }
@@ -175,7 +175,7 @@ impl Database {
         )
         .bind(channel)
         .bind(current_version)
-        .fetch_optional(&self.pool)
+        .fetch_optional(&self.read_pool)
         .await?;
 
         let Some(event) = event else {
@@ -297,7 +297,7 @@ impl Database {
             )
             .bind(channel)
             .bind(limit)
-            .fetch_all(&self.pool)
+            .fetch_all(&self.read_pool)
             .await?;
             return Ok(rows);
         }
@@ -308,7 +308,7 @@ impl Database {
              LIMIT $1",
         )
         .bind(limit)
-        .fetch_all(&self.pool)
+        .fetch_all(&self.read_pool)
         .await?;
         Ok(rows)
     }
@@ -319,14 +319,14 @@ impl Database {
     ) -> Result<Vec<WorkerReleaseAdoptionRow>> {
         let rows = sqlx::query_as::<_, WorkerReleaseAdoptionRow>(
             "SELECT worker_version, COUNT(*)::bigint AS workers
-             FROM volunteer_workers
+             FROM operator_nodes
              WHERE last_heartbeat IS NOT NULL
                AND last_heartbeat >= NOW() - ($1 || ' hours')::interval
              GROUP BY worker_version
              ORDER BY workers DESC, worker_version",
         )
         .bind(active_within_hours.to_string())
-        .fetch_all(&self.pool)
+        .fetch_all(&self.read_pool)
         .await?;
         Ok(rows)
     }

@@ -9,8 +9,6 @@
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif;
-  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", "Courier New", monospace;
   --color-chart-5: var(--chart-5);
   --color-chart-4: var(--chart-4);
   --color-chart-3: var(--chart-3);
@@ -39,63 +37,53 @@
   --radius-2xl: calc(var(--radius) + 8px);
   --radius-3xl: calc(var(--radius) + 12px);
   --radius-4xl: calc(var(--radius) + 16px);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
 }
 
 :root {
-  --radius: 0.375rem;
-  --header: #1e1b4b;
-  --header-foreground: #e0e7ff;
-  --background: #f6f8fa;
-  --foreground: #1f2328;
-  --card: #ffffff;
-  --card-foreground: #1f2328;
-  --popover: #ffffff;
-  --popover-foreground: #1f2328;
-  --primary: #4f46e5;
-  --primary-foreground: #ffffff;
-  --secondary: #f6f8fa;
-  --secondary-foreground: #1f2328;
-  --muted: #f6f8fa;
-  --muted-foreground: #59636e;
-  --accent: #eef2ff;
-  --accent-foreground: #1f2328;
-  --destructive: #dc2626;
-  --border: #d0d7de;
-  --input: #d0d7de;
-  --ring: #4f46e5;
-  --chart-1: #6366f1;
-  --chart-2: #10b981;
-  --chart-3: #f59e0b;
-  --chart-4: #8b5cf6;
-  --chart-5: #ef4444;
-}
+  --radius: 0.625rem;
 
-.dark {
-  --header: #0c0a1d;
-  --header-foreground: #e0e7ff;
-  --background: #0d1117;
-  --foreground: #e6edf3;
-  --card: #161b22;
-  --card-foreground: #e6edf3;
-  --popover: #161b22;
-  --popover-foreground: #e6edf3;
-  --primary: #818cf8;
+  /* Dark-only palette — cool grays with indigo-500 accent */
+  --background: #09090b;
+  --foreground: #fafafa;
+  --card: #111113;
+  --card-foreground: #fafafa;
+  --popover: #111113;
+  --popover-foreground: #fafafa;
+  --primary: #6366f1;
   --primary-foreground: #ffffff;
-  --secondary: #0d1117;
-  --secondary-foreground: #e6edf3;
-  --muted: #161b22;
-  --muted-foreground: #8b949e;
-  --accent: #1e1b4b;
+  --secondary: #1a1a1f;
+  --secondary-foreground: #fafafa;
+  --muted: #1a1a1f;
+  --muted-foreground: #71717a;
+  --accent: #1a1a2e;
   --accent-foreground: #e0e7ff;
-  --destructive: #f85149;
-  --border: #30363d;
-  --input: #30363d;
-  --ring: #818cf8;
-  --chart-1: #818cf8;
+  --destructive: #ef4444;
+  --border: #27272a;
+  --input: #27272a;
+  --ring: #6366f1;
+  --chart-1: #6366f1;
   --chart-2: #34d399;
   --chart-3: #fbbf24;
   --chart-4: #a78bfa;
   --chart-5: #f87171;
+
+  /* Sidebar */
+  --sidebar: #0c0c0f;
+  --sidebar-foreground: #fafafa;
+  --sidebar-border: #27272a;
+  --sidebar-accent: #1a1a2e;
+  --sidebar-accent-foreground: #e0e7ff;
+  --sidebar-ring: #6366f1;
+  --sidebar-primary: #6366f1;
+  --sidebar-primary-foreground: #ffffff;
 }
 
 @layer base {
@@ -108,45 +96,12 @@
 }
 
 @layer components {
-  [data-slot="card"] {
-    border-color: var(--border);
-    border-radius: var(--radius);
-    box-shadow: none;
+  [data-slot="top-bar"] {
+    background: var(--sidebar);
+    border-color: var(--sidebar-border);
   }
 
-  [data-slot="table-container"] {
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    background: var(--card);
-  }
-
-  [data-slot="table-head"] {
-    background: var(--muted);
-    font-weight: 600;
-    height: 2.1rem;
-  }
-
-  [data-slot="table-cell"] {
-    border-top: 1px solid var(--border);
-  }
-
-  [data-slot="input"] {
-    background: var(--card);
-    border-color: var(--input);
-    box-shadow: none;
-  }
-
-  [data-slot="input"]:focus-visible {
-    border-color: var(--ring);
-    box-shadow: 0 0 0 3px color-mix(in srgb, var(--ring), transparent 78%);
-  }
-
-  header {
-    background: var(--header);
-    border-color: rgba(255, 255, 255, 0.1);
-  }
-
-  /* GitHub-flavored markdown style */
+  /* Markdown prose (docs page) */
   .docs-prose {
     color: var(--foreground);
     font-size: 1rem;

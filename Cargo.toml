@@ -47,6 +47,7 @@ prometheus-client = "0.23"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["json", "env-filter"] }
 jsonwebtoken = "9"
+redis = { version = "0.27", features = ["aio", "connection-manager", "tokio-comp"] }
 
 [profile.release]
 lto = "fat"

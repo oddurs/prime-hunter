@@ -3,13 +3,14 @@
 /**
  * @module use-stats
  *
- * React hook that fetches aggregate statistics from the `get_stats`
- * Supabase RPC: total prime count, per-form breakdown, and the largest
- * known prime (by digit count). Used by the dashboard stat cards.
+ * React hook that fetches aggregate statistics from the REST API
+ * `/api/stats` endpoint: total prime count, per-form breakdown, and the
+ * largest known prime (by digit count). Used by the dashboard stat cards.
  */
 
 import { useEffect, useState, useCallback } from "react";
-import { supabase } from "@/lib/supabase";
+
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || "";
 
 export interface Stats {
   total: number;
@@ -21,18 +22,23 @@ export interface Stats {
 export function useStats() {
   const [stats, setStats] = useState<Stats | null>(null);
 
-  const fetch = useCallback(async () => {
-    const { data, error } = await supabase.rpc("get_stats");
-    if (!error && data) {
-      setStats(data as Stats);
+  const fetchStats = useCallback(async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/stats`);
+      if (res.ok) {
+        const data = await res.json();
+        setStats(data as Stats);
+      }
+    } catch {
+      // Network error — keep previous state
     }
   }, []);
 
   useEffect(() => {
-    fetch();
-    const interval = setInterval(fetch, 5000);
+    fetchStats();
+    const interval = setInterval(fetchStats, 5000);
     return () => clearInterval(interval);
-  }, [fetch]);
+  }, [fetchStats]);
 
-  return { stats, refetch: fetch };
+  return { stats, refetch: fetchStats };
 }

@@ -7,6 +7,7 @@
 
 use super::{Database, WorkerRow};
 use anyhow::Result;
+use redis::AsyncCommands;
 use serde_json::Value;
 
 impl Database {
@@ -101,7 +102,7 @@ impl Database {
                     registered_at, last_heartbeat
              FROM workers ORDER BY worker_id",
         )
-        .fetch_all(&self.pool)
+        .fetch_all(&self.read_pool)
         .await?;
         Ok(rows)
     }
@@ -150,6 +151,9 @@ impl Database {
 
     /// Delete workers whose last heartbeat is older than `timeout_secs`.
     /// Returns the number of pruned workers.
+    ///
+    /// When Redis is available, stale worker expiry is handled by Redis TTL
+    /// and this method only prunes the PG shadow copies.
     pub async fn prune_stale_workers(&self, timeout_secs: i64) -> Result<u64> {
         let result = sqlx::query(
             "DELETE FROM workers WHERE last_heartbeat < NOW() - ($1 || ' seconds')::interval",
@@ -158,5 +162,154 @@ impl Database {
         .execute(&self.pool)
         .await?;
         Ok(result.rows_affected())
+    }
+
+    // ── Redis-backed worker operations ──────────────────────────────
+
+    /// Write worker heartbeat to Redis (HSET + EXPIRE + SADD).
+    ///
+    /// Redis stores the real-time worker state with a 60-second TTL, providing
+    /// automatic stale worker cleanup. The `workers:active` set tracks all
+    /// live worker IDs for fast enumeration.
+    pub async fn redis_heartbeat(
+        &self,
+        worker_id: &str,
+        hostname: &str,
+        cores: i32,
+        search_type: &str,
+        search_params: &str,
+        tested: i64,
+        found: i64,
+        current: &str,
+        checkpoint: Option<&str>,
+        metrics: Option<&Value>,
+    ) -> Result<()> {
+        let mut conn = self
+            .redis
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Redis not configured"))?
+            .clone();
+        let key = format!("worker:{}", worker_id);
+        let now = chrono::Utc::now().to_rfc3339();
+        let metrics_str = metrics
+            .map(|m| serde_json::to_string(m).unwrap_or_default())
+            .unwrap_or_default();
+        let checkpoint_str = checkpoint.unwrap_or("");
+
+        redis::pipe()
+            .hset_multiple(
+                &key,
+                &[
+                    ("worker_id", worker_id),
+                    ("hostname", hostname),
+                    ("search_type", search_type),
+                    ("search_params", search_params),
+                    ("current", current),
+                    ("checkpoint", checkpoint_str),
+                    ("last_heartbeat", &now),
+                ],
+            )
+            .hset(&key, "cores", cores)
+            .hset(&key, "tested", tested)
+            .hset(&key, "found", found)
+            .hset(&key, "metrics", &metrics_str)
+            .expire(&key, 60)
+            .sadd("workers:active", worker_id)
+            .exec_async(&mut conn)
+            .await?;
+
+        Ok(())
+    }
+
+    /// Read all active workers from Redis.
+    ///
+    /// Enumerates the `workers:active` set, then HGETALL each worker hash.
+    /// Workers whose keys have expired are automatically cleaned from the set.
+    pub async fn redis_get_all_workers(&self) -> Result<Vec<WorkerRow>> {
+        let mut conn = self
+            .redis
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Redis not configured"))?
+            .clone();
+
+        let worker_ids: Vec<String> = conn.smembers("workers:active").await?;
+        let mut workers = Vec::with_capacity(worker_ids.len());
+        let mut expired = Vec::new();
+
+        for wid in &worker_ids {
+            let key = format!("worker:{}", wid);
+            let exists: bool = conn.exists(&key).await?;
+            if !exists {
+                expired.push(wid.clone());
+                continue;
+            }
+            let map: std::collections::HashMap<String, String> = conn.hgetall(&key).await?;
+            if map.is_empty() {
+                expired.push(wid.clone());
+                continue;
+            }
+
+            let last_hb = map
+                .get("last_heartbeat")
+                .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+                .map(|dt| dt.with_timezone(&chrono::Utc))
+                .unwrap_or_else(chrono::Utc::now);
+            let metrics_val = map
+                .get("metrics")
+                .filter(|s| !s.is_empty())
+                .and_then(|s| serde_json::from_str(s).ok());
+
+            workers.push(WorkerRow {
+                worker_id: map.get("worker_id").cloned().unwrap_or_default(),
+                hostname: map.get("hostname").cloned().unwrap_or_default(),
+                cores: map
+                    .get("cores")
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or(0),
+                search_type: map.get("search_type").cloned().unwrap_or_default(),
+                search_params: map.get("search_params").cloned().unwrap_or_default(),
+                tested: map
+                    .get("tested")
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or(0),
+                found: map
+                    .get("found")
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or(0),
+                current: map.get("current").cloned().unwrap_or_default(),
+                checkpoint: map
+                    .get("checkpoint")
+                    .filter(|s| !s.is_empty())
+                    .cloned(),
+                metrics: metrics_val,
+                registered_at: last_hb,
+                last_heartbeat: last_hb,
+            });
+        }
+
+        // Clean expired worker IDs from the active set
+        if !expired.is_empty() {
+            for wid in &expired {
+                let _: Result<(), _> = conn.srem("workers:active", wid).await;
+            }
+        }
+
+        Ok(workers)
+    }
+
+    /// Remove a worker from Redis (DEL hash + SREM from active set).
+    pub async fn redis_delete_worker(&self, worker_id: &str) -> Result<()> {
+        let mut conn = self
+            .redis
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Redis not configured"))?
+            .clone();
+        let key = format!("worker:{}", worker_id);
+        redis::pipe()
+            .del(&key)
+            .srem("workers:active", worker_id)
+            .exec_async(&mut conn)
+            .await?;
+        Ok(())
     }
 }

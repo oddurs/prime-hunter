@@ -17,7 +17,7 @@ impl Database {
                     created_at, updated_at
              FROM agent_roles ORDER BY name",
         )
-        .fetch_all(&self.pool)
+        .fetch_all(&self.read_pool)
         .await?;
         Ok(rows)
     }
@@ -31,7 +31,7 @@ impl Database {
              FROM agent_roles WHERE name = $1",
         )
         .bind(name)
-        .fetch_optional(&self.pool)
+        .fetch_optional(&self.read_pool)
         .await?;
         Ok(row)
     }
@@ -48,7 +48,7 @@ impl Database {
              ORDER BY t.name",
         )
         .bind(role_name)
-        .fetch_all(&self.pool)
+        .fetch_all(&self.read_pool)
         .await?;
         Ok(rows)
     }

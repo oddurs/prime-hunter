@@ -3,11 +3,10 @@
  * @module __tests__/pages/browse
  *
  * Validates the Browse page at `/browse`, which provides a filterable,
- * paginated archive of all discovered primes. The page consumes usePrimes
- * and useStats hooks via Supabase. Tests verify page heading, subtitle
- * with total prime count, filter controls (expression search, min/max
- * digits), table rendering with prime data, pagination controls, and
- * column headers.
+ * infinite-scroll list of all discovered primes. The page consumes usePrimes
+ * and useStats hooks via the REST API. Tests verify page heading, subtitle
+ * with total prime count, filter controls, list rendering with prime data,
+ * and end-of-results indicator.
  *
  * @see {@link ../../app/browse/page} Source page
  * @see {@link ../../hooks/use-primes} usePrimes hook (data provider)
@@ -18,9 +17,10 @@ import { render, screen } from "@testing-library/react";
 
 // Mock hooks used by BrowsePage
 
-const mockFetchPrimes = vi.fn();
 const mockFetchPrimeDetail = vi.fn();
 const mockClearSelectedPrime = vi.fn();
+const mockResetAndFetch = vi.fn();
+const mockFetchNextPage = vi.fn();
 
 vi.mock("@/hooks/use-primes", () => ({
   usePrimes: () => ({
@@ -55,10 +55,14 @@ vi.mock("@/hooks/use-primes", () => ({
       offset: 0,
       limit: 50,
     },
-    fetchPrimes: mockFetchPrimes,
     fetchPrimeDetail: mockFetchPrimeDetail,
     selectedPrime: null,
     clearSelectedPrime: mockClearSelectedPrime,
+    resetAndFetch: mockResetAndFetch,
+    fetchNextPage: mockFetchNextPage,
+    hasMore: false,
+    isLoadingMore: false,
+    isInitialLoading: false,
   }),
 }));
 
@@ -111,12 +115,15 @@ vi.mock("@/lib/format", () => ({
     x.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ","),
   formatTime: (t: string) => t,
   formToSlug: (f: string) => f.toLowerCase(),
+  formLabels: {
+    factorial: "Factorial",
+    kbn: "k\u00b7b^n",
+  },
+  relativeTime: (t: string) => t,
 }));
 
 import BrowsePage from "@/app/browse/page";
 
-// Tests the BrowsePage: heading, subtitle with count, filter controls,
-// prime expression rendering, pagination, and column headers.
 describe("BrowsePage", () => {
   it("renders without crashing", () => {
     render(<BrowsePage />);
@@ -130,28 +137,25 @@ describe("BrowsePage", () => {
 
   it("renders filter controls", () => {
     render(<BrowsePage />);
-    expect(screen.getByPlaceholderText("Expression contains...")).toBeInTheDocument();
-    expect(screen.getByPlaceholderText("e.g. 100")).toBeInTheDocument();
-    expect(screen.getByPlaceholderText("e.g. 2000")).toBeInTheDocument();
+    expect(screen.getByPlaceholderText("Search expressions...")).toBeInTheDocument();
+    expect(screen.getByPlaceholderText("Min")).toBeInTheDocument();
+    expect(screen.getByPlaceholderText("Max")).toBeInTheDocument();
   });
 
-  it("renders table with prime expressions", () => {
+  it("renders list with prime expressions", () => {
     render(<BrowsePage />);
     expect(screen.getByText("5!+1")).toBeInTheDocument();
     expect(screen.getByText("3*2^10+1")).toBeInTheDocument();
   });
 
-  it("renders pagination controls", () => {
+  it("renders end-of-results indicator when all loaded", () => {
     render(<BrowsePage />);
-    expect(screen.getByText("Previous")).toBeInTheDocument();
-    expect(screen.getByText("Next")).toBeInTheDocument();
+    expect(screen.getByText("2 primes")).toBeInTheDocument();
   });
 
-  it("renders column headers", () => {
+  it("renders form badges on rows", () => {
     render(<BrowsePage />);
-    expect(screen.getByText("Expression")).toBeInTheDocument();
-    expect(screen.getByText("Digits")).toBeInTheDocument();
-    // "Form" and "Found" appear in both filters and table, so just check they exist
-    expect(screen.getAllByText("Form").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText("Factorial")).toBeInTheDocument();
+    expect(screen.getByText("k\u00b7b^n")).toBeInTheDocument();
   });
 });

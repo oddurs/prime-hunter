@@ -3,15 +3,16 @@
 /**
  * @module use-distribution
  *
- * React hook that fetches digit-count distribution data from the
- * `get_digit_distribution` Supabase RPC. Returns bucketed counts
+ * React hook that fetches digit-count distribution data from the REST API
+ * `/api/stats/distribution` endpoint. Returns bucketed counts
  * grouped by prime form, used by the DigitDistribution bar chart.
  *
  * @see {@link src/components/charts/digit-distribution.tsx}
  */
 
 import { useEffect, useState, useCallback } from "react";
-import { supabase } from "@/lib/supabase";
+
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || "";
 
 export interface DigitBucket {
   bucket_start: number;
@@ -22,20 +23,25 @@ export interface DigitBucket {
 export function useDistribution(bucketSize: number = 10) {
   const [distribution, setDistribution] = useState<DigitBucket[]>([]);
 
-  const fetch = useCallback(async () => {
-    const { data, error } = await supabase.rpc("get_digit_distribution", {
-      bucket_size_param: bucketSize,
-    });
-    if (!error && data) {
-      setDistribution(data as DigitBucket[]);
+  const fetchDistribution = useCallback(async () => {
+    try {
+      const res = await fetch(
+        `${API_BASE}/api/stats/distribution?bucket_size=${bucketSize}`
+      );
+      if (res.ok) {
+        const data = await res.json();
+        setDistribution(data as DigitBucket[]);
+      }
+    } catch {
+      // Network error — keep previous state
     }
   }, [bucketSize]);
 
   useEffect(() => {
-    fetch();
-    const interval = setInterval(fetch, 10000);
+    fetchDistribution();
+    const interval = setInterval(fetchDistribution, 10000);
     return () => clearInterval(interval);
-  }, [fetch]);
+  }, [fetchDistribution]);
 
-  return { distribution, refetch: fetch };
+  return { distribution, refetch: fetchDistribution };
 }

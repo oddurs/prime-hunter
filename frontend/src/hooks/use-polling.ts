@@ -100,6 +100,7 @@ export function usePolling(): WsData {
     runningAgents,
     projects,
     records,
+    lastPrimeFound: null,
     connected,
     sendMessage,
   };
