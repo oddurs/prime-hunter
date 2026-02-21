@@ -7,7 +7,7 @@ const API_BASE = "https://api.darkreach.ai";
 interface Stats {
   primes_found: string;
   candidates_tested: string;
-  active_workers: string;
+  active_nodes: string;
   compute_hours: string;
   search_forms: string;
 }
@@ -15,7 +15,7 @@ interface Stats {
 const FALLBACK: Stats = {
   primes_found: "392,009",
   candidates_tested: "14.2B",
-  active_workers: "4",
+  active_nodes: "4",
   compute_hours: "127K",
   search_forms: "12",
 };
@@ -35,27 +35,27 @@ export function StatsBar() {
     let active = true;
     async function fetchStats() {
       try {
-        const [statusRes, fleetRes] = await Promise.all([
+        const [statusRes, networkRes] = await Promise.all([
           fetch(`${API_BASE}/api/status`),
           fetch(`${API_BASE}/api/fleet`),
         ]);
 
-        if (!statusRes.ok || !fleetRes.ok) return;
+        if (!statusRes.ok || !networkRes.ok) return;
 
         const status = (await statusRes.json()) as {
           total_primes?: number;
           total_tested?: number;
           uptime_secs?: number;
         };
-        const fleet = (await fleetRes.json()) as {
+        const network = (await networkRes.json()) as {
           workers?: Array<{ status?: string }>;
         };
 
         if (!active) return;
 
-        const workers = fleet.workers ?? [];
-        const activeCount = workers.filter(
-          (w) => w.status === "active" || w.status === "running"
+        const nodes = network.workers ?? [];
+        const activeCount = nodes.filter(
+          (n) => n.status === "active" || n.status === "running"
         ).length;
 
         const hours = status.uptime_secs
@@ -65,7 +65,7 @@ export function StatsBar() {
         setStats({
           primes_found: formatNumber(status.total_primes ?? 0),
           candidates_tested: formatNumber(status.total_tested ?? 0),
-          active_workers: String(activeCount || workers.length),
+          active_nodes: String(activeCount || nodes.length),
           compute_hours: hours > 0 ? formatNumber(hours) : FALLBACK.compute_hours,
           search_forms: "12",
         });
@@ -86,7 +86,7 @@ export function StatsBar() {
   const items = [
     { label: "Primes Found", value: stats.primes_found, isLive: true },
     { label: "Candidates Tested", value: stats.candidates_tested, isLive: true },
-    { label: "Active Workers", value: stats.active_workers, isLive: true },
+    { label: "Active Nodes", value: stats.active_nodes, isLive: true },
     { label: "Compute Hours", value: stats.compute_hours, isLive: true },
     { label: "Search Forms", value: stats.search_forms, isLive: false },
   ];

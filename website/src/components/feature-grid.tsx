@@ -1,26 +1,26 @@
-import { Brain, Server, ShieldCheck, Zap, Target, BarChart3 } from "lucide-react";
+import { Brain, Server, Zap, Target, BarChart3, UserCheck } from "lucide-react";
 import { Section } from "./ui/section";
 
 const features = [
   {
     icon: Brain,
-    title: "Self-Optimizing Engine",
+    title: "Strategy Engine",
     description:
-      "AI agents research strategies, tune sieve depths, and select optimal algorithms. The system learns which approaches yield discoveries fastest.",
+      "AI agents score forms by record gap, yield, and cost efficiency. Auto-create projects and optimize sieve depths for maximum discovery rate.",
     accent: "from-indigo-500 to-violet-500",
   },
   {
     icon: Server,
-    title: "Fleet Orchestration",
+    title: "Network Orchestration",
     description:
-      "Distribute work across servers, claim blocks via PostgreSQL, and coordinate results. No manual intervention required.",
+      "Service and compute nodes register, claim work blocks via PostgreSQL, and coordinate results across the deployment lifecycle. No manual intervention required.",
     accent: "from-emerald-500 to-teal-500",
   },
   {
-    icon: ShieldCheck,
-    title: "Provable Results",
+    icon: UserCheck,
+    title: "Operator System",
     description:
-      "Deterministic primality certificates — Pocklington, Morrison, BLS — with independently verifiable witness data.",
+      "Register nodes, manage API keys, earn compute credits. Role-based access with trust levels for teams and researchers.",
     accent: "from-amber-500 to-orange-500",
   },
   {
@@ -41,7 +41,7 @@ const features = [
     icon: BarChart3,
     title: "Real-Time Dashboard",
     description:
-      "Live discovery feed, fleet health, search management, and performance charts. Know exactly what your fleet is doing.",
+      "Live discovery feed, network health, search management, leaderboard, and performance charts. Know exactly what your network is doing.",
     accent: "from-rose-500 to-pink-500",
   },
 ];

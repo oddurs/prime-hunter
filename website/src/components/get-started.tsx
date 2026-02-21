@@ -1,28 +1,28 @@
-import { Download, Settings, Rocket } from "lucide-react";
+import { UserPlus, Cpu, BarChart3 } from "lucide-react";
 import { Section } from "./ui/section";
 import Link from "next/link";
 
 const steps = [
   {
-    icon: Download,
-    title: "Download",
+    icon: UserPlus,
+    title: "Register",
     description:
-      "Clone the repo and build the single binary. Requires Rust and GMP.",
-    code: "cargo install darkreach",
+      "Register as an operator and receive your API key. Requires Rust and GMP to build.",
+    code: "darkreach register",
   },
   {
-    icon: Settings,
-    title: "Configure",
+    icon: Cpu,
+    title: "Connect",
     description:
-      "Point to a coordinator or run standalone. One environment variable for the database.",
-    code: "export DATABASE_URL=postgres://...",
+      "Connect your node to the network. Work is assigned automatically and results are proven and logged.",
+    code: "darkreach run",
   },
   {
-    icon: Rocket,
-    title: "Hunt",
+    icon: BarChart3,
+    title: "Monitor",
     description:
-      "Pick a prime form and start searching. Results are logged and proven automatically.",
-    code: "darkreach kbn --k 3 --base 2 --min-n 60000",
+      "Monitor your nodes, track discoveries, earn compute credits, and climb the operator leaderboard.",
+    code: "app.darkreach.ai",
   },
 ];
 
@@ -30,10 +30,10 @@ export function GetStarted() {
   return (
     <Section>
       <h2 className="text-3xl font-bold text-foreground mb-4 text-center">
-        Start in Three Steps
+        Become an Operator in Three Steps
       </h2>
       <p className="text-muted-foreground text-center max-w-2xl mx-auto mb-12">
-        From zero to hunting primes in under five minutes.
+        Register, connect your nodes, and start earning compute credits.
       </p>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-8">

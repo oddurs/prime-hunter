@@ -1,22 +1,22 @@
 import { Section } from "./ui/section";
 import Link from "next/link";
-import { ArrowRight, Github, Download, Settings, Rocket } from "lucide-react";
+import { ArrowRight, Github, UserPlus, Cpu, BarChart3 } from "lucide-react";
 
 const steps = [
   {
-    icon: Download,
-    title: "Install",
-    code: "cargo install darkreach",
+    icon: UserPlus,
+    title: "Register",
+    code: "darkreach register",
   },
   {
-    icon: Settings,
+    icon: Cpu,
     title: "Connect",
-    code: "export DATABASE_URL=postgres://...",
+    code: "darkreach run",
   },
   {
-    icon: Rocket,
-    title: "Hunt",
-    code: "darkreach kbn --k 3 --base 2 --min-n 60000",
+    icon: BarChart3,
+    title: "Monitor",
+    code: "app.darkreach.ai",
   },
 ];
 
@@ -28,10 +28,10 @@ export function CtaSection() {
           Get started
         </p>
         <h2 className="text-3xl sm:text-4xl font-bold text-foreground mb-4">
-          Up and running in three commands
+          Become an operator in three steps
         </h2>
         <p className="text-muted-foreground max-w-xl mx-auto mb-12">
-          Single binary, no runtime dependencies. MIT licensed.
+          Register as an operator, connect your nodes to the network, and earn compute credits. MIT licensed.
         </p>
 
         {/* Three-step walkthrough */}

@@ -14,9 +14,10 @@ const NodeNetwork = dynamic(
 const headlines = [
   "Hunting record-breaking primes.",
   "12 prime forms. One engine.",
-  "AI agents that optimize themselves.",
   "Deterministic proofs, not guesses.",
-  "Distributed across a global fleet.",
+  "Distributed across a global network.",
+  "Operator-owned, fully transparent.",
+  "API-first prime discovery platform.",
 ];
 
 export function Hero() {
@@ -77,8 +78,8 @@ export function Hero() {
         </div>
 
         <p className="text-lg sm:text-xl text-muted-foreground/80 max-w-2xl mx-auto mb-10">
-          Autonomous agents research strategies, orchestrate fleets, and
-          generate mathematical proofs. Open source, self-hostable, MIT licensed.
+          A strategy engine scores forms, operators run nodes, and AI agents
+          orchestrate the network to generate mathematical proofs. Open source, self-hostable, MIT licensed.
         </p>
 
         <div className="flex flex-col sm:flex-row items-center justify-center gap-3 mb-16">

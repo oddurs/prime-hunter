@@ -31,11 +31,11 @@ const steps = [
   },
   {
     icon: Network,
-    title: "Publish",
+    title: "Coordinate",
     stat: "< 1s",
-    statLabel: "TO DATABASE",
+    statLabel: "BLOCK CLAIM",
     description:
-      "Proven primes stored in PostgreSQL with certificates and pushed live via WebSocket.",
+      "Operator nodes claim work blocks via PostgreSQL. Results verified through trust-based quorum with adaptive replication.",
     accent: "from-amber-500 to-orange-500",
   },
 ];

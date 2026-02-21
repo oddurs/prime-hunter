@@ -21,10 +21,34 @@ const rows: Row[] = [
     primegrid: "partial", primegridDetail: "~6 forms",
   },
   {
-    feature: "AI orchestration",
-    darkreach: "yes", darkreachDetail: "Autonomous agents",
+    feature: "AI strategy optimization",
+    darkreach: "yes", darkreachDetail: "Autonomous form selection",
     gimps: "no",
     primegrid: "no",
+  },
+  {
+    feature: "Operator system with trust levels",
+    darkreach: "yes", darkreachDetail: "Registered operators with API keys",
+    gimps: "no",
+    primegrid: "no",
+  },
+  {
+    feature: "Node registration & monitoring",
+    darkreach: "yes", darkreachDetail: "My Nodes dashboard",
+    gimps: "no",
+    primegrid: "partial", primegridDetail: "BOINC client",
+  },
+  {
+    feature: "Role-based team access",
+    darkreach: "yes", darkreachDetail: "Admin/operator roles",
+    gimps: "no",
+    primegrid: "no",
+  },
+  {
+    feature: "Operator leaderboard",
+    darkreach: "yes", darkreachDetail: "Credit-based rankings",
+    gimps: "no",
+    primegrid: "yes", primegridDetail: "BOINC credits",
   },
   {
     feature: "Open source",

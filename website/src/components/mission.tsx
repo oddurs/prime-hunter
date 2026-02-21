@@ -7,7 +7,7 @@ const reasons = [
     icon: Infinity,
     title: "Permanent Contributions",
     description:
-      "Every prime discovered is a mathematical fact that lasts forever. Your compute time produces results that will be referenced by researchers for centuries.",
+      "Every prime discovered is a mathematical fact that lasts forever. Operator nodes produce results that will be referenced by researchers for centuries.",
   },
   {
     icon: Trophy,
@@ -36,8 +36,8 @@ export function Mission() {
         Why Hunt Primes
       </h2>
       <p className="text-muted-foreground text-center max-w-2xl mx-auto mb-12">
-        Prime hunting isn&apos;t just computation — it&apos;s contributing to one of the
-        oldest open problems in mathematics.
+        An operator-owned, AI-orchestrated prime discovery network — contributing
+        to one of the oldest open problems in mathematics.
       </p>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
