@@ -5,53 +5,16 @@
  * Validates budget tracking, daily cost aggregation, template cost breakdown, and
  * anomaly detection for the AI agent cost control system. Tests cover the full budget
  * lifecycle: fetch on mount, loading states, error handling, refetch, and multi-period
- * budget display. REST API hooks (daily costs, template costs, anomalies) are tested
- * via a global fetch mock, while the Supabase-backed budget hook uses a query chain mock.
+ * budget display. All hooks fetch data via the REST API using the global fetch mock.
  *
  * @see {@link ../../hooks/use-agent-budgets} Source hooks
- * @see {@link ../../__mocks__/supabase} Supabase mock configuration
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { renderHook, waitFor } from "@testing-library/react";
 
-// --- Supabase mock ---
-// Mocks the Supabase query builder chain: from("agent_budgets").select().order()
-// Each mock function represents a link in the fluent query chain.
-const mockSelect = vi.fn();
-const mockOrder = vi.fn();
-const mockFrom = vi.fn();
-
-/**
- * Configures the mock query chain to resolve with the given data/error.
- * The chain simulates: supabase.from(table).select().order() -> { data, error }.
- */
-function setupChain(finalData: unknown, finalError: unknown) {
-  const chain = {
-    select: mockSelect.mockReturnThis(),
-    order: mockOrder.mockResolvedValue({
-      data: finalData,
-      error: finalError,
-    }),
-  };
-  mockFrom.mockReturnValue(chain);
-  return chain;
-}
-
-vi.mock("@/lib/supabase", () => ({
-  supabase: {
-    from: (...args: unknown[]) => mockFrom(...args),
-  },
-}));
-
-// --- fetch mock for REST API hooks ---
-// The daily costs, template costs, and anomaly hooks use the REST API via fetch
-// rather than the Supabase client, so we mock the global fetch function.
+// --- fetch mock for all REST API hooks ---
 const mockFetch = vi.fn();
 vi.stubGlobal("fetch", mockFetch);
-
-vi.mock("@/lib/format", () => ({
-  API_BASE: "http://localhost:3000",
-}));
 
 import {
   useAgentBudgets,
@@ -61,8 +24,8 @@ import {
 } from "@/hooks/use-agent-budgets";
 
 // Tests the budget data fetching lifecycle: mount -> loading -> data -> error states.
-// Validates that the hook correctly queries the agent_budgets table via Supabase
-// and handles network failures gracefully.
+// Validates that the hook correctly queries the REST API `/api/agents/budgets`
+// endpoint and handles network failures gracefully.
 describe("useAgentBudgets", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -71,11 +34,11 @@ describe("useAgentBudgets", () => {
   /**
    * Verifies that the hook fetches budget data on mount and exposes it
    * through the returned budgets array. The mock simulates a successful
-   * Supabase query returning one daily budget period with $10.00 allocated
+   * REST response returning one daily budget period with $10.00 allocated
    * and $3.50 spent.
    *
    * Assertions: budgets array contains the entry, period matches, loading
-   * completes, and the correct table name was queried.
+   * completes, and the correct endpoint was called.
    */
   it("fetches budgets on mount", async () => {
     const mockData = [
@@ -89,7 +52,10 @@ describe("useAgentBudgets", () => {
         updated_at: "2026-02-01T12:00:00Z",
       },
     ];
-    setupChain(mockData, null);
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve(mockData),
+    });
 
     const { result } = renderHook(() => useAgentBudgets());
 
@@ -99,18 +65,20 @@ describe("useAgentBudgets", () => {
     expect(result.current.budgets[0].period).toBe("daily");
     expect(result.current.budgets[0].budget_usd).toBe(10.0);
     expect(result.current.loading).toBe(false);
-    expect(mockFrom).toHaveBeenCalledWith("agent_budgets");
+    expect(mockFetch).toHaveBeenCalledWith(expect.stringContaining("/api/agents/budgets"));
   });
 
   /**
-   * Verifies graceful error handling when the Supabase query fails.
-   * The mock returns a "Permission denied" error with null data.
+   * Verifies graceful error handling when the REST API returns a non-ok response.
    *
    * Assertion: budgets defaults to an empty array rather than throwing,
    * and loading transitions to false.
    */
   it("returns empty array on error", async () => {
-    setupChain(null, { message: "Permission denied" });
+    mockFetch.mockResolvedValue({
+      ok: false,
+      json: () => Promise.resolve({ error: "Permission denied" }),
+    });
 
     const { result } = renderHook(() => useAgentBudgets());
 
@@ -126,7 +94,10 @@ describe("useAgentBudgets", () => {
    * can show a skeleton or spinner.
    */
   it("starts with loading true", () => {
-    setupChain([], null);
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve([]),
+    });
 
     const { result } = renderHook(() => useAgentBudgets());
 
@@ -140,7 +111,10 @@ describe("useAgentBudgets", () => {
    * adjusting limits or resetting periods).
    */
   it("provides a refetch function", async () => {
-    setupChain([], null);
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve([]),
+    });
 
     const { result } = renderHook(() => useAgentBudgets());
 
@@ -152,7 +126,7 @@ describe("useAgentBudgets", () => {
 
   /**
    * Verifies that the hook correctly handles multiple budget periods
-   * (daily, weekly, monthly) returned from the database. Ensures all
+   * (daily, weekly, monthly) returned from the API. Ensures all
    * entries are preserved in order and accessible by index.
    */
   it("handles multiple budgets", async () => {
@@ -161,7 +135,10 @@ describe("useAgentBudgets", () => {
       { id: 2, period: "weekly", budget_usd: 50, spent_usd: 20, tokens_used: 200000, period_start: "2026-02-01", updated_at: "2026-02-01" },
       { id: 3, period: "monthly", budget_usd: 200, spent_usd: 80, tokens_used: 800000, period_start: "2026-02-01", updated_at: "2026-02-01" },
     ];
-    setupChain(mockData, null);
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve(mockData),
+    });
 
     const { result } = renderHook(() => useAgentBudgets());
 
@@ -170,6 +147,21 @@ describe("useAgentBudgets", () => {
     });
     expect(result.current.budgets[0].period).toBe("daily");
     expect(result.current.budgets[2].period).toBe("monthly");
+  });
+
+  /**
+   * Verifies graceful handling of network-level fetch failures.
+   * The hook should return an empty array and set loading to false.
+   */
+  it("returns empty array on network error", async () => {
+    mockFetch.mockRejectedValue(new Error("Network error"));
+
+    const { result } = renderHook(() => useAgentBudgets());
+
+    await waitFor(() => {
+      expect(result.current.loading).toBe(false);
+    });
+    expect(result.current.budgets).toEqual([]);
   });
 });
 
@@ -204,7 +196,7 @@ describe("useAgentDailyCosts", () => {
       expect(result.current.data).toHaveLength(1);
     });
     expect(result.current.data[0].model).toBe("claude-opus-4-20250514");
-    expect(mockFetch).toHaveBeenCalledWith("http://localhost:3000/api/agents/analytics/daily-costs?days=7");
+    expect(mockFetch).toHaveBeenCalledWith(expect.stringContaining("/api/agents/analytics/daily-costs?days=7"));
   });
 
   /**
@@ -255,7 +247,7 @@ describe("useAgentDailyCosts", () => {
     renderHook(() => useAgentDailyCosts());
 
     await waitFor(() => {
-      expect(mockFetch).toHaveBeenCalledWith("http://localhost:3000/api/agents/analytics/daily-costs?days=30");
+      expect(mockFetch).toHaveBeenCalledWith(expect.stringContaining("/api/agents/analytics/daily-costs?days=30"));
     });
   });
 });
@@ -290,7 +282,7 @@ describe("useAgentTemplateCosts", () => {
       expect(result.current.data).toHaveLength(1);
     });
     expect(result.current.data[0].template_name).toBe("code-review");
-    expect(mockFetch).toHaveBeenCalledWith("http://localhost:3000/api/agents/analytics/template-costs");
+    expect(mockFetch).toHaveBeenCalledWith(expect.stringContaining("/api/agents/analytics/template-costs"));
   });
 
   /**
@@ -338,7 +330,7 @@ describe("useAgentAnomalies", () => {
     await waitFor(() => {
       expect(result.current.data).toHaveLength(1);
     });
-    expect(mockFetch).toHaveBeenCalledWith("http://localhost:3000/api/agents/analytics/anomalies?threshold=3");
+    expect(mockFetch).toHaveBeenCalledWith(expect.stringContaining("/api/agents/analytics/anomalies?threshold=3"));
   });
 
   /**
@@ -354,7 +346,7 @@ describe("useAgentAnomalies", () => {
     renderHook(() => useAgentAnomalies(5));
 
     await waitFor(() => {
-      expect(mockFetch).toHaveBeenCalledWith("http://localhost:3000/api/agents/analytics/anomalies?threshold=5");
+      expect(mockFetch).toHaveBeenCalledWith(expect.stringContaining("/api/agents/analytics/anomalies?threshold=5"));
     });
   });
 

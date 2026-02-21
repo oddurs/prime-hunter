@@ -7,15 +7,15 @@
  * Provides budget period queries, daily cost breakdowns (by model),
  * template-level cost aggregation, and token anomaly detection.
  *
- * Budget periods (daily/weekly/monthly) are managed via the
- * `agent_budgets` table; analytics data comes from REST endpoints
+ * Budget periods (daily/weekly/monthly) are fetched from the REST API
+ * `/api/agents/budgets` endpoint; analytics data comes from REST endpoints
  * that aggregate across `agent_tasks` and `agent_events`.
  */
 
 import { useEffect, useState, useCallback } from "react";
-import { supabase } from "@/lib/supabase";
-import { API_BASE } from "@/lib/format";
 import type { AgentTask } from "./use-agent-tasks";
+
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || "";
 
 export interface AgentBudget {
   id: number;
@@ -49,13 +49,14 @@ export function useAgentBudgets() {
   const [loading, setLoading] = useState(true);
 
   const fetchBudgets = useCallback(async () => {
-    const { data, error } = await supabase
-      .from("agent_budgets")
-      .select("*")
-      .order("id");
-
-    if (!error && data) {
-      setBudgets(data as AgentBudget[]);
+    try {
+      const res = await fetch(`${API_BASE}/api/agents/budgets`);
+      if (res.ok) {
+        const data = await res.json();
+        setBudgets(data as AgentBudget[]);
+      }
+    } catch {
+      // Network error — keep previous state
     }
     setLoading(false);
   }, []);

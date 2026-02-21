@@ -71,16 +71,12 @@ function parsePositiveInteger(value: string): number | null {
 
 function SkeletonRow() {
   return (
-    <div className="flex items-center gap-3 px-4 py-3 border-b last:border-b-0">
+    <div className="flex items-center gap-4 px-4 py-2.5 border-b last:border-b-0">
       <Skeleton className="size-2 rounded-full shrink-0" />
-      <div className="flex-1 min-w-0 space-y-2">
-        <Skeleton className="h-4 w-48" />
-        <div className="flex items-center gap-2">
-          <Skeleton className="h-5 w-16 rounded-full" />
-          <Skeleton className="h-3 w-20" />
-          <Skeleton className="h-3 w-14" />
-        </div>
-      </div>
+      <Skeleton className="h-4 w-48 flex-1 max-w-[280px]" />
+      <Skeleton className="h-5 w-20 rounded-full shrink-0" />
+      <Skeleton className="h-4 w-16 shrink-0" />
+      <Skeleton className="h-4 w-14 shrink-0 hidden sm:block" />
       <Skeleton className="size-4 shrink-0" />
     </div>
   );
@@ -100,7 +96,7 @@ function PrimeRow({
       type="button"
       onClick={onClick}
       className={cn(
-        "group flex items-center gap-3 w-full text-left px-4 py-3 border-b last:border-b-0",
+        "group flex items-center gap-4 w-full text-left px-4 py-2.5 border-b last:border-b-0",
         "transition-colors duration-100 hover:bg-muted/50 focus-visible:bg-muted/50 focus-visible:outline-none",
         isActive && "bg-muted/40"
       )}
@@ -113,45 +109,45 @@ function PrimeRow({
         )}
       />
 
-      {/* Content */}
-      <div className="flex-1 min-w-0">
-        <div className="font-mono text-sm text-primary truncate">
-          {prime.expression}
-        </div>
-        <div className="flex items-center gap-2 mt-0.5">
-          <Link
-            href={`/docs?doc=${formToSlug(prime.form)}`}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <Badge
-              variant="outline"
-              className="cursor-pointer hover:bg-secondary/50 text-[11px] px-1.5 py-0"
-            >
-              {formLabels[prime.form] ?? prime.form}
-            </Badge>
-          </Link>
-          <span className="text-xs text-muted-foreground">
-            {numberWithCommas(prime.digits)} digits
-          </span>
-          <span className="text-xs text-muted-foreground/60 hidden sm:inline">
-            &middot;
-          </span>
-          <TooltipProvider>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <span className="text-xs text-muted-foreground hidden sm:inline">
-                  {relativeTime(prime.found_at)}
-                </span>
-              </TooltipTrigger>
-              <TooltipContent side="bottom">
-                {formatTime(prime.found_at)}
-              </TooltipContent>
-            </Tooltip>
-          </TooltipProvider>
-        </div>
-      </div>
+      {/* Expression */}
+      <span className="font-mono text-sm text-primary truncate flex-1 min-w-0">
+        {prime.expression}
+      </span>
 
-      {/* Chevron affordance */}
+      {/* Form badge */}
+      <Link
+        href={`/docs?doc=${formToSlug(prime.form)}`}
+        onClick={(e) => e.stopPropagation()}
+        className="shrink-0"
+      >
+        <Badge
+          variant="outline"
+          className="cursor-pointer hover:bg-secondary/50 text-[11px] px-1.5 py-0"
+        >
+          {formLabels[prime.form] ?? prime.form}
+        </Badge>
+      </Link>
+
+      {/* Digits */}
+      <span className="text-xs text-muted-foreground tabular-nums shrink-0 w-20 text-right">
+        {numberWithCommas(prime.digits)} digits
+      </span>
+
+      {/* Time */}
+      <TooltipProvider>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <span className="text-xs text-muted-foreground shrink-0 w-16 text-right hidden sm:inline-block">
+              {relativeTime(prime.found_at)}
+            </span>
+          </TooltipTrigger>
+          <TooltipContent side="bottom">
+            {formatTime(prime.found_at)}
+          </TooltipContent>
+        </Tooltip>
+      </TooltipProvider>
+
+      {/* Chevron */}
       <ChevronRight className="size-4 text-muted-foreground/30 group-hover:text-muted-foreground/70 transition-colors shrink-0" />
     </button>
   );

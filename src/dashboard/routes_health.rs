@@ -16,7 +16,6 @@ use super::AppState;
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
-use redis::AsyncCommands;
 use std::sync::Arc;
 
 /// Liveness probe: returns 200 if the process is running.

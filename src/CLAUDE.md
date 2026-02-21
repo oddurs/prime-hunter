@@ -56,7 +56,7 @@ src/
 │   ├── routes_operator.rs     # /api/v1/operators/*, /api/v1/nodes/* — operator API
 │   └── routes_workers.rs      # /api/workers/* — worker heartbeat, registration
 │
-├── db/                        # PostgreSQL via sqlx (Supabase)
+├── db/                        # PostgreSQL via sqlx
 │   ├── mod.rs                 # Database struct, connection pool, PrimeRecord types
 │   ├── primes.rs              # Prime record CRUD (insert, query, filter, verify)
 │   ├── workers.rs             # Worker heartbeat, registration, pruning
@@ -174,7 +174,7 @@ Dashboard runs on configurable port (default 7001). Route modules are organized 
 
 ### Database (db/)
 
-PostgreSQL via `sqlx::PgPool` connecting to Supabase. Operations split by domain:
+PostgreSQL via `sqlx::PgPool` connecting to PostgreSQL. Operations split by domain:
 - `insert_prime_sync(rt, ...)`: Bridge for rayon threads (7 args including certificate)
 - Each submodule maps to a set of tables (see `supabase/CLAUDE.md`)
 - Public re-exports from `mod.rs`: `MetricPoint`, `MetricSeries`, `WorkerRelease*` types

@@ -1,7 +1,7 @@
 //! # Database — PostgreSQL Storage Layer
 //!
 //! Provides async database operations for prime records, search metadata, and
-//! fleet coordination via `sqlx::PgPool` connecting to Supabase PostgreSQL.
+//! fleet coordination via `sqlx::PgPool` connecting to PostgreSQL.
 //!
 //! ## Schema
 //!

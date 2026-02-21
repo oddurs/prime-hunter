@@ -1,6 +1,6 @@
 # supabase/ — Database Domain
 
-PostgreSQL database schema managed via Supabase migrations. All tables live in Supabase PostgreSQL and are accessed from Rust (via sqlx) and the frontend (via Supabase JS client).
+PostgreSQL database schema managed via Supabase migrations. All tables live in self-hosted PostgreSQL and are accessed from Rust (via sqlx) and the frontend (via REST API).
 
 ## Migration Files
 
@@ -153,17 +153,15 @@ cost_calibrations — Per-form cost model coefficients
 
 ## Infrastructure Evolution
 
-**Current state:** Hosted Supabase (managed PostgreSQL 15). All migrations are portable standard PostgreSQL — no Supabase-specific extensions or syntax.
+**Current state:** Self-hosted PostgreSQL 16 (CPX31, Hetzner Ashburn). Previously hosted on Supabase. All migrations are portable standard PostgreSQL — no Supabase-specific extensions or syntax.
 
-**Planned migration path:** See [docs/roadmaps/database.md](../docs/roadmaps/database.md) for the full database infrastructure roadmap.
-
-**Key phases:**
-1. **Optimize Supabase** — configurable connection pool, materialized views, time-based partitioning
-2. **Redis for hot-path data** — move worker heartbeats out of PostgreSQL
-3. **Self-hosted PostgreSQL + TimescaleDB** — full control over config, hypertables for time-series
-4. **Read replicas** — separate dashboard reads from write path
-5. **High availability** — automatic failover, PgBouncer
-6. **Frontend independence** — migrate frontend from Supabase JS to REST API
+**Database roadmap:** See [docs/roadmaps/database.md](../docs/roadmaps/database.md) for the full database infrastructure roadmap. Phases 1-6 are complete:
+1. ~~**Optimize Supabase** — configurable connection pool, materialized views, time-based partitioning~~
+2. ~~**Redis for hot-path data** — move worker heartbeats out of PostgreSQL~~
+3. ~~**Self-hosted PostgreSQL + TimescaleDB** — full control over config, hypertables for time-series~~
+4. ~~**Read replicas** — separate dashboard reads from write path~~
+5. ~~**High availability** — automatic failover, PgBouncer~~
+6. ~~**Frontend independence** — migrate frontend from Supabase JS to REST API~~
 
 **Compatibility notes:**
 - All migrations use standard SQL and will apply to any PostgreSQL 15+ instance

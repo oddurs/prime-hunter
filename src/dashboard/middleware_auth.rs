@@ -6,7 +6,7 @@
 //!
 //! Admin-only routes use the `RequireAdmin` extractor to gate access.
 
-use axum::extract::{FromRequestParts, State};
+use axum::extract::FromRequestParts;
 use axum::http::request::Parts;
 use axum::http::{header, StatusCode};
 use axum::response::{IntoResponse, Response};
@@ -18,6 +18,7 @@ use std::sync::Arc;
 use super::AppState;
 
 /// JWT claims from a Supabase-issued token.
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 struct SupabaseClaims {
     /// Subject — the Supabase auth user ID (UUID).
@@ -96,6 +97,7 @@ pub async fn extract_auth_user(
 /// Axum extractor that requires an authenticated admin user.
 ///
 /// Returns 401 if no valid JWT is present, 403 if the user is not an admin.
+#[allow(dead_code)]
 pub struct RequireAdmin(pub AuthUser);
 
 impl FromRequestParts<Arc<AppState>> for RequireAdmin {

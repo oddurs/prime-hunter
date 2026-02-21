@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-`darkreach` is a Rust CLI tool and distributed platform for hunting special-form prime numbers. It uses GMP (via `rug`) for arbitrary-precision arithmetic, `rayon` for parallel search, and coordinates fleets of workers via PostgreSQL (Supabase). The web dashboard is a Next.js 16 static export served by the Rust backend.
+`darkreach` is a Rust CLI tool and distributed platform for hunting special-form prime numbers. It uses GMP (via `rug`) for arbitrary-precision arithmetic, `rayon` for parallel search, and coordinates fleets of workers via PostgreSQL. The web dashboard is a Next.js 16 static export served by the Rust backend.
 
 **Domain:** `darkreach.ai` | **Dashboard:** `app.darkreach.ai` | **API:** `api.darkreach.ai`
 
@@ -108,10 +108,10 @@ cd frontend && npm install && npm run build
 - `src/progress.rs` — Atomic counters + background 30s status reporter
 
 ### Frontend (`frontend/`)
-- Next.js 16 + React 19 + Tailwind 4 + shadcn/ui + Recharts + Supabase JS
+- Next.js 16 + React 19 + Tailwind 4 + shadcn/ui + Recharts + Supabase Auth
 - Static export served by Rust backend
-- **Supabase** for prime data (queries, stats, charts) and auth
-- **Supabase Realtime** for live prime notifications
+- **REST API** for prime data (queries, stats, charts), **Supabase Auth** for login
+- **WebSocket** for live prime notifications
 - **WebSocket** for coordination data only (fleet, searches, deployments, status)
 - 14 pages, 50+ components, 17+ custom hooks
 
@@ -171,7 +171,7 @@ cd frontend && npm run test:e2e  # Playwright E2E tests
 
 ## Conventions
 
-- All output goes to stderr (`eprintln!`). Results are logged to Supabase PostgreSQL via `sqlx`.
+- All output goes to stderr (`eprintln!`). Results are logged to PostgreSQL via `sqlx`.
 - Global flags `--database-url` (or `DATABASE_URL` env) and `--checkpoint` go before the subcommand.
 - `insert_prime_sync` takes 7 args (including `certificate: Option<&str>`).
 - **Naming migration**: `volunteer` → `operator`, `worker` → `node`, `fleet` → `network`. Old names available as backward-compat re-exports.

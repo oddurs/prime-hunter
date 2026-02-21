@@ -60,7 +60,7 @@ pub(super) async fn handler_api_docs_search(
         for entry in entries.flatten() {
             let path = entry.path();
             if path.extension().is_some_and(|e| e == "md") {
-                let slug = path.file_stem().unwrap().to_string_lossy().to_string();
+                let slug = path.file_stem().unwrap_or_default().to_string_lossy().to_string();
                 check_file(&path, slug, None);
             }
         }
@@ -70,7 +70,7 @@ pub(super) async fn handler_api_docs_search(
         for entry in entries.flatten() {
             let path = entry.path();
             if path.extension().is_some_and(|e| e == "md") {
-                let stem = path.file_stem().unwrap().to_string_lossy().to_string();
+                let stem = path.file_stem().unwrap_or_default().to_string_lossy().to_string();
                 check_file(&path, format!("roadmaps/{}", stem), Some("roadmaps".into()));
             }
         }
@@ -186,7 +186,7 @@ pub(super) async fn handler_api_docs() -> impl IntoResponse {
         for entry in entries.flatten() {
             let path = entry.path();
             if path.extension().is_some_and(|e| e == "md") {
-                let slug = path.file_stem().unwrap().to_string_lossy().to_string();
+                let slug = path.file_stem().unwrap_or_default().to_string_lossy().to_string();
                 let content = std::fs::read_to_string(&path).unwrap_or_default();
                 let title = extract_title(&content, &slug);
                 let form = doc_form(&slug);
@@ -204,7 +204,7 @@ pub(super) async fn handler_api_docs() -> impl IntoResponse {
         for entry in entries.flatten() {
             let path = entry.path();
             if path.extension().is_some_and(|e| e == "md") {
-                let stem = path.file_stem().unwrap().to_string_lossy().to_string();
+                let stem = path.file_stem().unwrap_or_default().to_string_lossy().to_string();
                 let content = std::fs::read_to_string(&path).unwrap_or_default();
                 let title = extract_title(&content, &stem);
                 docs.push(DocEntry {

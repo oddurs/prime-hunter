@@ -4,13 +4,12 @@
  * @module use-strategy
  *
  * Hooks for the AI strategy engine: status, form scores, decision history,
- * and configuration. Fetches from the REST API with 30-second polling and
- * Supabase Realtime for live decision updates.
+ * and configuration. Fetches from the REST API with 30-second polling.
  */
 
 import { useEffect, useState, useCallback } from "react";
-import { supabase } from "@/lib/supabase";
-import { API_BASE } from "@/lib/format";
+
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || "";
 
 // ── Types ───────────────────────────────────────────────────────
 
@@ -148,24 +147,8 @@ export function useStrategyDecisions() {
 
   useEffect(() => {
     fetchDecisions();
-  }, [fetchDecisions]);
-
-  // Realtime subscription for live decision updates
-  useEffect(() => {
-    const channel = supabase
-      .channel("strategy_decisions_changes")
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "strategy_decisions" },
-        () => {
-          fetchDecisions();
-        }
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
+    const interval = setInterval(fetchDecisions, 30_000);
+    return () => clearInterval(interval);
   }, [fetchDecisions]);
 
   return { decisions, loading, error, refetch: fetchDecisions };

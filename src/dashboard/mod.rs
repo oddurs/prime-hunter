@@ -28,7 +28,7 @@ use crate::{agent, ai_engine, db, events, fleet, metrics, project, prom_metrics,
 use tracing::{info, warn, Instrument};
 use anyhow::Result;
 use axum::extract::Request;
-use axum::http::StatusCode;
+use axum::http::{HeaderValue, StatusCode};
 use axum::middleware::Next;
 use axum::routing::{get, post};
 use axum::Router;
@@ -181,7 +181,7 @@ async fn metrics_middleware(
     let mut response = response;
     response.headers_mut().insert(
         "x-request-id",
-        request_id.parse().unwrap(),
+        request_id.parse().unwrap_or_else(|_| HeaderValue::from_static("unknown")),
     );
     response
 }

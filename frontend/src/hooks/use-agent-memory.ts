@@ -8,11 +8,12 @@
  * gotchas, and preferences across tasks. Memories are categorized
  * and keyed for upsert-based updates.
  *
- * Data source: `agent_memory` table with Supabase realtime.
+ * Data source: REST API `/api/agents/memory` endpoint.
  */
 
 import { useEffect, useState, useCallback } from "react";
-import { supabase } from "@/lib/supabase";
+
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || "";
 
 export interface AgentMemory {
   id: number;
@@ -41,38 +42,20 @@ export function useAgentMemory() {
   const [loading, setLoading] = useState(true);
 
   const fetchMemories = useCallback(async () => {
-    const { data, error } = await supabase
-      .from("agent_memory")
-      .select("*")
-      .order("category")
-      .order("key");
-
-    if (!error && data) {
-      setMemories(data as AgentMemory[]);
+    try {
+      const res = await fetch(`${API_BASE}/api/agents/memory`);
+      if (res.ok) {
+        const data = await res.json();
+        setMemories(data as AgentMemory[]);
+      }
+    } catch {
+      // Network error — keep previous state
     }
     setLoading(false);
   }, []);
 
   useEffect(() => {
     fetchMemories();
-  }, [fetchMemories]);
-
-  // Realtime subscription
-  useEffect(() => {
-    const channel = supabase
-      .channel("agent_memory_changes")
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "agent_memory" },
-        () => {
-          fetchMemories();
-        }
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
   }, [fetchMemories]);
 
   return { memories, loading, refetch: fetchMemories };
@@ -83,17 +66,29 @@ export async function upsertMemory(
   value: string,
   category: string = "general"
 ) {
-  const { data, error } = await supabase
-    .from("agent_memory")
-    .upsert({ key, value, category, updated_at: new Date().toISOString() }, { onConflict: "key" })
-    .select()
-    .single();
-
-  if (error) throw error;
-  return data as AgentMemory;
+  const resp = await fetch(`${API_BASE}/api/agents/memory`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ key, value, category }),
+  });
+  if (!resp.ok) {
+    const body = await resp.json().catch(() => ({}));
+    throw new Error(
+      (body as Record<string, string>).error || "Failed to upsert memory"
+    );
+  }
+  return (await resp.json()) as AgentMemory;
 }
 
 export async function deleteMemory(key: string) {
-  const { error } = await supabase.from("agent_memory").delete().eq("key", key);
-  if (error) throw error;
+  const resp = await fetch(
+    `${API_BASE}/api/agents/memory/${encodeURIComponent(key)}`,
+    { method: "DELETE" }
+  );
+  if (!resp.ok) {
+    const body = await resp.json().catch(() => ({}));
+    throw new Error(
+      (body as Record<string, string>).error || "Failed to delete memory"
+    );
+  }
 }

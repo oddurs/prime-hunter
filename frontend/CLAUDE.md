@@ -34,20 +34,20 @@ The static export is served by the Rust backend (`dashboard/mod.rs` serves `--st
 ```
 Frontend (Next.js static export)
 ├── Supabase Auth → login, session management
-├── Supabase JS client → prime data (queries, stats, charts)
-│   ├── use-primes.ts      → supabase.from("primes")
-│   ├── use-stats.ts       → supabase.rpc("get_stats")
-│   ├── use-timeline.ts    → supabase.rpc("get_discovery_timeline")
-│   ├── use-distribution.ts → supabase.rpc("get_digit_distribution")
-│   ├── use-records.ts     → supabase.from("world_records")
-│   └── use-form-leaderboard.ts → supabase.rpc("form_leaderboard")
-├── Supabase Realtime → live prime notifications
-│   └── use-prime-realtime.ts → postgres_changes INSERT on primes
+├── REST API → prime data (queries, stats, charts)
+│   ├── use-primes.ts      → /api/primes
+│   ├── use-stats.ts       → /api/stats
+│   ├── use-timeline.ts    → /api/timeline
+│   ├── use-distribution.ts → /api/distribution
+│   ├── use-records.ts     → /api/records
+│   └── use-form-leaderboard.ts → /api/leaderboard
+├── WebSocket → live prime notifications
+│   └── use-prime-realtime.ts → WebSocket prime INSERT events
 └── WebSocket → Rust backend (coordination only)
     └── use-websocket.ts → fleet, searches, deployments, status
 ```
 
-**Rule:** Prime data comes from Supabase directly. WebSocket is only for coordination data.
+**Rule:** Prime data comes from the REST API. WebSocket is for coordination data and live notifications.
 
 ## Directory Structure
 
@@ -95,7 +95,7 @@ src/
 │   ├── app-header.tsx             # Navigation header (all page links)
 │   ├── primes-table.tsx           # Paginated primes table
 │   ├── prime-detail-dialog.tsx    # Full prime details modal
-│   ├── prime-notifier.tsx         # Supabase Realtime toast notifications
+│   ├── prime-notifier.tsx         # WebSocket toast notifications
 │   ├── stat-card.tsx              # Dashboard stat card
 │   ├── search-card.tsx            # Search configuration card
 │   ├── search-job-card.tsx        # Search job status card
@@ -177,7 +177,7 @@ src/
 - **Auth**: Supabase Auth (email/password). `AuthGuard` in layout gates all pages except `/login`
 - **Icons**: Lucide React (`import { IconName } from "lucide-react"`)
 - **Charts**: Recharts with responsive containers. Match dark theme colors
-- **Notifications**: Sonner toasts for prime discoveries (via Supabase Realtime)
+- **Notifications**: Sonner toasts for prime discoveries (via WebSocket)
 - **localStorage keys**: `darkreach-theme`, `darkreach-notifications-enabled`
 
 ## Environment Variables
